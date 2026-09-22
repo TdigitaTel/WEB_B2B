@@ -129,6 +129,9 @@ def main(csv_path: str) -> None:
             product.commercial_description = name
             product.technical_description = clean(row["AtributosTecnicos"])
             product.unit = clean(row["UnidadMedida"]) or "UD"
+            # El catálogo clasificado no contiene tarifas. Nunca conservamos un
+            # precio procedente de datos sintéticos o de una importación anterior.
+            product.list_price = 0
             product.attributes = attrs
             product.normalized_search = " ".join(filter(None, [code, name, original, area, family, subfamily, product_type, brand, *attrs.values()])).lower()
             product.active = not status.startswith("EXCLUIDO")
