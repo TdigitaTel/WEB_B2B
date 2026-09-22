@@ -54,6 +54,31 @@ def fetch_product_image(article_code: str) -> bytes | None:
     return normalize_image_data(bytes(row["image_data"]))
 
 
+def fetch_product_images(article_codes: list[str]) -> dict[str, bytes]:
+    codes = list(dict.fromkeys(str(code).strip() for code in article_codes if str(code).strip()))
+    if not codes:
+        return {}
+    schema = _identifier(IMAGE["schema"])
+    table = _identifier(IMAGE["table"])
+    key_column = _identifier(IMAGE["article_code"])
+    image_column = _identifier(IMAGE["data"])
+    placeholders = ", ".join(["%s"] * len(codes))
+    sql = (
+        f"SELECT LTRIM(RTRIM(CONVERT(varchar(100), {key_column}))) AS article_code, "
+        f"{image_column} AS image_data FROM {schema}.{table} "
+        f"WHERE LTRIM(RTRIM(CONVERT(varchar(100), {key_column}))) IN ({placeholders}) "
+        f"AND {image_column} IS NOT NULL"
+    )
+    with connect_sqlserver() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(sql, tuple(codes))
+            rows = cursor.fetchall()
+    return {
+        str(row["article_code"]).strip(): normalize_image_data(bytes(row["image_data"]))
+        for row in rows if row["image_data"]
+    }
+
+
 def fetch_product_stocks(article_codes: list[str]) -> dict[str, list[dict]]:
     """Obtiene el stock ERP agrupado por articulo y almacen en una sola consulta."""
     codes = list(dict.fromkeys(str(code).strip() for code in article_codes if str(code).strip()))

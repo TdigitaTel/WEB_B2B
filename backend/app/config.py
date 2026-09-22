@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     sqlserver_user: str = ""
     sqlserver_password: str = ""
     sqlserver_stock_excluded_warehouses: str = "97,98"
+    product_image_source: str = "auto"
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

@@ -178,3 +178,28 @@ Para comprobar una referencia concreta:
 docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api \
   python -m scripts.check_sqlserver_image 24664
 ```
+
+### Imágenes binarias en PostgreSQL
+
+`products.image_data` almacena la imagen binaria junto con su tipo MIME, URL de origen, proveedor y huella SHA-256. `PRODUCT_IMAGE_SOURCE` controla el origen usado por el catálogo:
+
+- `auto`: PostgreSQL primero y SQL Server como respaldo.
+- `postgres`: solamente PostgreSQL.
+- `sqlserver`: solamente SQL Server.
+
+Para copiar a PostgreSQL todas las imágenes que ya existen en EXITERP:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api \
+  python -m scripts.sync_sqlserver_images_to_postgres
+```
+
+Las imágenes oficiales de proveedores se importan mediante un CSV con las columnas `sku,image_url,provider`:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml cp imagenes.csv api:/tmp/imagenes.csv
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api \
+  python -m scripts.import_provider_images /tmp/imagenes.csv
+```
+
+Consulta la cobertura obtenida con `python -m scripts.check_postgres_images`.

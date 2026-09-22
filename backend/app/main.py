@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .auth import audit, create_access_token, current_user, require_roles, verify_password
+from .config import settings
 from .db import get_db
 from .erp_db import (
     fetch_product_image, fetch_product_price, fetch_product_prices,
@@ -247,6 +248,14 @@ def product_image(product_id: str, user: User = Depends(current_user), db: Sessi
     product = db.scalar(select(Product).where(Product.public_id == product_id, Product.active.is_(True)))
     if not product:
         raise HTTPException(404, "Producto no encontrado")
+    source = settings.product_image_source.lower().strip()
+    if source not in {"auto", "postgres", "sqlserver"}:
+        raise HTTPException(500, "PRODUCT_IMAGE_SOURCE debe ser auto, postgres o sqlserver")
+    if source != "sqlserver" and product.image_data:
+        return Response(content=product.image_data, media_type=product.image_media_type or image_media_type(product.image_data),
+                        headers={"Cache-Control": "private, max-age=86400", "X-Image-Source": "postgres"})
+    if source == "postgres":
+        raise HTTPException(404, "Imagen no disponible en PostgreSQL")
     try:
         data = fetch_product_image(product.sku)
     except Exception:
@@ -254,7 +263,7 @@ def product_image(product_id: str, user: User = Depends(current_user), db: Sessi
         raise HTTPException(503, "No se pudo consultar la imagen en el ERP")
     if not data:
         raise HTTPException(404, "Imagen no disponible")
-    return Response(content=data, media_type=image_media_type(data), headers={"Cache-Control": "private, max-age=86400"})
+    return Response(content=data, media_type=image_media_type(data), headers={"Cache-Control": "private, max-age=86400", "X-Image-Source": "sqlserver"})
 
 
 @app.get("/api/v1/cart")

@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Index, Integer, JSON, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Index, Integer, JSON, LargeBinary, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -185,6 +185,11 @@ class Product(Base, TimestampMixin):
     classification_reason: Mapped[str | None] = mapped_column(Text)
     classification_confidence: Mapped[str | None] = mapped_column(String(30), index=True)
     source_system: Mapped[str | None] = mapped_column(String(40), index=True)
+    image_data: Mapped[bytes | None] = mapped_column(LargeBinary, deferred=True)
+    image_media_type: Mapped[str | None] = mapped_column(String(80))
+    image_source_url: Mapped[str | None] = mapped_column(Text)
+    image_source_provider: Mapped[str | None] = mapped_column(String(160))
+    image_sha256: Mapped[str | None] = mapped_column(String(64), index=True)
     brand: Mapped[Brand] = relationship()
     category: Mapped[Category] = relationship()
     __table_args__ = (Index("ix_products_family_active", "family", "active"),)

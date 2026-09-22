@@ -20,6 +20,11 @@ def main():
                 "ALTER TABLE products ADD COLUMN IF NOT EXISTS classification_reason TEXT",
                 "ALTER TABLE products ADD COLUMN IF NOT EXISTS classification_confidence VARCHAR(30)",
                 "ALTER TABLE products ADD COLUMN IF NOT EXISTS source_system VARCHAR(40)",
+                "ALTER TABLE products ADD COLUMN IF NOT EXISTS image_data BYTEA",
+                "ALTER TABLE products ADD COLUMN IF NOT EXISTS image_media_type VARCHAR(80)",
+                "ALTER TABLE products ADD COLUMN IF NOT EXISTS image_source_url TEXT",
+                "ALTER TABLE products ADD COLUMN IF NOT EXISTS image_source_provider VARCHAR(160)",
+                "ALTER TABLE products ADD COLUMN IF NOT EXISTS image_sha256 VARCHAR(64)",
                 "CREATE INDEX IF NOT EXISTS ix_products_material_area_id ON products(material_area_id)",
                 "CREATE INDEX IF NOT EXISTS ix_products_material_family_id ON products(material_family_id)",
                 "CREATE INDEX IF NOT EXISTS ix_products_material_subfamily_id ON products(material_subfamily_id)",
@@ -27,6 +32,7 @@ def main():
                 "CREATE INDEX IF NOT EXISTS ix_products_classification_status ON products(classification_status)",
                 "CREATE INDEX IF NOT EXISTS ix_products_classification_confidence ON products(classification_confidence)",
                 "CREATE INDEX IF NOT EXISTS ix_products_source_system ON products(source_system)",
+                "CREATE INDEX IF NOT EXISTS ix_products_image_sha256 ON products(image_sha256)",
             ):
                 conn.execute(text(statement))
             conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
