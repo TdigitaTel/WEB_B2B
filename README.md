@@ -99,12 +99,29 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 
 La web queda disponible en el puerto definido por `WEB_PORT`, inicialmente el puerto 80. PostgreSQL no se publica en Internet y la API sigue accesible únicamente desde el propio servidor y la red interna de Docker.
 
+En la primera instalación, carga el catálogo clasificado del Excel en PostgreSQL:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api \
+  python -m app.import_materials /app/data/materials_classified.csv
+```
+
+Esta operación crea y relaciona departamentos, familias, subfamilias y tipos de producto; conserva la descripción original y carga la descripción normalizada utilizada por el buscador. El importador es repetible: actualiza los materiales por código y conserva una copia auditable de cada fila del archivo.
+
 Comprobaciones:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
 curl http://127.0.0.1/
 curl http://127.0.0.1:8000/health
+```
+
+Comprueba la carga del catálogo:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec db \
+  psql -U bermudez -d bermudez_b2b -c \
+  "SELECT source_system, active, count(*) FROM products GROUP BY source_system, active ORDER BY source_system, active;"
 ```
 
 Para actualizar una instalación existente:
