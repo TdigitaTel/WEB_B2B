@@ -63,16 +63,40 @@ def cart_payload(cart: Cart, user: User, db: Session) -> dict:
 
 def order_payload(order: Order, db: Session, include_items: bool = False) -> dict:
     store = db.get(Store, order.store_id)
+    customer = db.get(Customer, order.customer_id)
+    creator = db.get(User, order.user_id)
     result = {"id": order.public_id, "number": order.order_number, "status": order.status.value,
               "store": store.name, "store_code": store.code, "customer_reference": order.customer_reference,
               "job_name": order.job_name, "notes": order.notes, "subtotal": float(order.subtotal),
-              "tax_total": float(order.tax_total), "total": float(order.total), "created_at": order.created_at}
+              "tax_total": float(order.tax_total), "total": float(order.total), "created_at": order.created_at,
+              "customer": customer.trade_name or customer.legal_name, "created_by": creator.full_name}
     if include_items:
         result["items"] = [{"sku": item.sku, "description": item.description, "quantity": float(item.quantity),
                             "unit": item.unit, "unit_price": float(item.unit_price), "line_total": float(item.line_total)}
                            for item in db.scalars(select(OrderItem).where(OrderItem.order_id == order.id).order_by(OrderItem.id)).all()]
-        result["history"] = [{"status": h.status.value, "note": h.note, "created_at": h.created_at}
-                             for h in db.scalars(select(OrderStatusHistory).where(OrderStatusHistory.order_id == order.id).order_by(OrderStatusHistory.created_at)).all()]
+        history = db.scalars(select(OrderStatusHistory).where(OrderStatusHistory.order_id == order.id).order_by(OrderStatusHistory.created_at)).all()
+        result["history"] = [{"status": h.status.value, "note": h.note, "created_at": h.created_at} for h in history]
+        notes = db.scalars(select(DeliveryNote).where(DeliveryNote.order_id == order.id).order_by(DeliveryNote.created_at)).all()
+        invoices = db.scalars(select(Invoice).where(Invoice.order_id == order.id).order_by(Invoice.created_at)).all()
+        result["documents"] = [
+            {"id": row.public_id, "type": "ALBARAN", "number": row.number, "total": float(row.total),
+             "created_at": row.created_at, "available": bool(row.pdf_path)} for row in notes
+        ] + [
+            {"id": row.public_id, "type": "FACTURA", "number": row.number, "total": float(row.total),
+             "created_at": row.created_at, "status": row.status, "available": bool(row.pdf_path)} for row in invoices
+        ]
+        stage_dates = {"REGISTRADO": order.created_at, "EN_PREPARACION": None, "PREPARADO": None, "FACTURADO": None}
+        for event in history:
+            if event.status in {OrderStatus.sent, OrderStatus.received}:
+                stage_dates["REGISTRADO"] = stage_dates["REGISTRADO"] or event.created_at
+            elif event.status in {OrderStatus.preparing, OrderStatus.partial}:
+                stage_dates["EN_PREPARACION"] = stage_dates["EN_PREPARACION"] or event.created_at
+            elif event.status in {OrderStatus.ready, OrderStatus.delivered}:
+                stage_dates["PREPARADO"] = stage_dates["PREPARADO"] or event.created_at
+        if invoices:
+            stage_dates["FACTURADO"] = invoices[0].created_at
+        result["workflow"] = [{"status": status, "completed_at": completed_at} for status, completed_at in stage_dates.items()]
+        result["workflow_status"] = next((row["status"] for row in reversed(result["workflow"]) if row["completed_at"]), "REGISTRADO")
     return result
 
 
@@ -292,7 +316,7 @@ def create_order(data: OrderCreate, user: User = Depends(current_user), db: Sess
 def orders(user: User = Depends(current_user), db: Session = Depends(get_db)):
     customer = customer_for(user, db)
     rows = db.scalars(select(Order).where(Order.customer_id == customer.id).order_by(Order.created_at.desc()).limit(100)).all()
-    return [order_payload(o, db) for o in rows]
+    return [order_payload(o, db, True) for o in rows]
 
 
 @app.get("/api/v1/orders/{order_id}")
