@@ -66,6 +66,8 @@ export default function Page() {
   const [deliveryNotes, setDeliveryNotes] = useState<DocumentRow[]>([]);
   const [invoices, setInvoices] = useState<DocumentRow[]>([]);
   const [opsOrders, setOpsOrders] = useState<Order[]>([]);
+  const [kioskMode, setKioskMode] = useState(false);
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
 
   const isOperator = user?.role === "OPERADOR_TIENDA" || user?.role === "ADMIN";
 
@@ -79,6 +81,12 @@ export default function Page() {
   }, []);
 
   useEffect(() => { loadAccount(); }, [loadAccount]);
+
+  useEffect(() => {
+    const forced = new URLSearchParams(window.location.search).get("kiosk") === "1";
+    const touchKiosk = window.matchMedia("(pointer: coarse)").matches && window.innerWidth >= 800;
+    setKioskMode(forced || touchKiosk);
+  }, []);
 
   const refreshCustomerData = useCallback(async () => {
     if (!user || isOperator) return;
@@ -151,7 +159,7 @@ export default function Page() {
   if (loading) return <div className="loading">Preparando el portal profesional…</div>;
   if (!user) return <Login onLogin={login} error={error} />;
 
-  return <main className="shell">
+  return <main className={`shell ${kioskMode?"kiosk-mode":""} ${keyboardOpen?"keyboard-open":""}`}>
     <header className="header">
       <div className="head">
         <button className="brand" onClick={() => setView(isOperator ? "ops" : "home")} aria-label="Inicio"><img src="/bermudez-ulloa-logo.jpg" alt="Bermúdez Ulloa · 25 aniversario" /></button>
@@ -160,6 +168,7 @@ export default function Page() {
             <select aria-label="Departamento" value={catalogFilters.areaId} onChange={e=>{setCatalogFilters({areaId:e.target.value,familyId:"",subfamilyId:"",productTypeId:""});setView("catalog")}}><option value="">Todos los departamentos</option>{classification.map(area=><option key={area.id} value={area.id}>{area.name}</option>)}</select>
             <input aria-label="Buscar productos" value={query} onChange={e => {setQuery(e.target.value);setSuggestionsEnabled(true);setCatalogFilters(emptyCatalogFilters);setView("catalog")}} onKeyDown={e=>{if(e.key==="Escape"){setSuggestionsEnabled(false);setSuggestions([])}}} placeholder="Busca por producto, referencia o medida" />
             {!!query && <button className="search-clear" aria-label="Limpiar búsqueda" type="button" onClick={()=>{setQuery("");setCatalogFilters(emptyCatalogFilters);setSuggestionsEnabled(false);setSuggestions([]);setView("catalog")}}>×</button>}
+            {kioskMode&&<button className="keyboard-toggle" aria-label="Abrir teclado en pantalla" type="button" onClick={()=>setKeyboardOpen(value=>!value)}>⌨</button>}
             <button className="search-submit" aria-label="Buscar" type="submit">⌕</button>
           </form>
           {!!suggestions.length && <div className="suggestions" role="listbox" aria-label="Sugerencias de productos">{suggestions.map(p => <button className="suggestion" role="option" key={p.id} onClick={() => {setSuggestionsEnabled(false);setQuery(p.name);setCatalogFilters({areaId:String(p.area_id),familyId:String(p.family_id),subfamilyId:String(p.subfamily_id),productTypeId:String(p.product_type_id)});setSuggestions([]);setView("catalog")}}><span><b>{p.name}</b><br/><small>Código {p.sku}</small></span><span className="suggestion-side"><b>{money(p.price)}</b><small>Ver producto →</small></span></button>)}</div>}
@@ -178,8 +187,11 @@ export default function Page() {
     {view === "ops" && <Operations orders={opsOrders} onTransition={async (id,status) => { await api(`/api/v1/store/orders/${id}/transitions`, {method:"POST",body:JSON.stringify({status})}); setOpsOrders(await api<Order[]>("/api/v1/store/orders")); }} />}
     {!isOperator && <nav className="mobile-nav">{[["home","Inicio"],["catalog","Buscar"],["orders","Pedidos"],["account","Cuenta"]].map(([id,label]) => <button key={id} className={view===id?"active":""} onClick={() => setView(id as View)}>{label}</button>)}</nav>}
     {cartOpen && cart && <CartDrawer cart={cart} stores={stores} onClose={() => setCartOpen(false)} onUpdate={updateCart} onRemove={removeCart} onCheckout={checkout} />}
+    {kioskMode&&keyboardOpen&&<KioskKeyboard onKey={key=>{if(key==="BACKSPACE")setQuery(value=>Array.from(value).slice(0,-1).join(""));else if(key==="CLEAR")setQuery("");else if(key==="SPACE")setQuery(value=>value+" ");else setQuery(value=>value+key);setSuggestionsEnabled(true);setCatalogFilters(emptyCatalogFilters);setView("catalog")}} onSearch={()=>{setKeyboardOpen(false);setSuggestionsEnabled(false);setSuggestions([]);searchProducts().catch(e=>setError(e.message))}} onClose={()=>setKeyboardOpen(false)}/>}
   </main>;
 }
+
+function KioskKeyboard({onKey,onSearch,onClose}:{onKey:(key:string)=>void;onSearch:()=>void;onClose:()=>void}) { const rows=[["1","2","3","4","5","6","7","8","9","0","/",'"'],["Q","W","E","R","T","Y","U","I","O","P"],["A","S","D","F","G","H","J","K","L","Ñ"],["Z","X","C","V","B","N","M","-","."]]; return <aside className="kiosk-keyboard" aria-label="Teclado en pantalla"><div className="keyboard-head"><b>Teclado en pantalla</b><button onClick={onClose} aria-label="Cerrar teclado">×</button></div>{rows.map((row,index)=><div className="keyboard-row" key={index}>{row.map(key=><button key={key} onClick={()=>onKey(key)}>{key}</button>)}</div>)}<div className="keyboard-row keyboard-actions"><button onClick={()=>onKey("CLEAR")}>Limpiar</button><button className="space-key" onClick={()=>onKey("SPACE")}>Espacio</button><button onClick={()=>onKey("BACKSPACE")}>⌫ Borrar</button><button className="keyboard-search" onClick={onSearch}>Buscar</button></div></aside> }
 
 function Login({onLogin,error}:{onLogin:(email:string,password:string)=>Promise<void>;error:string}) {
   const [loginError,setLoginError]=useState(""); const [email,setEmail]=useState("compras001@cliente.test"); const [password,setPassword]=useState("123456"); const [busy,setBusy]=useState(false);
