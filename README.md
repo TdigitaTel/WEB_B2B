@@ -113,7 +113,7 @@ Comprobaciones:
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
 curl http://127.0.0.1/
-curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:${API_PORT:-8001}/health
 ```
 
 Comprueba la carga del catálogo:
