@@ -99,13 +99,27 @@ def fetch_product_stocks(article_codes: list[str]) -> dict[str, list[dict]]:
             rows = cursor.fetchall()
 
     result: dict[str, list[dict]] = {code: [] for code in codes}
+    combined_00_99: dict[str, float] = {}
     for row in rows:
         code = str(row["article_code"]).strip()
+        warehouse_code = str(row["warehouse_code"]).strip()
+        available = float(row["available"] or 0)
+        if warehouse_code in {"00", "99"}:
+            combined_00_99[code] = combined_00_99.get(code, 0) + available
+            continue
         result.setdefault(code, []).append({
-            "store_code": str(row["warehouse_code"]).strip(),
+            "store_code": warehouse_code,
             "store": str(row["warehouse_name"]).strip(),
-            "available": float(row["available"] or 0),
+            "available": available,
         })
+    for code, available in combined_00_99.items():
+        result.setdefault(code, []).append({
+            "store_code": "00 + 99",
+            "store": "Almeiras + KARDEX",
+            "available": available,
+        })
+    for stock in result.values():
+        stock.sort(key=lambda item: item["store"])
     return result
 
 
