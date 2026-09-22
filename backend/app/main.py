@@ -1,8 +1,12 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
+from io import BytesIO
 import logging
+from pathlib import Path
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Response
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -353,6 +357,48 @@ def invoices(user: User = Depends(current_user), db: Session = Depends(get_db)):
     rows = db.scalars(select(Invoice).where(Invoice.customer_id == customer.id).order_by(Invoice.created_at.desc())).all()
     return [{"id": x.public_id, "number": x.number, "due_date": x.due_date, "subtotal": float(x.subtotal),
              "tax_total": float(x.tax_total), "total": float(x.total), "status": x.status} for x in rows]
+
+
+@app.get("/api/v1/documents/{document_type}/{document_id}/file")
+def document_file(document_type: str, document_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    customer = customer_for(user, db)
+    model = DeliveryNote if document_type.upper() == "ALBARAN" else Invoice if document_type.upper() == "FACTURA" else None
+    if not model:
+        raise HTTPException(404, "Tipo de documento no valido")
+    document = db.scalar(select(model).where(model.public_id == document_id, model.customer_id == customer.id))
+    if not document or not document.pdf_path:
+        raise HTTPException(404, "Documento no disponible")
+    path = Path(document.pdf_path)
+    if not path.is_file():
+        raise HTTPException(404, "El archivo del documento no esta disponible")
+    return FileResponse(path, media_type="application/pdf", filename=f"{document.number}.pdf")
+
+
+@app.get("/api/v1/documents/download")
+def download_documents(date_from: date | None = None, date_to: date | None = None,
+                       user: User = Depends(current_user), db: Session = Depends(get_db)):
+    customer = customer_for(user, db)
+    files: list[tuple[str, Path]] = []
+    for model, prefix in ((DeliveryNote, "albaran"), (Invoice, "factura")):
+        stmt = select(model).where(model.customer_id == customer.id, model.pdf_path.is_not(None))
+        if date_from:
+            stmt = stmt.where(func.date(model.created_at) >= date_from)
+        if date_to:
+            stmt = stmt.where(func.date(model.created_at) <= date_to)
+        for document in db.scalars(stmt.order_by(model.created_at.desc())).all():
+            path = Path(document.pdf_path)
+            if path.is_file():
+                files.append((f"{prefix}_{document.number}.pdf", path))
+    if not files:
+        raise HTTPException(404, "No hay archivos disponibles para las fechas seleccionadas")
+    output = BytesIO()
+    with ZipFile(output, "w", ZIP_DEFLATED) as archive:
+        for filename, path in files:
+            archive.write(path, arcname=filename)
+    output.seek(0)
+    return StreamingResponse(output, media_type="application/zip", headers={
+        "Content-Disposition": 'attachment; filename="documentos_pedidos.zip"'
+    })
 
 
 ALLOWED_TRANSITIONS = {
