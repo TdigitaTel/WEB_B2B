@@ -172,3 +172,10 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api \
 ```
 
 Cada tarjeta solicita `/api/v1/products/{id}/image`. La API relaciona el SKU del catálogo con `SQLSERVER_IMAGE_KEY_COLUMN` y devuelve el binario como JPEG, PNG, GIF, BMP o WebP. Cuando no existe una fotografía, la tarjeta conserva el marcador visual de la familia.
+
+Para comprobar una referencia concreta:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api \
+  python -m scripts.check_sqlserver_image 24664
+```
