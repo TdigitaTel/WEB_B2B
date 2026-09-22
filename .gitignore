@@ -1,0 +1,16 @@
+.env
+__pycache__/
+*.py[cod]
+.pytest_cache/
+node_modules/
+.next/
+postgres_data/
+.DS_Store
+*.sql
+*.sqlite
+*.sqlite3
+*.db
+backups/
+*.zip
+coverage/
+.coverage
