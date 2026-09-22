@@ -50,7 +50,16 @@ def fetch_product_image(article_code: str) -> bytes | None:
             row = cursor.fetchone()
     if not row or row["image_data"] is None:
         return None
-    return bytes(row["image_data"])
+    return normalize_image_data(bytes(row["image_data"]))
+
+
+def normalize_image_data(data: bytes) -> bytes:
+    """Elimina cabeceras OLE/propietarias anteriores al contenido gráfico real."""
+    signatures = (b"\xff\xd8\xff", b"\x89PNG\r\n\x1a\n", b"GIF87a", b"GIF89a", b"BM", b"RIFF")
+    positions = [position for signature in signatures if (position := data.find(signature, 0, 8192)) >= 0]
+    if positions:
+        return data[min(positions):]
+    return data
 
 
 def image_media_type(data: bytes) -> str:

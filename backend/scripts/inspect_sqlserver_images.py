@@ -39,7 +39,8 @@ def main():
                 if key_name:
                     cursor.execute(
                         f"SELECT TOP 10 CAST({identifier(key_name)} AS varchar(100)) AS article_key, "
-                        f"DATALENGTH({identifier(image_name)}) AS image_bytes "
+                        f"DATALENGTH({identifier(image_name)}) AS image_bytes, "
+                        f"CONVERT(varchar(64), SUBSTRING({identifier(image_name)}, 1, 16), 2) AS first_bytes_hex "
                         f"FROM {qualified} WHERE {identifier(image_name)} IS NOT NULL "
                         f"ORDER BY DATALENGTH({identifier(image_name)}) DESC"
                     )
