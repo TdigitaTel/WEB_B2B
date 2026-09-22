@@ -134,13 +134,17 @@ def products(q: str = "", family: str | None = None, area_id: int | None = None,
     rows, total = PostgresCatalogService(db).search(
         q, page, page_size, family, area_id, family_id, subfamily_id, product_type_id
     )
+    product_codes = [product.sku for product in rows]
     try:
-        product_codes = [product.sku for product in rows]
         stocks = fetch_product_stocks(product_codes)
-        prices = fetch_product_prices(product_codes)
     except Exception:
         logger.exception("Error consultando stock ERP para el catalogo")
         raise HTTPException(503, "No se pudo consultar el stock en el ERP")
+    try:
+        prices = fetch_product_prices(product_codes)
+    except Exception:
+        logger.exception("Error consultando precios ERP para el catalogo")
+        prices = {}
     return {"items": [product_view(p, customer, db, stocks.get(p.sku, []), prices.get(p.sku)) for p in rows], "total": total, "page": page, "page_size": page_size}
 
 
@@ -198,10 +202,14 @@ def product_detail(product_id: str, user: User = Depends(current_user), db: Sess
     if not product: raise HTTPException(404, "Producto no encontrado")
     try:
         stock = fetch_product_stock(product.sku)
-        price = fetch_product_price(product.sku)
     except Exception:
         logger.exception("Error consultando stock ERP para SKU %s", product.sku)
         raise HTTPException(503, "No se pudo consultar el stock en el ERP")
+    try:
+        price = fetch_product_price(product.sku)
+    except Exception:
+        logger.exception("Error consultando precios ERP para SKU %s", product.sku)
+        price = None
     return product_view(product, customer_for(user, db), db, stock, price)
 
 
