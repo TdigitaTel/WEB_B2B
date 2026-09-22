@@ -112,6 +112,41 @@ def fetch_product_stock(article_code: str) -> list[dict]:
     return fetch_product_stocks([article_code]).get(str(article_code).strip(), [])
 
 
+def fetch_product_prices(article_codes: list[str]) -> dict[str, dict]:
+    """Obtiene los precios con y sin IVA de la tabla de articulos del ERP."""
+    codes = list(dict.fromkeys(str(code).strip() for code in article_codes if str(code).strip()))
+    if not codes:
+        return {}
+    schema = _identifier(settings.sqlserver_articles_schema)
+    table = _identifier(settings.sqlserver_articles_table)
+    code_column = _identifier(settings.sqlserver_articles_code_column)
+    with_tax_column = _identifier(settings.sqlserver_price_with_tax_column)
+    without_tax_column = _identifier(settings.sqlserver_price_without_tax_column)
+    placeholders = ", ".join(["%s"] * len(codes))
+    sql = (
+        f"SELECT LTRIM(RTRIM(CONVERT(varchar(100), {code_column}))) AS article_code, "
+        f"COALESCE({with_tax_column}, 0) AS price_with_tax, "
+        f"COALESCE({without_tax_column}, 0) AS price_without_tax "
+        f"FROM {schema}.{table} "
+        f"WHERE LTRIM(RTRIM(CONVERT(varchar(100), {code_column}))) IN ({placeholders})"
+    )
+    with connect_sqlserver() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(sql, tuple(codes))
+            rows = cursor.fetchall()
+    return {
+        str(row["article_code"]).strip(): {
+            "with_tax": float(row["price_with_tax"] or 0),
+            "without_tax": float(row["price_without_tax"] or 0),
+        }
+        for row in rows
+    }
+
+
+def fetch_product_price(article_code: str) -> dict | None:
+    return fetch_product_prices([article_code]).get(str(article_code).strip())
+
+
 def normalize_image_data(data: bytes) -> bytes:
     """Elimina cabeceras OLE/propietarias anteriores al contenido gráfico real."""
     signatures = (b"\xff\xd8\xff", b"\x89PNG\r\n\x1a\n", b"GIF87a", b"GIF89a", b"BM", b"RIFF")

@@ -120,8 +120,11 @@ class PostgresStockService:
         } for inv, store in rows]
 
 
-def product_view(product: Product, customer: Customer, db: Session, stock: list[dict] | None = None) -> dict:
-    price = PostgresPriceService().price_for(product, customer)
+def product_view(product: Product, customer: Customer, db: Session, stock: list[dict] | None = None,
+                 erp_price: dict | None = None) -> dict:
+    fallback_price = PostgresPriceService().price_for(product, customer)
+    price_with_tax = erp_price["with_tax"] if erp_price else float(fallback_price)
+    price_without_tax = erp_price["without_tax"] if erp_price else float(product.list_price)
     stock = PostgresStockService(db).stock_for(product.id) if stock is None else stock
     return {
         "id": product.public_id,
@@ -138,8 +141,10 @@ def product_view(product: Product, customer: Customer, db: Session, stock: list[
         "classification_status": product.classification_status,
         "classification_confidence": product.classification_confidence,
         "unit": product.unit,
-        "list_price": float(product.list_price),
-        "customer_price": float(price),
+        "list_price": price_without_tax,
+        "customer_price": price_with_tax,
+        "price_with_tax": price_with_tax,
+        "price_without_tax": price_without_tax,
         "tax_rate": float(product.tax_rate),
         "attributes": product.attributes,
         "stock": stock,

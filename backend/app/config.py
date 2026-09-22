@@ -23,8 +23,13 @@ class Settings(BaseSettings):
     sqlserver_warehouses_schema: str = "dbo"
     sqlserver_warehouses_table: str = "almacenes"
     sqlserver_warehouses_code_column: str = "CodigoAlmacen"
-    sqlserver_warehouses_description_column: str = "Descripcion"
+    sqlserver_warehouses_description_column: str = "Almacen"
     sqlserver_stock_excluded_warehouses: str = "97,98"
+    sqlserver_articles_schema: str = "dbo"
+    sqlserver_articles_table: str = "articulos"
+    sqlserver_articles_code_column: str = "CodigoArticulo"
+    sqlserver_price_with_tax_column: str = "PrecioVentaConIVA0"
+    sqlserver_price_without_tax_column: str = "PrecioVentaSinIVA0"
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

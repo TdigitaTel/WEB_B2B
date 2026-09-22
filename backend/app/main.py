@@ -9,7 +9,10 @@ from sqlalchemy.orm import Session
 
 from .auth import audit, create_access_token, current_user, require_roles, verify_password
 from .db import get_db
-from .erp_db import fetch_product_image, fetch_product_stock, fetch_product_stocks, image_media_type
+from .erp_db import (
+    fetch_product_image, fetch_product_price, fetch_product_prices,
+    fetch_product_stock, fetch_product_stocks, image_media_type,
+)
 from .models import (
     Cart, CartItem, Customer, DeliveryNote, IntegrationOutbox, Invoice, Notification,
     MaterialArea, MaterialFamily, MaterialProductType, MaterialSubfamily, Order, OrderItem,
@@ -132,11 +135,13 @@ def products(q: str = "", family: str | None = None, area_id: int | None = None,
         q, page, page_size, family, area_id, family_id, subfamily_id, product_type_id
     )
     try:
-        stocks = fetch_product_stocks([product.sku for product in rows])
+        product_codes = [product.sku for product in rows]
+        stocks = fetch_product_stocks(product_codes)
+        prices = fetch_product_prices(product_codes)
     except Exception:
         logger.exception("Error consultando stock ERP para el catalogo")
         raise HTTPException(503, "No se pudo consultar el stock en el ERP")
-    return {"items": [product_view(p, customer, db, stocks.get(p.sku, [])) for p in rows], "total": total, "page": page, "page_size": page_size}
+    return {"items": [product_view(p, customer, db, stocks.get(p.sku, []), prices.get(p.sku)) for p in rows], "total": total, "page": page, "page_size": page_size}
 
 
 @app.get("/api/v1/catalog/classification")
@@ -193,10 +198,11 @@ def product_detail(product_id: str, user: User = Depends(current_user), db: Sess
     if not product: raise HTTPException(404, "Producto no encontrado")
     try:
         stock = fetch_product_stock(product.sku)
+        price = fetch_product_price(product.sku)
     except Exception:
         logger.exception("Error consultando stock ERP para SKU %s", product.sku)
         raise HTTPException(503, "No se pudo consultar el stock en el ERP")
-    return product_view(product, customer_for(user, db), db, stock)
+    return product_view(product, customer_for(user, db), db, stock, price)
 
 
 @app.get("/api/v1/products/{product_id}/image")
