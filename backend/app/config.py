@@ -11,6 +11,10 @@ class Settings(BaseSettings):
     sqlserver_database: str = ""
     sqlserver_user: str = ""
     sqlserver_password: str = ""
+    sqlserver_image_schema: str = "dbo"
+    sqlserver_image_table: str = "imagenes"
+    sqlserver_image_key_column: str = "CodigoArticulo"
+    sqlserver_image_column: str = "imagen"
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

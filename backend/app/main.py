@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from .auth import audit, create_access_token, current_user, require_roles, verify_password
 from .db import get_db
+from .erp_db import fetch_product_image, image_media_type
 from .models import (
     Cart, CartItem, Customer, DeliveryNote, IntegrationOutbox, Invoice, Notification,
     MaterialArea, MaterialFamily, MaterialProductType, MaterialSubfamily, Order, OrderItem,
@@ -184,6 +185,21 @@ def product_detail(product_id: str, user: User = Depends(current_user), db: Sess
     product = db.scalar(select(Product).where(Product.public_id == product_id, Product.active.is_(True)))
     if not product: raise HTTPException(404, "Producto no encontrado")
     return product_view(product, customer_for(user, db), db)
+
+
+@app.get("/api/v1/products/{product_id}/image")
+def product_image(product_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    customer_for(user, db)
+    product = db.scalar(select(Product).where(Product.public_id == product_id, Product.active.is_(True)))
+    if not product:
+        raise HTTPException(404, "Producto no encontrado")
+    try:
+        data = fetch_product_image(product.sku)
+    except Exception:
+        raise HTTPException(503, "No se pudo consultar la imagen en el ERP")
+    if not data:
+        raise HTTPException(404, "Imagen no disponible")
+    return Response(content=data, media_type=image_media_type(data), headers={"Cache-Control": "private, max-age=86400"})
 
 
 @app.get("/api/v1/cart")

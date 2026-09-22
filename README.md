@@ -152,3 +152,23 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api \
 ```
 
 La prueba solo consulta el nombre del servidor y de la base de datos. Si `WSRV25BBDD` no se resuelve desde Linux, usa su dirección IP en `SQLSERVER_HOST`.
+
+### Imágenes del catálogo desde SQL Server
+
+La web obtiene las fotografías directamente de un campo binario de SQL Server. Configuración predeterminada:
+
+```env
+SQLSERVER_IMAGE_SCHEMA=dbo
+SQLSERVER_IMAGE_TABLE=imagenes
+SQLSERVER_IMAGE_KEY_COLUMN=CodigoArticulo
+SQLSERVER_IMAGE_COLUMN=imagen
+```
+
+Antes de activarlo, comprueba los nombres reales de las columnas:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api \
+  python -m scripts.inspect_sqlserver_images
+```
+
+Cada tarjeta solicita `/api/v1/products/{id}/image`. La API relaciona el SKU del catálogo con `SQLSERVER_IMAGE_KEY_COLUMN` y devuelve el binario como JPEG, PNG, GIF, BMP o WebP. Cuando no existe una fotografía, la tarjeta conserva el marcador visual de la familia.

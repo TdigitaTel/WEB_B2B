@@ -11,3 +11,4 @@
 @media(max-width:900px){.catalog-layout{grid-template-columns:250px minmax(0,1fr)}.search-form select{width:165px}}
 @media(max-width:550px){.category-panel{position:static;max-height:360px;margin-bottom:14px}.catalog-layout{display:block}.search-form select{width:115px}.catalog-tree summary button{font-size:11px}}
 .search-form>.search-clear{min-width:42px;background:#fff;color:#5f6f7a;font-size:25px;font-weight:400;padding:0;border-left:1px solid var(--line)}.search-form>.search-clear:hover{background:#f3f5f7;color:var(--ink)}.search-form>.search-submit{background:var(--red);color:#fff}
+.product-visual img{width:100%;height:100%;object-fit:contain;display:block;border-radius:6px;background:#fff}
