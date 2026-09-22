@@ -125,6 +125,7 @@ def product_view(product: Product, customer: Customer, db: Session) -> dict:
     stock = PostgresStockService(db).stock_for(product.id)
     return {
         "id": product.public_id,
+        "image_url": f"/api/v1/products/{product.public_id}/image",
         "sku": product.sku,
         "ean": product.ean,
         "manufacturer_reference": product.manufacturer_reference,
