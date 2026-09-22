@@ -130,3 +130,25 @@ Para actualizar una instalación existente:
 git pull --ff-only
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
+
+## Conexión de solo lectura al ERP SQL Server
+
+La conexión al ERP es independiente de PostgreSQL. Configura estas variables únicamente en el `.env` privado del servidor:
+
+```env
+SQLSERVER_HOST=WSRV25BBDD
+SQLSERVER_PORT=1433
+SQLSERVER_DATABASE=EXITERP
+SQLSERVER_USER=SBU
+SQLSERVER_PASSWORD=CLAVE_REAL
+```
+
+Reconstruye la API y prueba la conexión:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build api
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api \
+  python -m scripts.test_sqlserver
+```
+
+La prueba solo consulta el nombre del servidor y de la base de datos. Si `WSRV25BBDD` no se resuelve desde Linux, usa su dirección IP en `SQLSERVER_HOST`.

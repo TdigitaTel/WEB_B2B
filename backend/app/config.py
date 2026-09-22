@@ -6,8 +6,12 @@ class Settings(BaseSettings):
     jwt_secret: str = "desarrollo_local_cambiar"
     seed_products: int = 15000
     seed_customers: int = 100
+    sqlserver_host: str = ""
+    sqlserver_port: int = 1433
+    sqlserver_database: str = ""
+    sqlserver_user: str = ""
+    sqlserver_password: str = ""
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 
 settings = Settings()
-
