@@ -12,7 +12,7 @@ STOCK = {
     "table": "tempstockarticulo",
     "article_code": "CodigoArticulo",
     "warehouse_code": "CodigoAlmacen",
-    "units": "UnidadesSaldo",
+    "units": "UnidadSaldo",
 }
 
 WAREHOUSE = {

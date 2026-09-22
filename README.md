@@ -170,7 +170,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api \
   python -m scripts.inspect_sqlserver_images
 ```
 
-Cada tarjeta solicita `/api/v1/products/{id}/image`. La API relaciona el SKU del catálogo con `dbo.imagenes.CodigoArticulo` y devuelve el binario como JPEG, PNG, GIF, BMP o WebP. El stock se obtiene de `dbo.tempstockarticulo`, los nombres de almacén de `dbo.almacenes` y los precios de `dbo.articulos`.
+Cada tarjeta solicita `/api/v1/products/{id}/image`. La API relaciona el SKU del catálogo con `dbo.imagenes.CodigoArticulo` y devuelve el binario como JPEG, PNG, GIF, BMP o WebP. El stock se obtiene de `dbo.tempstockarticulo.UnidadSaldo`, los nombres de almacén de `dbo.almacenes` y los precios de `dbo.articulos`.
 
 Para comprobar una referencia concreta:
 
