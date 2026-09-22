@@ -153,25 +153,24 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api \
 
 La prueba solo consulta el nombre del servidor y de la base de datos. Si `WSRV25BBDD` no se resuelve desde Linux, usa su dirección IP en `SQLSERVER_HOST`.
 
-### Imágenes del catálogo desde SQL Server
+### Integración del catálogo con SQL Server
 
-La web obtiene las fotografías directamente de un campo binario de SQL Server. Configuración predeterminada:
+La API concentra el acceso al ERP en `backend/app/erp_db.py`. La estructura conocida de EXITERP se mantiene en `backend/app/erp_schema.py`; allí se registran las tablas y columnas de imágenes, artículos, stock y almacenes. Por este motivo, los nombres de tablas no se guardan en `.env`.
+
+El `.env` privado contiene solamente las credenciales de conexión y parámetros de operación. Los almacenes que no participan en el stock comercial se configuran así:
 
 ```env
-SQLSERVER_IMAGE_SCHEMA=dbo
-SQLSERVER_IMAGE_TABLE=imagenes
-SQLSERVER_IMAGE_KEY_COLUMN=CodigoArticulo
-SQLSERVER_IMAGE_COLUMN=imagen
+SQLSERVER_STOCK_EXCLUDED_WAREHOUSES=97,98
 ```
 
-Antes de activarlo, comprueba los nombres reales de las columnas:
+Para inspeccionar las imágenes disponibles:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api \
   python -m scripts.inspect_sqlserver_images
 ```
 
-Cada tarjeta solicita `/api/v1/products/{id}/image`. La API relaciona el SKU del catálogo con `SQLSERVER_IMAGE_KEY_COLUMN` y devuelve el binario como JPEG, PNG, GIF, BMP o WebP. Cuando no existe una fotografía, la tarjeta conserva el marcador visual de la familia.
+Cada tarjeta solicita `/api/v1/products/{id}/image`. La API relaciona el SKU del catálogo con `dbo.imagenes.CodigoArticulo` y devuelve el binario como JPEG, PNG, GIF, BMP o WebP. El stock se obtiene de `dbo.tempstockarticulo`, los nombres de almacén de `dbo.almacenes` y los precios de `dbo.articulos`.
 
 Para comprobar una referencia concreta:
 

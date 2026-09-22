@@ -2,6 +2,7 @@ import pymssql
 import re
 
 from .config import settings
+from .erp_schema import ARTICLE, IMAGE, STOCK, WAREHOUSE
 
 
 def connect_sqlserver():
@@ -35,10 +36,10 @@ def _identifier(value: str) -> str:
 
 
 def fetch_product_image(article_code: str) -> bytes | None:
-    schema = _identifier(settings.sqlserver_image_schema)
-    table = _identifier(settings.sqlserver_image_table)
-    key_column = _identifier(settings.sqlserver_image_key_column)
-    image_column = _identifier(settings.sqlserver_image_column)
+    schema = _identifier(IMAGE["schema"])
+    table = _identifier(IMAGE["table"])
+    key_column = _identifier(IMAGE["article_code"])
+    image_column = _identifier(IMAGE["data"])
     sql = (
         f"SELECT TOP 1 {image_column} AS image_data "
         f"FROM {schema}.{table} "
@@ -59,15 +60,15 @@ def fetch_product_stocks(article_codes: list[str]) -> dict[str, list[dict]]:
     if not codes:
         return {}
 
-    stock_schema = _identifier(settings.sqlserver_stock_schema)
-    stock_table = _identifier(settings.sqlserver_stock_table)
-    article_column = _identifier(settings.sqlserver_stock_article_column)
-    warehouse_column = _identifier(settings.sqlserver_stock_warehouse_column)
-    units_column = _identifier(settings.sqlserver_stock_units_column)
-    warehouses_schema = _identifier(settings.sqlserver_warehouses_schema)
-    warehouses_table = _identifier(settings.sqlserver_warehouses_table)
-    warehouses_code_column = _identifier(settings.sqlserver_warehouses_code_column)
-    description_column = _identifier(settings.sqlserver_warehouses_description_column)
+    stock_schema = _identifier(STOCK["schema"])
+    stock_table = _identifier(STOCK["table"])
+    article_column = _identifier(STOCK["article_code"])
+    warehouse_column = _identifier(STOCK["warehouse_code"])
+    units_column = _identifier(STOCK["units"])
+    warehouses_schema = _identifier(WAREHOUSE["schema"])
+    warehouses_table = _identifier(WAREHOUSE["table"])
+    warehouses_code_column = _identifier(WAREHOUSE["code"])
+    description_column = _identifier(WAREHOUSE["name"])
     excluded = [code.strip() for code in settings.sqlserver_stock_excluded_warehouses.split(",") if code.strip()]
 
     code_placeholders = ", ".join(["%s"] * len(codes))
@@ -117,11 +118,11 @@ def fetch_product_prices(article_codes: list[str]) -> dict[str, dict]:
     codes = list(dict.fromkeys(str(code).strip() for code in article_codes if str(code).strip()))
     if not codes:
         return {}
-    schema = _identifier(settings.sqlserver_articles_schema)
-    table = _identifier(settings.sqlserver_articles_table)
-    code_column = _identifier(settings.sqlserver_articles_code_column)
-    with_tax_column = _identifier(settings.sqlserver_price_with_tax_column)
-    without_tax_column = _identifier(settings.sqlserver_price_without_tax_column)
+    schema = _identifier(ARTICLE["schema"])
+    table = _identifier(ARTICLE["table"])
+    code_column = _identifier(ARTICLE["code"])
+    with_tax_column = _identifier(ARTICLE["price_with_tax"])
+    without_tax_column = _identifier(ARTICLE["price_without_tax"])
     placeholders = ", ".join(["%s"] * len(codes))
     sql = (
         f"SELECT LTRIM(RTRIM(CONVERT(varchar(100), {code_column}))) AS article_code, "

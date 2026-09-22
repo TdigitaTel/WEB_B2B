@@ -2,8 +2,8 @@ import re
 import sys
 from pathlib import Path
 
-from app.config import settings
 from app.erp_db import connect_sqlserver, image_media_type, normalize_image_data
+from app.erp_schema import IMAGE
 
 
 SEARCHABLE_TYPES = {
@@ -31,9 +31,9 @@ def main():
         raise SystemExit("Uso: python -m scripts.find_sqlserver_image CODIGO")
 
     code = sys.argv[1].strip()
-    schema = identifier(settings.sqlserver_image_schema)
-    table = identifier(settings.sqlserver_image_table)
-    image_column = identifier(settings.sqlserver_image_column)
+    schema = identifier(IMAGE["schema"])
+    table = identifier(IMAGE["table"])
+    image_column = identifier(IMAGE["data"])
     qualified_table = f"{schema}.{table}"
     matches = []
     image_data = None
@@ -47,7 +47,7 @@ def main():
                 WHERE TABLE_SCHEMA = %s AND LOWER(TABLE_NAME) = LOWER(%s)
                 ORDER BY ORDINAL_POSITION
                 """,
-                (settings.sqlserver_image_schema, settings.sqlserver_image_table),
+                (IMAGE["schema"], IMAGE["table"]),
             )
             columns = cursor.fetchall()
 

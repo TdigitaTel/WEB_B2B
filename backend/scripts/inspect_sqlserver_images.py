@@ -1,7 +1,7 @@
-from app.config import settings
 import re
 
 from app.erp_db import connect_sqlserver
+from app.erp_schema import IMAGE
 
 
 def identifier(value: str) -> str:
@@ -20,16 +20,16 @@ def main():
                 WHERE TABLE_SCHEMA = %s AND LOWER(TABLE_NAME) = LOWER(%s)
                 ORDER BY ORDINAL_POSITION
                 """,
-                (settings.sqlserver_image_schema, settings.sqlserver_image_table),
+                (IMAGE["schema"], IMAGE["table"]),
             )
             columns = cursor.fetchall()
             names = {row["COLUMN_NAME"].lower(): row["COLUMN_NAME"] for row in columns}
-            image_name = names.get(settings.sqlserver_image_column.lower())
-            key_name = names.get(settings.sqlserver_image_key_column.lower())
+            image_name = names.get(IMAGE["data"].lower())
+            key_name = names.get(IMAGE["article_code"].lower())
             summary = None
             samples = []
             if image_name:
-                qualified = f"{identifier(settings.sqlserver_image_schema)}.{identifier(settings.sqlserver_image_table)}"
+                qualified = f"{identifier(IMAGE['schema'])}.{identifier(IMAGE['table'])}"
                 cursor.execute(
                     f"SELECT COUNT(*) AS total_rows, "
                     f"SUM(CASE WHEN {identifier(image_name)} IS NOT NULL AND DATALENGTH({identifier(image_name)}) > 0 THEN 1 ELSE 0 END) AS rows_with_image "
@@ -47,10 +47,10 @@ def main():
                     samples = cursor.fetchall()
     print({
         "configured": {
-            "schema": settings.sqlserver_image_schema,
-            "table": settings.sqlserver_image_table,
-            "key_column": settings.sqlserver_image_key_column,
-            "image_column": settings.sqlserver_image_column,
+            "schema": IMAGE["schema"],
+            "table": IMAGE["table"],
+            "key_column": IMAGE["article_code"],
+            "image_column": IMAGE["data"],
         },
         "columns": columns,
         "configured_key_found": bool(key_name),
