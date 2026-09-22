@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from decimal import Decimal
+import logging
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,6 +19,7 @@ from .schemas import CartItemIn, CartItemUpdate, LoginIn, OrderCreate, StatusCha
 from .services import PostgresCatalogService, PostgresPriceService, PostgresStockService, product_view
 
 app = FastAPI(title="Bermúdez B2B API", version="1.0.0", openapi_url="/api/v1/openapi.json", docs_url="/docs")
+logger = logging.getLogger(__name__)
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 
@@ -196,6 +198,7 @@ def product_image(product_id: str, user: User = Depends(current_user), db: Sessi
     try:
         data = fetch_product_image(product.sku)
     except Exception:
+        logger.exception("Error consultando imagen ERP para SKU %s", product.sku)
         raise HTTPException(503, "No se pudo consultar la imagen en el ERP")
     if not data:
         raise HTTPException(404, "Imagen no disponible")
