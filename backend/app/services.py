@@ -120,9 +120,9 @@ class PostgresStockService:
         } for inv, store in rows]
 
 
-def product_view(product: Product, customer: Customer, db: Session) -> dict:
+def product_view(product: Product, customer: Customer, db: Session, stock: list[dict] | None = None) -> dict:
     price = PostgresPriceService().price_for(product, customer)
-    stock = PostgresStockService(db).stock_for(product.id)
+    stock = PostgresStockService(db).stock_for(product.id) if stock is None else stock
     return {
         "id": product.public_id,
         "image_url": f"/api/v1/products/{product.public_id}/image",

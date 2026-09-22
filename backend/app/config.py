@@ -15,6 +15,16 @@ class Settings(BaseSettings):
     sqlserver_image_table: str = "imagenes"
     sqlserver_image_key_column: str = "CodigoArticulo"
     sqlserver_image_column: str = "imagen"
+    sqlserver_stock_schema: str = "dbo"
+    sqlserver_stock_table: str = "tempstockarticulo"
+    sqlserver_stock_article_column: str = "CodigoArticulo"
+    sqlserver_stock_warehouse_column: str = "CodigoAlmacen"
+    sqlserver_stock_units_column: str = "UnidadesSaldo"
+    sqlserver_warehouses_schema: str = "dbo"
+    sqlserver_warehouses_table: str = "almacenes"
+    sqlserver_warehouses_code_column: str = "CodigoAlmacen"
+    sqlserver_warehouses_description_column: str = "Descripcion"
+    sqlserver_stock_excluded_warehouses: str = "97,98"
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

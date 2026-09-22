@@ -53,6 +53,65 @@ def fetch_product_image(article_code: str) -> bytes | None:
     return normalize_image_data(bytes(row["image_data"]))
 
 
+def fetch_product_stocks(article_codes: list[str]) -> dict[str, list[dict]]:
+    """Obtiene el stock ERP agrupado por articulo y almacen en una sola consulta."""
+    codes = list(dict.fromkeys(str(code).strip() for code in article_codes if str(code).strip()))
+    if not codes:
+        return {}
+
+    stock_schema = _identifier(settings.sqlserver_stock_schema)
+    stock_table = _identifier(settings.sqlserver_stock_table)
+    article_column = _identifier(settings.sqlserver_stock_article_column)
+    warehouse_column = _identifier(settings.sqlserver_stock_warehouse_column)
+    units_column = _identifier(settings.sqlserver_stock_units_column)
+    warehouses_schema = _identifier(settings.sqlserver_warehouses_schema)
+    warehouses_table = _identifier(settings.sqlserver_warehouses_table)
+    warehouses_code_column = _identifier(settings.sqlserver_warehouses_code_column)
+    description_column = _identifier(settings.sqlserver_warehouses_description_column)
+    excluded = [code.strip() for code in settings.sqlserver_stock_excluded_warehouses.split(",") if code.strip()]
+
+    code_placeholders = ", ".join(["%s"] * len(codes))
+    exclusion_sql = ""
+    parameters = list(codes)
+    if excluded:
+        exclusion_sql = f"AND LTRIM(RTRIM(CONVERT(varchar(100), s.{warehouse_column}))) NOT IN ({', '.join(['%s'] * len(excluded))}) "
+        parameters.extend(excluded)
+
+    sql = (
+        f"SELECT LTRIM(RTRIM(CONVERT(varchar(100), s.{article_column}))) AS article_code, "
+        f"LTRIM(RTRIM(CONVERT(varchar(100), s.{warehouse_column}))) AS warehouse_code, "
+        f"COALESCE(CONVERT(varchar(250), a.{description_column}), "
+        f"LTRIM(RTRIM(CONVERT(varchar(100), s.{warehouse_column})))) AS warehouse_name, "
+        f"SUM(COALESCE(s.{units_column}, 0)) AS available "
+        f"FROM {stock_schema}.{stock_table} s "
+        f"LEFT JOIN {warehouses_schema}.{warehouses_table} a "
+        f"ON LTRIM(RTRIM(CONVERT(varchar(100), a.{warehouses_code_column}))) = "
+        f"LTRIM(RTRIM(CONVERT(varchar(100), s.{warehouse_column}))) "
+        f"WHERE LTRIM(RTRIM(CONVERT(varchar(100), s.{article_column}))) IN ({code_placeholders}) "
+        f"{exclusion_sql}"
+        f"GROUP BY s.{article_column}, s.{warehouse_column}, a.{description_column} "
+        f"ORDER BY article_code, warehouse_name"
+    )
+    with connect_sqlserver() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(sql, tuple(parameters))
+            rows = cursor.fetchall()
+
+    result: dict[str, list[dict]] = {code: [] for code in codes}
+    for row in rows:
+        code = str(row["article_code"]).strip()
+        result.setdefault(code, []).append({
+            "store_code": str(row["warehouse_code"]).strip(),
+            "store": str(row["warehouse_name"]).strip(),
+            "available": float(row["available"] or 0),
+        })
+    return result
+
+
+def fetch_product_stock(article_code: str) -> list[dict]:
+    return fetch_product_stocks([article_code]).get(str(article_code).strip(), [])
+
+
 def normalize_image_data(data: bytes) -> bytes:
     """Elimina cabeceras OLE/propietarias anteriores al contenido gráfico real."""
     signatures = (b"\xff\xd8\xff", b"\x89PNG\r\n\x1a\n", b"GIF87a", b"GIF89a", b"BM", b"RIFF")
