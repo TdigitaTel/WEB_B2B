@@ -2,7 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
 
-type View = "home" | "catalog" | "orders" | "documents" | "ops" | "account";
+type View = "home" | "catalog" | "manufacturerCatalogs" | "orders" | "documents" | "ops" | "account";
 type User = { id: string; name: string; email: string; role: string };
 type AccountCustomer = { trade_name: string; legal_name: string; erp_id: string; discount_pct: number };
 type Store = { id: string; code: string; name: string; address: string };
@@ -176,16 +176,17 @@ export default function Page() {
         <button className="account-button" onClick={()=>setView("account")}><small>Hola, {user.name.split(" ")[0]}</small><b>Mi cuenta</b></button><button className="logout-button" onClick={logout}>Salir</button>
         {!isOperator && <button className="cart-button" onClick={() => setCartOpen(true)}>▤ <span>Mi carrito</span> {cart?.line_count || 0}</button>}
       </div>
-      <nav className="desktop-nav">{(isOperator ? [["ops","Operaciones"]] : [["home","Inicio"],["catalog","Catálogo"],["orders","Mis pedidos"],["documents","Albaranes y facturas"],["account","Mi cuenta"]]).map(([id,label]) => <button key={id} className={view===id?"active":""} onClick={() => setView(id as View)}>{label}</button>)}</nav>
+      <nav className="desktop-nav">{(isOperator ? [["ops","Operaciones"]] : [["home","Inicio"],["catalog","Productos"],["manufacturerCatalogs","Catálogos"],["orders","Mis pedidos"],["documents","Albaranes y facturas"],["account","Mi cuenta"]]).map(([id,label]) => <button key={id} className={view===id?"active":""} onClick={() => setView(id as View)}>{label}</button>)}</nav>
     </header>
     <div className="service-strip"><span>ÁREA PROFESIONAL · Compra a tu ritmo</span><span>5 delegaciones · Recogida en tienda</span></div>{error && <div className="page error" role="alert">{error}</div>}
     {view === "home" && <Home customer={customer} orders={orders} products={products.slice(0,8)} onNavigate={setView} onAdd={addProduct} />}
     {view === "catalog" && <Catalog products={products} total={totalProducts} classification={classification} filters={catalogFilters} setFilters={setCatalogFilters} onAdd={addProduct} />}
+    {view === "manufacturerCatalogs" && <ManufacturerCatalogs />}
     {view === "orders" && <Orders orders={orders} onRepeat={repeatOrder} />}
     {view === "documents" && <Documents notes={deliveryNotes} invoices={invoices} />}
     {view === "account" && <Account user={user} customer={customer} />}
     {view === "ops" && <Operations orders={opsOrders} onTransition={async (id,status) => { await api(`/api/v1/store/orders/${id}/transitions`, {method:"POST",body:JSON.stringify({status})}); setOpsOrders(await api<Order[]>("/api/v1/store/orders")); }} />}
-    {!isOperator && <nav className="mobile-nav">{[["home","Inicio"],["catalog","Buscar"],["orders","Pedidos"],["account","Cuenta"]].map(([id,label]) => <button key={id} className={view===id?"active":""} onClick={() => setView(id as View)}>{label}</button>)}</nav>}
+    {!isOperator && <nav className="mobile-nav">{[["home","Inicio"],["catalog","Buscar"],["manufacturerCatalogs","Catálogos"],["orders","Pedidos"],["account","Cuenta"]].map(([id,label]) => <button key={id} className={view===id?"active":""} onClick={() => setView(id as View)}>{label}</button>)}</nav>}
     {cartOpen && cart && <CartDrawer cart={cart} stores={stores} onClose={() => setCartOpen(false)} onUpdate={updateCart} onRemove={removeCart} onCheckout={checkout} />}
     {kioskMode&&keyboardOpen&&<KioskKeyboard onKey={key=>{if(key==="BACKSPACE")setQuery(value=>Array.from(value).slice(0,-1).join(""));else if(key==="CLEAR")setQuery("");else if(key==="SPACE")setQuery(value=>value+" ");else setQuery(value=>value+key);setSuggestionsEnabled(true);setCatalogFilters(emptyCatalogFilters);setView("catalog")}} onSearch={()=>{setKeyboardOpen(false);setSuggestionsEnabled(false);setSuggestions([]);searchProducts().catch(e=>setError(e.message))}} onClose={()=>setKeyboardOpen(false)}/>}
   </main>;
@@ -213,6 +214,29 @@ function Catalog({products,total,classification,filters,setFilters,onAdd}:{produ
   const selectSubfamily=(areaId:number,familyId:number,id:number)=>setFilters({areaId:String(areaId),familyId:String(familyId),subfamilyId:String(id),productTypeId:""});
   const selectType=(areaId:number,familyId:number,subfamilyId:number,id:number)=>setFilters({areaId:String(areaId),familyId:String(familyId),subfamilyId:String(subfamilyId),productTypeId:String(id)});
   return <div className="page catalog-page"><div className="catalog-title"><div><span className="eyebrow">CATÁLOGO PROFESIONAL</span><h1>Productos para tu instalación</h1><p>Consulta disponibilidad, precio y stock actualizado por almacén.</p></div><div className="catalog-count"><strong>{total.toLocaleString("es-ES")}</strong><span>referencias</span></div></div><div className="toolbar catalog-toolbar"><div><b>Resultados</b><div className="small">{total.toLocaleString("es-ES")} artículos encontrados</div></div>{(filters.areaId||filters.familyId||filters.subfamilyId||filters.productTypeId)&&<button className="ghost" onClick={()=>setFilters(emptyCatalogFilters)}>Limpiar filtros</button>}</div><div className={`catalog-layout ${categoriesCollapsed?"categories-collapsed":""}`}><aside className="category-panel"><div className="category-heading"><span className="category-icon">≡</span><div><h2>Categorías</h2><small>Selecciona una familia</small></div><button className="category-toggle" onClick={()=>setCategoriesCollapsed(value=>!value)} aria-label={categoriesCollapsed?"Mostrar categorías":"Ocultar categorías"}>{categoriesCollapsed?"›":"‹"}</button></div><div className="category-content"><button className={`tree-all ${!filters.areaId?"active":""}`} onClick={()=>setFilters(emptyCatalogFilters)}>Todos los departamentos</button><div className="catalog-tree">{classification.map(area=><details key={area.id} open={filters.areaId===String(area.id)}><summary><button className={filters.areaId===String(area.id)&&!filters.familyId?"active":""} onClick={e=>{e.preventDefault();selectArea(area.id)}}>{area.name}<span>{area.count}</span></button></summary><div className="tree-level family-level">{area.families.map(family=><details key={family.id} open={filters.familyId===String(family.id)}><summary><button className={filters.familyId===String(family.id)&&!filters.subfamilyId?"active":""} onClick={e=>{e.preventDefault();selectFamily(area.id,family.id)}}>{family.name}<span>{family.count}</span></button></summary><div className="tree-level subfamily-level">{family.subfamilies.map(subfamily=><details key={subfamily.id} open={filters.subfamilyId===String(subfamily.id)}><summary><button className={filters.subfamilyId===String(subfamily.id)&&!filters.productTypeId?"active":""} onClick={e=>{e.preventDefault();selectSubfamily(area.id,family.id,subfamily.id)}}>{subfamily.name}<span>{subfamily.count}</span></button></summary><div className="tree-level type-level">{subfamily.product_types.map(type=><button key={type.id} className={filters.productTypeId===String(type.id)?"active":""} onClick={()=>selectType(area.id,family.id,subfamily.id,type.id)}>{type.name}<span>{type.count}</span></button>)}</div></details>)}</div></details>)}</div></details>)}</div></div></aside><section className="catalog-results"><div className="products">{products.map(p=><ProductCard key={p.id} product={p} onAdd={onAdd}/>)}</div>{!products.length&&<div className="empty-state"><h2>No encontramos ese material</h2><p>Prueba otra referencia, menos palabras o limpia la clasificación seleccionada.</p></div>}</section></div></div>
+}
+
+function ManufacturerCatalogs() {
+  const genebreCatalog = "https://www.genebre.es/flipbook/DyhdbxBYTq";
+  return <div className="page manufacturer-catalog-page">
+    <header className="manufacturer-catalog-header">
+      <div><span className="eyebrow">DOCUMENTACIÓN DE FABRICANTES</span><h1>Catálogos profesionales</h1><p>Consulta gamas, referencias, medidas y documentación técnica publicada por cada fabricante.</p></div>
+      <span className="catalog-library-count"><b>1</b> catálogo disponible</span>
+    </header>
+    <article className="manufacturer-catalog-card">
+      <div className="manufacturer-catalog-info">
+        <span className="manufacturer-badge">GENEBRE</span>
+        <h2>Catálogo Hidrosanitario 2026</h2>
+        <p>Catálogo oficial de soluciones hidrosanitarias Genebre. El visor permite recorrer el documento completo, ampliar las páginas y consultar la información técnica de sus productos.</p>
+        <dl className="catalog-metadata"><div><dt>Fabricante</dt><dd>Genebre</dd></div><div><dt>Edición</dt><dd>2026</dd></div><div><dt>Formato</dt><dd>Catálogo digital interactivo</dd></div></dl>
+        <a className="primary catalog-open-button" href={genebreCatalog} target="_blank" rel="noopener noreferrer">Abrir a pantalla completa ↗</a>
+      </div>
+      <div className="catalog-viewer-shell">
+        <div className="catalog-viewer-bar"><span>Visor oficial de Genebre</span><a href={genebreCatalog} target="_blank" rel="noopener noreferrer">Nueva pantalla ↗</a></div>
+        <iframe className="catalog-viewer" src={genebreCatalog} title="Catálogo Hidrosanitario Genebre 2026" allow="fullscreen" loading="lazy" />
+      </div>
+    </article>
+  </div>;
 }
 
 function ProductCard({product,onAdd}:{product:Product;onAdd:(id:string,qty?:number)=>void}) { const [qty,setQty]=useState(1); const [imageFailed,setImageFailed]=useState(false); return <article className="product"><div className="product-image-wrap"><span className="product-code">Ref. {product.sku}</span><div className={`product-visual ${imageFailed?"image-missing":""}`}>{!imageFailed?<img src={product.image_url} alt={product.name} loading="lazy" onError={()=>setImageFailed(true)}/>:<><span aria-hidden="true">{product.family.slice(0,2).toUpperCase()}</span><small>{product.family}</small></>}</div></div><div className="product-body"><span className="family-name">{product.family}</span><h3>{product.name}</h3><span className="sku">{product.brand} · Código {product.sku}</span><div className="price-block"><span>Precio con IVA</span><div className="price">{money(product.price_with_tax)}</div><small>{money(product.price_without_tax)} sin IVA</small></div><details className="stock-popover"><summary className="stock" aria-label={`Stock total ${product.total_available} unidades. Abrir detalle por almacén`}><span className="availability-dot"/> {Math.max(0,Math.round(product.total_available))} uds. disponibles <span aria-hidden="true">ⓘ</span></summary><div className="stock-detail"><b>Disponibilidad por almacén</b><small className="stock-help">Pulsa de nuevo en el total para cerrar.</small>{product.stock.length?product.stock.map(item=><div className="stock-row" key={item.store_code}><span>{item.store}<small>Almacén {item.store_code}</small></span><strong>{item.available.toLocaleString("es-ES",{maximumFractionDigits:2})} uds.</strong></div>):<p>Sin existencias en los almacenes incluidos.</p>}<div className="stock-note">No incluye los almacenes configurados como excluidos.</div></div></details><div className="product-actions"><label><span>Uds.</span><input className="qty" type="number" min="1" value={qty} onChange={e=>setQty(Math.max(1,Number(e.target.value)))}/></label><button className="secondary block" onClick={()=>onAdd(product.id,qty)}>Añadir al carrito</button></div></div></article> }
