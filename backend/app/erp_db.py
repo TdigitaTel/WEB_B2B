@@ -35,6 +35,11 @@ def _identifier(value: str) -> str:
     return f"[{value}]"
 
 
+def _discovered_column(value: str) -> str:
+    """Escapa una columna cuyo nombre se obtuvo de INFORMATION_SCHEMA."""
+    return f"[{value.replace(']', ']]')}]"
+
+
 def _customer_columns(connection) -> dict[str, str | None]:
     with connection.cursor() as cursor:
         cursor.execute(
@@ -59,8 +64,8 @@ def fetch_customer(customer_code: str) -> dict | None:
         columns = _customer_columns(connection)
         selections = []
         for field, column in columns.items():
-            selections.append(f"c.{_identifier(column)} AS [{field}]" if column else f"NULL AS [{field}]")
-        code_column = _identifier(columns["code"])
+            selections.append(f"c.{_discovered_column(column)} AS [{field}]" if column else f"NULL AS [{field}]")
+        code_column = _discovered_column(columns["code"])
         sql = (
             f"SELECT TOP 1 {', '.join(selections)} FROM {schema}.{table} c "
             f"WHERE LTRIM(RTRIM(CONVERT(varchar(100), c.{code_column}))) = %s"

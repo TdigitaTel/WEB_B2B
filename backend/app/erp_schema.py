@@ -28,8 +28,8 @@ CUSTOMER = {
         "email": ("Email1", "Email", "CorreoElectronico", "Correo"),
         "phone": ("Telefono", "Telefono1", "Movil"),
         "billing_address": ("Domicilio", "Direccion", "Domicilio1"),
-        "price_list": ("CodigoTarifa", "Tarifa", "TipoPrecio"),
-        "discount_pct": ("Descuento", "DescuentoComercial", "Descuento1"),
+        "price_list": ("TarifaPrecio", "CodigoTarifa", "Tarifa", "TipoPrecio"),
+        "discount_pct": ("%Descuento", "Descuento", "DescuentoComercial", "Descuento1"),
     },
 }
 
