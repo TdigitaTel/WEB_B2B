@@ -15,7 +15,7 @@ from .auth import audit, create_access_token, current_user, require_roles, verif
 from .config import settings
 from .db import get_db
 from .erp_db import (
-    fetch_product_image, fetch_product_price, fetch_product_prices,
+    fetch_customer, fetch_product_image, fetch_product_price, fetch_product_prices,
     fetch_product_stock, fetch_product_stocks, image_media_type,
 )
 from .models import (
@@ -24,38 +24,69 @@ from .models import (
     OrderStatus, OrderStatusHistory, Product, ProfessionalRegistrationRequest, Store, SyncStatus, User,
 )
 from .schemas import CartItemIn, CartItemUpdate, LoginIn, OrderCreate, StatusChange
-from .services import PostgresCatalogService, PostgresPriceService, PostgresStockService, product_view
+from .services import PostgresCatalogService, PostgresStockService, product_view
 
 app = FastAPI(title="Bermúdez B2B API", version="1.0.0", openapi_url="/api/v1/openapi.json", docs_url="/docs")
 logger = logging.getLogger(__name__)
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 
-def customer_for(user: User, db: Session) -> Customer:
-    if not user.customer_id:
-        raise HTTPException(403, "Esta operación requiere una cuenta de cliente")
-    customer = db.get(Customer, user.customer_id)
-    if not customer or not customer.active:
-        raise HTTPException(403, "Cliente inactivo")
+def customer_code_for(user: User, db: Session) -> str:
+    if user.erp_customer_code:
+        return user.erp_customer_code
+    if user.customer_id:
+        legacy = db.get(Customer, user.customer_id)
+        if legacy:
+            return legacy.erp_id
+    raise HTTPException(403, "Esta operación requiere una cuenta de cliente EXITERP")
+
+
+def customer_for(user: User, db: Session) -> dict:
+    code = customer_code_for(user, db)
+    try:
+        customer = fetch_customer(code)
+    except Exception as exc:
+        logger.exception("Error consultando el cliente %s en EXITERP", code)
+        raise HTTPException(503, "No se pudo consultar el cliente en EXITERP") from exc
+    if not customer:
+        raise HTTPException(403, "El cliente no existe o no está disponible en EXITERP")
     return customer
 
 
+def legacy_customer_id(user: User) -> int | None:
+    """Solo conserva la relación histórica de pedidos anteriores; no aporta datos maestros."""
+    return user.customer_id
+
+
 def active_cart(user: User, db: Session) -> Cart:
+    customer_code = customer_code_for(user, db)
     cart = db.scalar(select(Cart).where(Cart.user_id == user.id, Cart.status == "ACTIVE").order_by(Cart.id.desc()))
     if not cart:
-        customer = customer_for(user, db)
-        cart = Cart(customer_id=customer.id, user_id=user.id, store_id=customer.usual_store_id, status="ACTIVE")
+        cart = Cart(customer_id=legacy_customer_id(user), customer_code=customer_code, user_id=user.id, status="ACTIVE")
         db.add(cart); db.flush()
+    elif not cart.customer_code:
+        cart.customer_code = customer_code
     return cart
 
 
+def _erp_unit_prices(products: list[Product]) -> dict[str, Decimal]:
+    try:
+        prices = fetch_product_prices([product.sku for product in products])
+    except Exception as exc:
+        logger.exception("Error consultando precios ERP para el carrito")
+        raise HTTPException(503, "No se pudieron consultar los precios del ERP") from exc
+    missing = [product.sku for product in products if product.sku not in prices]
+    if missing:
+        raise HTTPException(409, f"Falta el precio ERP de: {', '.join(missing[:8])}")
+    return {sku: Decimal(str(values["without_tax"])) for sku, values in prices.items()}
+
+
 def cart_payload(cart: Cart, user: User, db: Session) -> dict:
-    customer = customer_for(user, db)
-    price_service = PostgresPriceService()
     rows = db.execute(select(CartItem, Product).join(Product, Product.id == CartItem.product_id).where(CartItem.cart_id == cart.id).order_by(CartItem.id)).all()
+    prices = _erp_unit_prices([product for _, product in rows]) if rows else {}
     items, subtotal = [], Decimal("0")
     for item, product in rows:
-        price = price_service.price_for(product, customer)
+        price = prices[product.sku]
         line = (price * item.quantity).quantize(Decimal("0.01")); subtotal += line
         items.append({"id": item.id, "product_id": product.public_id, "sku": product.sku, "name": product.short_description,
                       "quantity": float(item.quantity), "unit": product.unit, "unit_price": float(price), "line_total": float(line)})
@@ -68,13 +99,20 @@ def cart_payload(cart: Cart, user: User, db: Session) -> dict:
 
 def order_payload(order: Order, db: Session, include_items: bool = False) -> dict:
     store = db.get(Store, order.store_id)
-    customer = db.get(Customer, order.customer_id)
+    customer_name = order.customer_code or "Cliente EXITERP"
+    if order.customer_code:
+        try:
+            erp_customer = fetch_customer(order.customer_code)
+            if erp_customer:
+                customer_name = erp_customer["trade_name"] or erp_customer["legal_name"] or order.customer_code
+        except Exception:
+            logger.exception("No se pudo enriquecer el pedido con el cliente EXITERP %s", order.customer_code)
     creator = db.get(User, order.user_id)
     result = {"id": order.public_id, "number": order.order_number, "status": order.status.value,
               "store": store.name, "store_code": store.code, "customer_reference": order.customer_reference,
               "job_name": order.job_name, "notes": order.notes, "subtotal": float(order.subtotal),
               "tax_total": float(order.tax_total), "total": float(order.total), "created_at": order.created_at,
-              "customer": customer.trade_name or customer.legal_name, "created_by": creator.full_name}
+              "customer": customer_name, "created_by": creator.full_name}
     if include_items:
         result["items"] = [{"sku": item.sku, "description": item.description, "quantity": float(item.quantity),
                             "unit": item.unit, "unit_price": float(item.unit_price), "line_total": float(item.line_total)}
@@ -115,12 +153,16 @@ def login(data: LoginIn, response: Response, db: Session = Depends(get_db)):
     user = db.scalar(select(User).where(func.lower(User.email) == data.email.lower()))
     if not user or not verify_password(data.password, user.password_hash):
         raise HTTPException(401, "Email o contraseña incorrectos")
+    customer = None
+    if user.role not in {"OPERADOR_TIENDA", "ADMIN"}:
+        customer = customer_for(user, db)
     user.last_login_at = datetime.now(timezone.utc)
     audit(db, user, "LOGIN", "USER", user.public_id)
     token = create_access_token(user)
     response.set_cookie("b2b_access", token, httponly=True, samesite="lax", secure=False, max_age=8 * 3600)
     db.commit()
-    return {"user": {"id": user.public_id, "name": user.full_name, "email": user.email, "role": user.role}, "access_token": token}
+    display_name = (customer or {}).get("trade_name") or (customer or {}).get("legal_name") or user.full_name
+    return {"user": {"id": user.public_id, "name": display_name, "email": user.email, "role": user.role}, "access_token": token}
 
 
 @app.post("/api/v1/auth/logout")
@@ -131,11 +173,10 @@ def logout(response: Response, user: User = Depends(current_user), db: Session =
 
 @app.get("/api/v1/account")
 def account(user: User = Depends(current_user), db: Session = Depends(get_db)):
-    customer = db.get(Customer, user.customer_id) if user.customer_id else None
-    return {"user": {"name": user.full_name, "email": user.email, "role": user.role},
-            "customer": {"id": customer.public_id, "erp_id": customer.erp_id, "legal_name": customer.legal_name,
-                         "trade_name": customer.trade_name, "tax_id": customer.tax_id, "discount_pct": float(customer.discount_pct),
-                         "billing_address": customer.billing_address} if customer else None}
+    customer = None if user.role in {"OPERADOR_TIENDA", "ADMIN"} else customer_for(user, db)
+    display_name = (customer or {}).get("trade_name") or (customer or {}).get("legal_name") or user.full_name
+    return {"user": {"id": user.public_id, "name": display_name, "email": user.email, "role": user.role},
+            "customer": customer}
 
 
 @app.post("/api/v1/registration-requests", status_code=201)
@@ -218,8 +259,13 @@ def catalog_classification(user: User = Depends(current_user), db: Session = Dep
 def suggestions(q: str = Query(min_length=2), user: User = Depends(current_user), db: Session = Depends(get_db)):
     customer = customer_for(user, db)
     rows, _ = PostgresCatalogService(db).search(q, 1, 8, None)
+    try:
+        prices = fetch_product_prices([p.sku for p in rows])
+    except Exception:
+        logger.exception("Error consultando precios ERP para sugerencias")
+        prices = {}
     return [{"id": p.public_id, "sku": p.sku, "name": p.short_description,
-             "price": float(PostgresPriceService().price_for(p, customer)),
+             "price": float(prices.get(p.sku, {}).get("with_tax", 0)),
              "area_id": p.material_area_id, "family_id": p.material_family_id,
              "subfamily_id": p.material_subfamily_id,
              "product_type_id": p.material_product_type_id} for p in rows]
@@ -299,27 +345,28 @@ def delete_cart_item(item_id: int, user: User = Depends(current_user), db: Sessi
 
 @app.post("/api/v1/orders", status_code=201)
 def create_order(data: OrderCreate, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    customer = customer_for(user, db); cart = active_cart(user, db)
+    customer = customer_for(user, db); customer_code = customer_code_for(user, db); cart = active_cart(user, db)
     store = db.scalar(select(Store).where(Store.public_id == data.store_id, Store.active.is_(True)))
     if not store: raise HTTPException(404, "Tienda no encontrada")
     rows = db.execute(select(CartItem, Product).join(Product, Product.id == CartItem.product_id).where(CartItem.cart_id == cart.id)).all()
     if not rows: raise HTTPException(400, "El pedido está vacío")
-    order = Order(order_number=f"TMP-{cart.public_id[:20]}", customer_id=customer.id, user_id=user.id, store_id=store.id,
+    prices = _erp_unit_prices([product for _, product in rows])
+    order = Order(order_number=f"TMP-{cart.public_id[:20]}", customer_id=legacy_customer_id(user), customer_code=customer_code, user_id=user.id, store_id=store.id,
                   status=OrderStatus.sent, customer_reference=data.customer_reference, job_name=data.job_name, notes=data.notes,
                   subtotal=0, tax_total=0, total=0, sync_status=SyncStatus.pending)
     db.add(order); db.flush(); order.order_number = f"WEB-{datetime.now().year}-{order.id:07d}"
     subtotal = Decimal("0")
     for cart_item, product in rows:
-        price = PostgresPriceService().price_for(product, customer); line = (price * cart_item.quantity).quantize(Decimal("0.01")); subtotal += line
+        price = prices[product.sku]; line = (price * cart_item.quantity).quantize(Decimal("0.01")); subtotal += line
         db.add(OrderItem(order_id=order.id, product_id=product.id, sku=product.sku, description=product.short_description,
-                         quantity=cart_item.quantity, unit=product.unit, unit_price=price, discount_pct=customer.discount_pct,
+                         quantity=cart_item.quantity, unit=product.unit, unit_price=price, discount_pct=Decimal("0"),
                          tax_rate=product.tax_rate, line_total=line))
         db.delete(cart_item)
     order.subtotal = subtotal; order.tax_total = (subtotal * Decimal("0.21")).quantize(Decimal("0.01")); order.total = order.subtotal + order.tax_total
     db.add(OrderStatusHistory(order_id=order.id, status=order.status, changed_by_user_id=user.id, note="Pedido enviado desde el portal"))
-    db.add(Notification(customer_id=customer.id, user_id=user.id, title="Pedido recibido", message=f"Hemos recibido el pedido {order.order_number}."))
+    db.add(Notification(customer_id=legacy_customer_id(user), customer_code=customer_code, user_id=user.id, title="Pedido recibido", message=f"Hemos recibido el pedido {order.order_number}."))
     db.add(IntegrationOutbox(aggregate_type="ORDER", aggregate_id=order.public_id, event_type="ORDER_CREATED",
-                             payload={"order_number": order.order_number, "customer_erp_id": customer.erp_id, "store": store.code}, sync_status=SyncStatus.pending))
+                             payload={"order_number": order.order_number, "customer_erp_id": customer_code, "store": store.code}, sync_status=SyncStatus.pending))
     cart.status = "CONVERTED"
     audit(db, user, "ORDER_CREATED", "ORDER", order.public_id, {"number": order.order_number, "store": store.code})
     db.commit(); return order_payload(order, db, True)
@@ -327,23 +374,32 @@ def create_order(data: OrderCreate, user: User = Depends(current_user), db: Sess
 
 @app.get("/api/v1/orders")
 def orders(user: User = Depends(current_user), db: Session = Depends(get_db)):
-    customer = customer_for(user, db)
-    rows = db.scalars(select(Order).where(Order.customer_id == customer.id).order_by(Order.created_at.desc()).limit(100)).all()
+    customer_for(user, db); customer_code = customer_code_for(user, db)
+    condition = Order.customer_code == customer_code
+    if user.customer_id:
+        condition = condition | (Order.customer_id == user.customer_id)
+    rows = db.scalars(select(Order).where(condition).order_by(Order.created_at.desc()).limit(100)).all()
     return [order_payload(o, db, True) for o in rows]
 
 
 @app.get("/api/v1/orders/{order_id}")
 def order_detail(order_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    customer = customer_for(user, db)
-    order = db.scalar(select(Order).where(Order.public_id == order_id, Order.customer_id == customer.id))
+    customer_for(user, db); customer_code = customer_code_for(user, db)
+    condition = Order.customer_code == customer_code
+    if user.customer_id:
+        condition = condition | (Order.customer_id == user.customer_id)
+    order = db.scalar(select(Order).where(Order.public_id == order_id, condition))
     if not order: raise HTTPException(404, "Pedido no encontrado")
     return order_payload(order, db, True)
 
 
 @app.post("/api/v1/orders/{order_id}/repeat")
 def repeat_order(order_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    customer = customer_for(user, db)
-    order = db.scalar(select(Order).where(Order.public_id == order_id, Order.customer_id == customer.id))
+    customer_for(user, db); customer_code = customer_code_for(user, db)
+    condition = Order.customer_code == customer_code
+    if user.customer_id:
+        condition = condition | (Order.customer_id == user.customer_id)
+    order = db.scalar(select(Order).where(Order.public_id == order_id, condition))
     if not order: raise HTTPException(404, "Pedido no encontrado")
     old_items = db.scalars(select(OrderItem).where(OrderItem.order_id == order.id)).all(); cart = active_cart(user, db)
     for old in old_items:
@@ -355,26 +411,30 @@ def repeat_order(order_id: str, user: User = Depends(current_user), db: Session 
 
 @app.get("/api/v1/delivery-notes")
 def delivery_notes(user: User = Depends(current_user), db: Session = Depends(get_db)):
-    customer = customer_for(user, db)
-    rows = db.scalars(select(DeliveryNote).where(DeliveryNote.customer_id == customer.id).order_by(DeliveryNote.created_at.desc())).all()
+    customer_for(user, db)
+    if not user.customer_id:
+        return []
+    rows = db.scalars(select(DeliveryNote).where(DeliveryNote.customer_id == user.customer_id).order_by(DeliveryNote.created_at.desc())).all()
     return [{"id": x.public_id, "number": x.number, "total": float(x.total), "created_at": x.created_at} for x in rows]
 
 
 @app.get("/api/v1/invoices")
 def invoices(user: User = Depends(current_user), db: Session = Depends(get_db)):
-    customer = customer_for(user, db)
-    rows = db.scalars(select(Invoice).where(Invoice.customer_id == customer.id).order_by(Invoice.created_at.desc())).all()
+    customer_for(user, db)
+    if not user.customer_id:
+        return []
+    rows = db.scalars(select(Invoice).where(Invoice.customer_id == user.customer_id).order_by(Invoice.created_at.desc())).all()
     return [{"id": x.public_id, "number": x.number, "due_date": x.due_date, "subtotal": float(x.subtotal),
              "tax_total": float(x.tax_total), "total": float(x.total), "status": x.status} for x in rows]
 
 
 @app.get("/api/v1/documents/{document_type}/{document_id}/file")
 def document_file(document_type: str, document_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    customer = customer_for(user, db)
+    customer_for(user, db)
     model = DeliveryNote if document_type.upper() == "ALBARAN" else Invoice if document_type.upper() == "FACTURA" else None
     if not model:
         raise HTTPException(404, "Tipo de documento no valido")
-    document = db.scalar(select(model).where(model.public_id == document_id, model.customer_id == customer.id))
+    document = db.scalar(select(model).where(model.public_id == document_id, model.customer_id == user.customer_id)) if user.customer_id else None
     if not document or not document.pdf_path:
         raise HTTPException(404, "Documento no disponible")
     path = Path(document.pdf_path)
@@ -386,10 +446,12 @@ def document_file(document_type: str, document_id: str, user: User = Depends(cur
 @app.get("/api/v1/documents/download")
 def download_documents(date_from: date | None = None, date_to: date | None = None,
                        user: User = Depends(current_user), db: Session = Depends(get_db)):
-    customer = customer_for(user, db)
+    customer_for(user, db)
+    if not user.customer_id:
+        raise HTTPException(404, "No hay documentos históricos asociados")
     files: list[tuple[str, Path]] = []
     for model, prefix in ((DeliveryNote, "albaran"), (Invoice, "factura")):
-        stmt = select(model).where(model.customer_id == customer.id, model.pdf_path.is_not(None))
+        stmt = select(model).where(model.customer_id == user.customer_id, model.pdf_path.is_not(None))
         if date_from:
             stmt = stmt.where(func.date(model.created_at) >= date_from)
         if date_to:
@@ -434,6 +496,6 @@ def transition(order_id: str, data: StatusChange, user: User = Depends(require_r
     except ValueError as exc: raise HTTPException(422, "Estado no válido") from exc
     if new_status not in ALLOWED_TRANSITIONS.get(order.status, set()): raise HTTPException(409, f"No se puede pasar de {order.status.value} a {new_status.value}")
     order.status = new_status; db.add(OrderStatusHistory(order_id=order.id, status=new_status, changed_by_user_id=user.id, note=data.note))
-    db.add(Notification(customer_id=order.customer_id, title=f"Pedido {order.order_number}", message=f"Nuevo estado: {new_status.value.replace('_', ' ')}"))
+    db.add(Notification(customer_id=order.customer_id, customer_code=order.customer_code, title=f"Pedido {order.order_number}", message=f"Nuevo estado: {new_status.value.replace('_', ' ')}"))
     audit(db, user, "ORDER_STATUS_CHANGED", "ORDER", order.public_id, {"status": new_status.value}); db.commit()
     return order_payload(order, db, True)

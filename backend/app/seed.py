@@ -141,7 +141,7 @@ def seed():
             )
             db.add(customer)
             db.flush()
-            db.add(User(email=customer.email, password_hash=password, full_name=f"Comprador {surnames[i % len(surnames)]}", role="CLIENTE_ADMIN", customer_id=customer.id))
+            db.add(User(email=customer.email, password_hash=password, full_name=f"Comprador {surnames[i % len(surnames)]}", role="CLIENTE_ADMIN", customer_id=customer.id, erp_customer_code=customer.erp_id))
             db.add(CustomerAddress(customer_id=customer.id, label="Dirección fiscal", address_type="FISCAL", address=customer.billing_address, city="A Coruña", postal_code=str(15000 + i), is_default=True))
         db.add(User(email="operador@bermudez.test", password_hash=password, full_name="Operador A Coruña", role="OPERADOR_TIENDA", store_id=stores[1].id))
         db.add(User(email="admin@bermudez.test", password_hash=password, full_name="Administrador", role="ADMIN"))
@@ -182,4 +182,3 @@ def seed():
         db.commit()
     finally:
         db.close()
-

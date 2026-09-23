@@ -28,7 +28,7 @@ def create_access_token(user: User) -> str:
     now = datetime.now(timezone.utc)
     payload = {
         "sub": str(user.id),
-        "customer_id": user.customer_id,
+        "erp_customer_code": user.erp_customer_code,
         "role": user.role,
         "iat": now,
         "exp": now + timedelta(hours=8),
@@ -74,4 +74,3 @@ def audit(db: Session, user: User | None, action: str, entity_type: str, entity_
         entity_id=entity_id,
         metadata_json=metadata or {},
     ))
-

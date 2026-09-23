@@ -2,7 +2,7 @@ import pymssql
 import re
 
 from .config import settings
-from .erp_schema import ARTICLE, IMAGE, STOCK, WAREHOUSE
+from .erp_schema import ARTICLE, CUSTOMER, IMAGE, STOCK, WAREHOUSE
 
 
 def connect_sqlserver():
@@ -33,6 +33,54 @@ def _identifier(value: str) -> str:
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value):
         raise RuntimeError(f"Identificador SQL Server no válido: {value}")
     return f"[{value}]"
+
+
+def _customer_columns(connection) -> dict[str, str | None]:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
+            "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s",
+            (CUSTOMER["schema"], CUSTOMER["table"]),
+        )
+        existing = {str(row["COLUMN_NAME"]).lower(): str(row["COLUMN_NAME"]) for row in cursor.fetchall()}
+    resolved: dict[str, str | None] = {}
+    for field, candidates in CUSTOMER["columns"].items():
+        resolved[field] = next((existing[name.lower()] for name in candidates if name.lower() in existing), None)
+    if not resolved["code"]:
+        raise RuntimeError("No se encontró la columna de código en dbo.clientes")
+    return resolved
+
+
+def fetch_customer(customer_code: str) -> dict | None:
+    """Lee los datos maestros del cliente directamente de EXITERP."""
+    schema = _identifier(CUSTOMER["schema"])
+    table = _identifier(CUSTOMER["table"])
+    with connect_sqlserver() as connection:
+        columns = _customer_columns(connection)
+        selections = []
+        for field, column in columns.items():
+            selections.append(f"c.{_identifier(column)} AS [{field}]" if column else f"NULL AS [{field}]")
+        code_column = _identifier(columns["code"])
+        sql = (
+            f"SELECT TOP 1 {', '.join(selections)} FROM {schema}.{table} c "
+            f"WHERE LTRIM(RTRIM(CONVERT(varchar(100), c.{code_column}))) = %s"
+        )
+        with connection.cursor() as cursor:
+            cursor.execute(sql, (str(customer_code).strip(),))
+            row = cursor.fetchone()
+    if not row:
+        return None
+    return {
+        "erp_id": str(row.get("code") or "").strip(),
+        "legal_name": str(row.get("legal_name") or "").strip(),
+        "trade_name": str(row.get("trade_name") or row.get("legal_name") or "").strip(),
+        "tax_id": str(row.get("tax_id") or "").strip(),
+        "email": str(row.get("email") or "").strip(),
+        "phone": str(row.get("phone") or "").strip(),
+        "billing_address": str(row.get("billing_address") or "").strip(),
+        "price_list": str(row.get("price_list") or "").strip(),
+        "discount_pct": float(row.get("discount_pct") or 0),
+    }
 
 
 def fetch_product_image(article_code: str) -> bytes | None:

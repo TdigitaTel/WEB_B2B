@@ -74,6 +74,7 @@ class User(Base, TimestampMixin):
     full_name: Mapped[str] = mapped_column(String(160))
     role: Mapped[str] = mapped_column(String(40), index=True)
     customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id"), index=True)
+    erp_customer_code: Mapped[str | None] = mapped_column(String(40), index=True)
     store_id: Mapped[int | None] = mapped_column(ForeignKey("stores.id"))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -242,7 +243,8 @@ class Cart(Base, TimestampMixin):
     __tablename__ = "carts"
     id: Mapped[int] = mapped_column(primary_key=True)
     public_id: Mapped[str] = mapped_column(String(36), unique=True, default=public_uuid)
-    customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"), index=True)
+    customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id"), index=True)
+    customer_code: Mapped[str | None] = mapped_column(String(40), index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     status: Mapped[str] = mapped_column(String(20), default="ACTIVE")
     store_id: Mapped[int | None] = mapped_column(ForeignKey("stores.id"))
@@ -262,7 +264,8 @@ class Order(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(primary_key=True)
     public_id: Mapped[str] = mapped_column(String(36), unique=True, default=public_uuid)
     order_number: Mapped[str] = mapped_column(String(40), unique=True, index=True)
-    customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"), index=True)
+    customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id"), index=True)
+    customer_code: Mapped[str | None] = mapped_column(String(40), index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), index=True)
     status: Mapped[OrderStatus] = mapped_column(Enum(OrderStatus), index=True)
@@ -331,7 +334,8 @@ class Invoice(Base, TimestampMixin):
 class Notification(Base, TimestampMixin):
     __tablename__ = "notifications"
     id: Mapped[int] = mapped_column(primary_key=True)
-    customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"), index=True)
+    customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id"), index=True)
+    customer_code: Mapped[str | None] = mapped_column(String(40), index=True)
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     title: Mapped[str] = mapped_column(String(160))
     message: Mapped[str] = mapped_column(Text)

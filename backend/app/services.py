@@ -96,7 +96,8 @@ class PostgresCatalogService:
 
 class PostgresPriceService:
     def price_for(self, product: Product, customer: Customer) -> Decimal:
-        multiplier = Decimal("1") - (Decimal(customer.discount_pct) / Decimal("100"))
+        discount = customer.get("discount_pct", 0) if isinstance(customer, dict) else customer.discount_pct
+        multiplier = Decimal("1") - (Decimal(str(discount)) / Decimal("100"))
         return (Decimal(product.list_price) * multiplier).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 

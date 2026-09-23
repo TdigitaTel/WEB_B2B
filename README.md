@@ -77,9 +77,9 @@ pip install -r requirements.txt
 DATABASE_URL=sqlite+pysqlite:///./test.db SEED_PRODUCTS=300 SEED_CUSTOMERS=5 pytest -q
 ```
 
-## Integración ERP futura
+## Integración con EXITERP
 
-La interfaz consume servicios de catálogo, precio y stock. PostgreSQL es la fuente del MVP. La tabla `integration_outbox` conserva los pedidos pendientes de sincronización y permite incorporar posteriormente adaptadores ERP sin modificar el frontend.
+EXITERP es la fuente de datos maestros de clientes, precios, stock e imágenes disponibles. PostgreSQL conserva el catálogo preparado para búsquedas, las contraseñas cifradas y la actividad propia del portal (carritos, pedidos, estados y auditoría). Los datos fiscales y comerciales del cliente no se copian a PostgreSQL.
 
 ## Despliegue en un servidor Linux
 
@@ -92,6 +92,8 @@ cp .env.production.example .env
 ```
 
 Edita `.env` y sustituye `POSTGRES_PASSWORD` y `JWT_SECRET` por valores largos y aleatorios. Después inicia la aplicación:
+
+En producción mantén `SEED_CUSTOMERS=0`: las fichas de cliente proceden de EXITERP.
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
@@ -170,7 +172,21 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api \
   python -m scripts.inspect_sqlserver_images
 ```
 
-Cada tarjeta solicita `/api/v1/products/{id}/image`. La API relaciona el SKU del catálogo con `dbo.imagenes.CodigoArticulo` y devuelve el binario como JPEG, PNG, GIF, BMP o WebP. El stock se obtiene de `dbo.tempstockarticulo.UnidadSaldo`, los nombres de almacén de `dbo.almacenes` y los precios de `dbo.articulos`.
+Cada tarjeta solicita `/api/v1/products/{id}/image`. La API relaciona el SKU del catálogo con `dbo.imagenes.CodigoArticulo` y devuelve el binario como JPEG, PNG, GIF, BMP o WebP. El stock se obtiene de `dbo.vis_ex_stockarticuloalmacen.UnidadSaldo`, los nombres de almacén de `dbo.almacenes` y los precios de `dbo.articulos.PrecioVentaConIVA0` y `PrecioVentaSinIVA0`.
+
+### Clientes y contraseñas
+
+La ficha completa de cada cliente se consulta directamente en `dbo.clientes`. PostgreSQL solo relaciona el usuario de acceso con el código de cliente EXITERP y guarda la contraseña cifrada. Para revisar la estructura disponible y dar acceso a un cliente:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api \
+  python -m scripts.inspect_sqlserver_customers
+
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api \
+  python -m scripts.set_customer_password CODIGO_CLIENTE correo@empresa.es
+```
+
+El segundo comando solicita la contraseña de forma interactiva y valida primero que el código exista en EXITERP.
 
 Para comprobar una referencia concreta:
 
