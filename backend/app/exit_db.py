@@ -27,7 +27,7 @@ DETAIL_CANDIDATES = {
     "line": ("Orden", "NumeroLinea", "Linea"),
     "sku": ("CodigoArticulo", "Articulo"),
     "description": ("DescripcionArticulo", "DescripcionLinea", "Descripcion"),
-    "quantity": ("UnidadesPedidas", "Unidades", "Cantidad"),
+    "quantity": ("Unidades", "UnidadesPedidas", "Cantidad"),
     "unit_price": ("Precio", "PrecioVenta", "PrecioArticulo"),
     "discount_pct": ("PorcentajeDescuento1", "Descuento", "Descuento1"),
     "tax_rate": ("PorcentajeIva", "PorcentajeIVA", "IVA"),

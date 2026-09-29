@@ -242,7 +242,7 @@ function OrderConfirmation({order,onClose,onViewOrders}:{order:Order;onClose:()=
 
 function CommandItems({order}:{order:Order}) {
   const zones=[{id:"KARDEX",label:"Preparar en KARDEX"},{id:"SGA",label:"Preparar en estantes / SGA"},{id:"OTROS",label:"Otros materiales"}];
-  return <div className="command-items">{zones.map(zone=>{const items=(order.items||[]).filter(item=>(item.fulfillment_zone||"OTROS")===zone.id);if(!items.length)return null;return <section className={`command-zone zone-${zone.id}`} key={zone.id}><h4>{zone.label}<span>{items.length}</span></h4>{items.map(item=><div className="command-item" key={`${order.id}-${zone.id}-${item.sku}`}><strong>{item.quantity.toLocaleString("es-ES",{maximumFractionDigits:2})}×</strong><span>{item.description}<small>Ref. {item.sku}</small></span></div>)}</section>})}</div>
+  return <div className="command-items">{zones.map(zone=>{const items=(order.items||[]).filter(item=>(item.fulfillment_zone||"OTROS")===zone.id);if(!items.length)return null;return <section className={`command-zone zone-${zone.id}`} key={zone.id}><h4>{zone.label}<span>{items.length}</span></h4>{items.map(item=><div className="command-item" key={`${order.id}-${zone.id}-${item.sku}`}><span className="command-item-code"><small>Código artículo</small><b>{item.sku}</b></span><span className="command-item-description">{item.description}</span><span className="command-item-units"><small>Unidades</small><strong>{item.quantity.toLocaleString("es-ES",{maximumFractionDigits:2})}</strong></span></div>)}</section>})}</div>
 }
 
 function Operations({orders,onTransition,onRefresh}:{orders:Order[];onTransition:(id:string,status:string)=>Promise<void>;onRefresh:()=>Promise<void>}) {
