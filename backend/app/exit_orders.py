@@ -35,6 +35,7 @@ class ExitOrderInput(BaseModel):
     store_code: str
     status: str
     source_status: str | None = None
+    source_created_by: str | None = None
     source_updated_at: datetime
     recorded_at: datetime | None = None
     customer_reference: str | None = None
@@ -75,7 +76,7 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
         )
         db.add(order)
         db.flush()
-    elif order.source_updated_at and incoming.source_updated_at <= order.source_updated_at:
+    elif order.source_updated_at and incoming.source_updated_at <= order.source_updated_at and order.source_created_by:
         return order
 
     previous_status = order.status
@@ -83,6 +84,7 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
     if incoming.recorded_at:
         order.created_at = incoming.recorded_at
     order.exit_status = incoming.source_status or incoming.status
+    order.source_created_by = incoming.source_created_by
     order.authority_system = "EXIT"
     order.source_updated_at = incoming.source_updated_at
     order.last_imported_at = datetime.now(timezone.utc)

@@ -112,7 +112,7 @@ def order_payload(order: Order, db: Session, include_items: bool = False) -> dic
               "store": store.name, "store_code": store.code, "customer_code": order.customer_code, "customer_reference": order.customer_reference,
               "job_name": order.job_name, "notes": order.notes, "subtotal": float(order.subtotal),
               "tax_total": float(order.tax_total), "total": float(order.total), "created_at": order.created_at,
-              "customer": customer_name, "created_by": creator.full_name if creator else "Integración EXIT",
+              "customer": customer_name, "created_by": order.source_created_by or (creator.full_name if creator else "Integración EXIT"),
               "source_system": order.source_system, "authority_system": order.authority_system,
               "exit_order_id": order.exit_order_id, "exit_status": order.exit_status}
     if include_items:

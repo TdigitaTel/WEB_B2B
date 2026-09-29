@@ -18,6 +18,7 @@ HEADER_CANDIDATES = {
     "date": ("FechaPedido", "Fecha"),
     "recorded_date": ("FechaGrabacion",),
     "recorded_time": ("HoraGrabacion",),
+    "created_by": ("NombreCorto", "WebUsuario", "CodigoUsuario"),
     "updated_at": ("FechaUltimaModificacion", "FechaModificacion"),
     "reference": ("SuPedidoNumero", "SuPedido", "ReferenciaInterna", "ReferenciaCliente", "Referencia"),
     "notes": ("Observaciones", "Comentario", "Comentarios"),
@@ -121,7 +122,7 @@ def fetch_pending_exit_orders(limit: int = 200) -> list[ExitOrderInput]:
         _required(detail, ("year", "series", "number", "sku", "quantity", "zone"), detail_table)
         hs = {key: _discovered_column(value) for key, value in header.items() if value}
         ds = {key: _discovered_column(value) for key, value in detail.items() if value}
-        header_fields = ("year", "series", "number", "customer", "delegation", "status", "date", "recorded_date", "recorded_time", "updated_at", "reference", "notes", "subtotal", "total")
+        header_fields = ("year", "series", "number", "customer", "delegation", "status", "date", "recorded_date", "recorded_time", "created_by", "updated_at", "reference", "notes", "subtotal", "total")
         header_sql = (
             f"SELECT TOP {max(1, min(limit, 1000))} {', '.join(_select('h', header, f) for f in header_fields)} "
             f"FROM {schema}.{_identifier(header_table)} h "
@@ -156,8 +157,8 @@ def fetch_pending_exit_orders(limit: int = 200) -> list[ExitOrderInput]:
         if quantity <= 0:
             continue
         zone = str(row.get("zone") or "").strip().upper()
-        if zone not in {"KARDEX", "SGA"}:
-            zone = "OTROS"
+        if zone != "KARDEX":
+            zone = "SGA"
         lines_by_key[_key(row)].append(ExitOrderLineInput(
             sku=str(row.get("sku") or "").strip(), description=str(row.get("description") or row.get("sku") or "").strip(),
             quantity=quantity, pending_quantity=_decimal(row.get("pending_quantity")) if row.get("pending_quantity") is not None else quantity, unit_price=_decimal(row.get("unit_price")),
@@ -181,7 +182,8 @@ def fetch_pending_exit_orders(limit: int = 200) -> list[ExitOrderInput]:
         result.append(ExitOrderInput(
             exit_order_id=external_id, order_number=f"EXIT-{year}-{series}-{number}"[:40],
             customer_code=str(row.get("customer") or "").strip(), store_code="ALM",
-            status=local_status, source_status=source_status, source_updated_at=updated_at, recorded_at=recorded_at, customer_reference=str(row.get("reference") or "").strip() or None,
+            status=local_status, source_status=source_status, source_created_by=str(row.get("created_by") or "").strip() or None,
+            source_updated_at=updated_at, recorded_at=recorded_at, customer_reference=str(row.get("reference") or "").strip() or None,
             notes=str(row.get("notes") or "").strip() or None, subtotal=_decimal(row.get("subtotal")),
             tax_total=max(Decimal("0"), _decimal(row.get("total"))-_decimal(row.get("subtotal"))), total=_decimal(row.get("total")),
             lines=lines_by_key.get((year, series, number), []),

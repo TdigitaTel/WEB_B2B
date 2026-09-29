@@ -272,6 +272,7 @@ class Order(Base, TimestampMixin):
     authority_system: Mapped[str] = mapped_column(String(20), default="WEB", index=True)
     exit_order_id: Mapped[str | None] = mapped_column(String(80), index=True)
     exit_status: Mapped[str | None] = mapped_column(String(80))
+    source_created_by: Mapped[str | None] = mapped_column(String(120))
     source_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_imported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[OrderStatus] = mapped_column(Enum(OrderStatus), index=True)
