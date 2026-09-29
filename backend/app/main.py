@@ -109,7 +109,7 @@ def order_payload(order: Order, db: Session, include_items: bool = False) -> dic
             logger.exception("No se pudo enriquecer el pedido con el cliente EXITERP %s", order.customer_code)
     creator = db.get(User, order.user_id)
     result = {"id": order.public_id, "number": order.order_number, "status": order.status.value,
-              "store": store.name, "store_code": store.code, "customer_reference": order.customer_reference,
+              "store": store.name, "store_code": store.code, "customer_code": order.customer_code, "customer_reference": order.customer_reference,
               "job_name": order.job_name, "notes": order.notes, "subtotal": float(order.subtotal),
               "tax_total": float(order.tax_total), "total": float(order.total), "created_at": order.created_at,
               "customer": customer_name, "created_by": creator.full_name if creator else "Integración EXIT",
