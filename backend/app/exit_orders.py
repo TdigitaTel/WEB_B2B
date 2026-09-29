@@ -24,6 +24,7 @@ class ExitOrderLineInput(BaseModel):
     tax_rate: Decimal = Decimal("21")
     line_total: Decimal | None = None
     fulfillment_zone: str = "OTROS"
+    pending_quantity: Decimal | None = None
 
 
 class ExitOrderInput(BaseModel):
@@ -33,6 +34,7 @@ class ExitOrderInput(BaseModel):
     customer_code: str
     store_code: str
     status: str
+    source_status: str | None = None
     source_updated_at: datetime
     recorded_at: datetime | None = None
     customer_reference: str | None = None
@@ -80,7 +82,7 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
     order.exit_order_id = incoming.exit_order_id
     if incoming.recorded_at:
         order.created_at = incoming.recorded_at
-    order.exit_status = incoming.status
+    order.exit_status = incoming.source_status or incoming.status
     order.authority_system = "EXIT"
     order.source_updated_at = incoming.source_updated_at
     order.last_imported_at = datetime.now(timezone.utc)
@@ -103,7 +105,7 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
         db.add(OrderItem(order_id=order.id, product_id=products.get(line.sku).id if products.get(line.sku) else None,
                          sku=line.sku, description=line.description, quantity=line.quantity, unit=line.unit,
                          unit_price=line.unit_price, discount_pct=line.discount_pct, tax_rate=line.tax_rate,
-                         line_total=line_total, fulfillment_zone=line.fulfillment_zone))
+                         line_total=line_total, fulfillment_zone=line.fulfillment_zone, pending_quantity=line.pending_quantity))
     if is_new or previous_status != status:
         db.add(OrderStatusHistory(order_id=order.id, status=status, changed_by_user_id=integration_user.id,
                                   note="Estado recibido desde EXIT"))
