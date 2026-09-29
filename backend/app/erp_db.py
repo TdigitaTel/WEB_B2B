@@ -192,8 +192,8 @@ def fetch_product_stocks(article_codes: list[str]) -> dict[str, list[dict]]:
         })
     for code, available in combined_00_99.items():
         result.setdefault(code, []).append({
-            "store_code": "00 + 99",
-            "store": "Almeiras + KARDEX",
+            "store_code": "00",
+            "store": "Almeiras",
             "available": available,
         })
     for stock in result.values():
