@@ -244,7 +244,7 @@ Los cambios de estado realizados por operación generan eventos `ORDER_STATUS_CH
 
 ### Pedidos pendientes de EXIT para Operaciones
 
-El lector usa `dbo.PedidoVentaCabecera` y `dbo.PedidoVentaDetalle`. Solo proyecta cabeceras que cumplan `IdDelegacion = '00'`, `StatusPedido = 'S'` y `PorcentajePendiente <> 100`. En cada comanda separa las líneas mediante `ex_tipopedvlinkardex`: `KARDEX` aparece como preparación de Kardex y `SGA` como preparación de estantes/SGA.
+El lector usa `dbo.PedidoVentaCabecera` y `dbo.PedidoVentaLineas`. Solo proyecta cabeceras que cumplan `IdDelegacion = '00'`, `StatusPedido = 'S'` y `PorcentajePendiente <> 100`. En cada comanda separa las líneas mediante `ex_tipopedvlinkardex`: `KARDEX` aparece como preparación de Kardex y `SGA` como preparación de estantes/SGA.
 
 Antes de importar, inspecciona diez pedidos sin modificar PostgreSQL:
 

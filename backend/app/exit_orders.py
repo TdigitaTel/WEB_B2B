@@ -34,6 +34,7 @@ class ExitOrderInput(BaseModel):
     store_code: str
     status: str
     source_updated_at: datetime
+    recorded_at: datetime | None = None
     customer_reference: str | None = None
     job_name: str | None = None
     notes: str | None = None
@@ -77,6 +78,8 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
 
     previous_status = order.status
     order.exit_order_id = incoming.exit_order_id
+    if incoming.recorded_at:
+        order.created_at = incoming.recorded_at
     order.exit_status = incoming.status
     order.authority_system = "EXIT"
     order.source_updated_at = incoming.source_updated_at

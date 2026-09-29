@@ -53,5 +53,5 @@ ARTICLE = {
 EXIT_SALES_ORDER = {
     "schema": "dbo",
     "header_table": "PedidoVentaCabecera",
-    "detail_table": "PedidoVentaDetalle",
+    "detail_table": "PedidoVentaLineas",
 }

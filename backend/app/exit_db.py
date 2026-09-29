@@ -1,5 +1,6 @@
 """Lectura de pedidos pendientes desde EXIT/SQL Server."""
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from decimal import Decimal
 
 from .erp_db import _discovered_column, _identifier, connect_sqlserver
@@ -15,10 +16,13 @@ HEADER_CANDIDATES = {
     "status": ("StatusPedido",),
     "pending_pct": ("PorcentajePendiente",),
     "date": ("FechaPedido", "Fecha"),
-    "reference": ("SuPedido", "ReferenciaCliente", "Referencia"),
+    "recorded_date": ("FechaGrabacion",),
+    "recorded_time": ("HoraGrabacion",),
+    "updated_at": ("FechaUltimaModificacion", "FechaModificacion"),
+    "reference": ("SuPedidoNumero", "SuPedido", "ReferenciaInterna", "ReferenciaCliente", "Referencia"),
     "notes": ("Observaciones", "Comentario", "Comentarios"),
-    "subtotal": ("ImporteLiquido", "BaseImponible", "ImporteNeto"),
-    "total": ("ImporteTotal", "TotalPedido", "Total"),
+    "subtotal": ("BaseImponible", "ImporteNetoLineas", "ImporteNeto"),
+    "total": ("ImporteLiquido", "ImporteFactura", "ImporteTotal", "TotalPedido", "Total"),
 }
 DETAIL_CANDIDATES = {
     "year": ("EjercicioPedido", "Ejercicio"),
@@ -87,6 +91,23 @@ def _decimal(value) -> Decimal:
     return Decimal(str(value or 0))
 
 
+
+def _exit_datetime(date_value, time_value=None) -> datetime:
+    base = date_value if isinstance(date_value, datetime) else datetime.now()
+    hour = minute = second = 0
+    if time_value is not None:
+        raw = Decimal(str(time_value or 0))
+        if Decimal("0") < raw < Decimal("1"):
+            seconds = int(raw * Decimal("86400"))
+            hour, remainder = divmod(seconds, 3600)
+            minute, second = divmod(remainder, 60)
+        else:
+            digits = str(abs(int(raw))).zfill(6)[-6:]
+            hour, minute, second = int(digits[:2]), int(digits[2:4]), int(digits[4:6])
+            if hour > 23 or minute > 59 or second > 59:
+                hour = minute = second = 0
+    return base.replace(hour=hour, minute=minute, second=second, microsecond=0, tzinfo=ZoneInfo("Europe/Madrid"))
+
 def fetch_pending_exit_orders(limit: int = 200) -> list[ExitOrderInput]:
     """Obtiene StatusPedido=S y PorcentajePendiente<>100, separados por KARDEX/SGA."""
     header_table = EXIT_SALES_ORDER["header_table"]
@@ -99,7 +120,7 @@ def fetch_pending_exit_orders(limit: int = 200) -> list[ExitOrderInput]:
         _required(detail, ("year", "series", "number", "sku", "quantity", "zone"), detail_table)
         hs = {key: _discovered_column(value) for key, value in header.items() if value}
         ds = {key: _discovered_column(value) for key, value in detail.items() if value}
-        header_fields = ("year", "series", "number", "customer", "delegation", "date", "reference", "notes", "subtotal", "total")
+        header_fields = ("year", "series", "number", "customer", "delegation", "date", "recorded_date", "recorded_time", "updated_at", "reference", "notes", "subtotal", "total")
         header_sql = (
             f"SELECT TOP {max(1, min(limit, 1000))} {', '.join(_select('h', header, f) for f in header_fields)} "
             f"FROM {schema}.{_identifier(header_table)} h "
@@ -150,10 +171,16 @@ def fetch_pending_exit_orders(limit: int = 200) -> list[ExitOrderInput]:
     for row in headers:
         year, series, number = _key(row)
         external_id = f"{year}/{series}/{number}"
+        recorded_at = _exit_datetime(row.get("recorded_date") or row.get("date"), row.get("recorded_time"))
+        updated_at = row.get("updated_at")
+        if isinstance(updated_at, datetime):
+            updated_at = updated_at.replace(tzinfo=ZoneInfo("Europe/Madrid"))
+        else:
+            updated_at = imported_at
         result.append(ExitOrderInput(
             exit_order_id=external_id, order_number=f"EXIT-{year}-{series}-{number}"[:40],
             customer_code=str(row.get("customer") or "").strip(), store_code="ALM",
-            status="ENVIADO", source_updated_at=imported_at, customer_reference=str(row.get("reference") or "").strip() or None,
+            status="ENVIADO", source_updated_at=updated_at, recorded_at=recorded_at, customer_reference=str(row.get("reference") or "").strip() or None,
             notes=str(row.get("notes") or "").strip() or None, subtotal=_decimal(row.get("subtotal")),
             tax_total=max(Decimal("0"), _decimal(row.get("total"))-_decimal(row.get("subtotal"))), total=_decimal(row.get("total")),
             lines=lines_by_key.get((year, series, number), []),
