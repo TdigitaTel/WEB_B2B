@@ -152,9 +152,9 @@ def health():
 
 @app.post("/api/v1/auth/login")
 def login(data: LoginIn, response: Response, db: Session = Depends(get_db)):
-    user = db.scalar(select(User).where(func.lower(User.email) == data.email.lower()))
+    user = db.scalar(select(User).where(func.lower(User.email) == data.email.strip().lower()))
     if not user or not verify_password(data.password, user.password_hash):
-        raise HTTPException(401, "Email o contraseña incorrectos")
+        raise HTTPException(401, "Usuario o contraseña incorrectos")
     customer = None
     if user.role not in {"OPERADOR_TIENDA", "ADMIN"}:
         customer = customer_for(user, db)
