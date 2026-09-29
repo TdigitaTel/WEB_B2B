@@ -47,10 +47,25 @@ def _columns(connection, table: str, candidates: dict[str, tuple[str, ...]]) -> 
 
 def inspect_exit_order_schema() -> dict:
     with connect_sqlserver() as connection:
-        return {
-            "header": _columns(connection, EXIT_SALES_ORDER["header_table"], HEADER_CANDIDATES),
-            "detail": _columns(connection, EXIT_SALES_ORDER["detail_table"], DETAIL_CANDIDATES),
+        result = {
+            "resolved_header": _columns(connection, EXIT_SALES_ORDER["header_table"], HEADER_CANDIDATES),
+            "resolved_detail": _columns(connection, EXIT_SALES_ORDER["detail_table"], DETAIL_CANDIDATES),
         }
+        with connection.cursor() as cursor:
+            for label, table in (("header", EXIT_SALES_ORDER["header_table"]), ("detail", EXIT_SALES_ORDER["detail_table"])):
+                cursor.execute(
+                    "SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS "
+                    "WHERE TABLE_SCHEMA=%s AND LOWER(TABLE_NAME)=LOWER(%s) ORDER BY ORDINAL_POSITION",
+                    (EXIT_SALES_ORDER["schema"], table),
+                )
+                result[f"raw_{label}_columns"] = cursor.fetchall()
+            cursor.execute(
+                "SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE FROM INFORMATION_SCHEMA.TABLES "
+                "WHERE LOWER(TABLE_NAME) LIKE %s ORDER BY TABLE_SCHEMA, TABLE_NAME",
+                ("pedidoventa%",),
+            )
+            result["available_pedido_venta_tables"] = cursor.fetchall()
+        return result
 
 
 def _required(columns: dict[str, str | None], fields: tuple[str, ...], table: str):
