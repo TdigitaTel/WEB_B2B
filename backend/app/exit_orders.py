@@ -99,6 +99,18 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
     order.total = incoming.total
     order.sync_status = SyncStatus.synced
 
+    started_at = incoming.recorded_at or order.created_at
+    completed_at = incoming.source_updated_at or datetime.now(timezone.utc)
+    elapsed_seconds = max(0, int((completed_at - started_at).total_seconds()))
+    kardex_lines = [line for line in incoming.lines if line.fulfillment_zone == "KARDEX"]
+    sga_lines = [line for line in incoming.lines if line.fulfillment_zone != "KARDEX"]
+    if kardex_lines and all((line.pending_quantity if line.pending_quantity is not None else line.quantity) <= 0 for line in kardex_lines) and order.kardex_completed_at is None:
+        order.kardex_completed_at = completed_at
+        order.kardex_duration_seconds = elapsed_seconds
+    if sga_lines and all((line.pending_quantity if line.pending_quantity is not None else line.quantity) <= 0 for line in sga_lines) and order.sga_completed_at is None:
+        order.sga_completed_at = completed_at
+        order.sga_duration_seconds = elapsed_seconds
+
     db.execute(delete(OrderItem).where(OrderItem.order_id == order.id))
     skus = [line.sku for line in incoming.lines]
     products = {p.sku: p for p in db.scalars(select(Product).where(Product.sku.in_(skus))).all()} if skus else {}

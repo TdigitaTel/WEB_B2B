@@ -93,3 +93,6 @@ body{background:linear-gradient(180deg,#f6f9fb 0,#f1f5f7 420px,#f5f6f7 100%)}.se
 
 /* Comandas colapsables con flujo vertical: al cerrar una, la siguiente ocupa su lugar. */
 .dispatch-list{display:block;column-count:4;column-gap:12px}.dispatch-order{display:inline-block;width:100%;margin:0 0 12px;break-inside:avoid}.dispatch-collapse{width:100%;border:0;border-top:1px solid #c6d9e5;background:#eaf3f8;color:var(--blue);padding:8px 10px;font-size:9px;font-weight:850;text-align:center}.dispatch-collapse:hover{background:#dcecf5}.dispatch-order.is-collapsed .dispatch-collapse{border-radius:0 0 11px 11px}.ops-empty{display:grid;width:100%;column-span:all}@media(max-width:1450px){.dispatch-list{column-count:3}}@media(max-width:1050px){.dispatch-list{column-count:2}}@media(max-width:650px){.dispatch-list{column-count:1}}
+
+/* Contadores independientes de preparación por zona. */
+.dispatch-timers{gap:5px!important}.dispatch-timers>span{display:flex;align-items:center;justify-content:space-between;gap:6px;border-radius:6px;padding:5px 7px;font-size:9px;font-weight:800}.dispatch-timers>span b{font-size:8px}.dispatch-timers>span em{font-size:7px;font-style:normal;text-transform:uppercase}.timer-kardex{background:#155d8f;color:#fff!important}.timer-sga{background:#b9def1;color:#0d2f4d!important}

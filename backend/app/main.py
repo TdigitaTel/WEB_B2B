@@ -114,7 +114,9 @@ def order_payload(order: Order, db: Session, include_items: bool = False) -> dic
               "tax_total": float(order.tax_total), "total": float(order.total), "created_at": order.created_at,
               "customer": customer_name, "created_by": order.source_created_by or (creator.full_name if creator else "Integración EXIT"),
               "source_system": order.source_system, "authority_system": order.authority_system,
-              "exit_order_id": order.exit_order_id, "exit_status": order.exit_status}
+              "exit_order_id": order.exit_order_id, "exit_status": order.exit_status,
+              "kardex_completed_at": order.kardex_completed_at, "kardex_duration_seconds": order.kardex_duration_seconds,
+              "sga_completed_at": order.sga_completed_at, "sga_duration_seconds": order.sga_duration_seconds}
     if include_items:
         result["items"] = [{"sku": item.sku, "description": item.description, "quantity": float(item.quantity),
                             "unit": item.unit, "unit_price": float(item.unit_price), "line_total": float(item.line_total),
