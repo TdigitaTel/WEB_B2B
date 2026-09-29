@@ -96,3 +96,6 @@ body{background:linear-gradient(180deg,#f6f9fb 0,#f1f5f7 420px,#f5f6f7 100%)}.se
 
 /* Contadores independientes de preparación por zona. */
 .dispatch-timers{gap:5px!important}.dispatch-timers>span{display:flex;align-items:center;justify-content:space-between;gap:6px;border-radius:6px;padding:5px 7px;font-size:9px;font-weight:800}.dispatch-timers>span b{font-size:8px}.dispatch-timers>span em{font-size:7px;font-style:normal;text-transform:uppercase}.timer-kardex{background:#155d8f;color:#fff!important}.timer-sga{background:#b9def1;color:#0d2f4d!important}
+
+/* Estado servido con contraste alto dentro de las cabeceras KARDEX y SGA. */
+.dispatch-zone>header .zone-served,.dispatch-zone.zone-KARDEX>header .zone-served,.dispatch-zone.zone-SGA>header .zone-served{display:inline-flex;align-items:center;border:2px solid #0d2f4d;background:#d9f2ff;color:#0d2f4d!important;box-shadow:0 1px 0 #ffffff80;padding:4px 8px;font-weight:950}
