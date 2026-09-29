@@ -112,7 +112,9 @@ def order_payload(order: Order, db: Session, include_items: bool = False) -> dic
               "store": store.name, "store_code": store.code, "customer_reference": order.customer_reference,
               "job_name": order.job_name, "notes": order.notes, "subtotal": float(order.subtotal),
               "tax_total": float(order.tax_total), "total": float(order.total), "created_at": order.created_at,
-              "customer": customer_name, "created_by": creator.full_name}
+              "customer": customer_name, "created_by": creator.full_name if creator else "Integración EXIT",
+              "source_system": order.source_system, "authority_system": order.authority_system,
+              "exit_order_id": order.exit_order_id, "exit_status": order.exit_status}
     if include_items:
         result["items"] = [{"sku": item.sku, "description": item.description, "quantity": float(item.quantity),
                             "unit": item.unit, "unit_price": float(item.unit_price), "line_total": float(item.line_total)}
@@ -352,7 +354,7 @@ def create_order(data: OrderCreate, user: User = Depends(current_user), db: Sess
     if not rows: raise HTTPException(400, "El pedido está vacío")
     prices = _erp_unit_prices([product for _, product in rows])
     order = Order(order_number=f"TMP-{cart.public_id[:20]}", customer_id=legacy_customer_id(user), customer_code=customer_code, user_id=user.id, store_id=store.id,
-                  status=OrderStatus.sent, customer_reference=data.customer_reference, job_name=data.job_name, notes=data.notes,
+                  status=OrderStatus.sent, source_system="WEB", authority_system="WEB", customer_reference=data.customer_reference, job_name=data.job_name, notes=data.notes,
                   subtotal=0, tax_total=0, total=0, sync_status=SyncStatus.pending)
     db.add(order); db.flush(); order.order_number = f"WEB-{datetime.now().year}-{order.id:07d}"
     subtotal = Decimal("0")
@@ -496,6 +498,8 @@ def transition(order_id: str, data: StatusChange, user: User = Depends(require_r
     except ValueError as exc: raise HTTPException(422, "Estado no válido") from exc
     if new_status not in ALLOWED_TRANSITIONS.get(order.status, set()): raise HTTPException(409, f"No se puede pasar de {order.status.value} a {new_status.value}")
     order.status = new_status; db.add(OrderStatusHistory(order_id=order.id, status=new_status, changed_by_user_id=user.id, note=data.note))
+    db.add(IntegrationOutbox(aggregate_type="ORDER", aggregate_id=order.public_id, event_type="ORDER_STATUS_CHANGED",
+                             payload={"order_number": order.order_number, "exit_order_id": order.exit_order_id, "status": new_status.value}, sync_status=SyncStatus.pending))
     db.add(Notification(customer_id=order.customer_id, customer_code=order.customer_code, title=f"Pedido {order.order_number}", message=f"Nuevo estado: {new_status.value.replace('_', ' ')}"))
     audit(db, user, "ORDER_STATUS_CHANGED", "ORDER", order.public_id, {"status": new_status.value}); db.commit()
     return order_payload(order, db, True)

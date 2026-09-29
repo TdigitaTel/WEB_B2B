@@ -266,8 +266,14 @@ class Order(Base, TimestampMixin):
     order_number: Mapped[str] = mapped_column(String(40), unique=True, index=True)
     customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id"), index=True)
     customer_code: Mapped[str | None] = mapped_column(String(40), index=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), index=True)
+    source_system: Mapped[str] = mapped_column(String(20), default="WEB", index=True)
+    authority_system: Mapped[str] = mapped_column(String(20), default="WEB", index=True)
+    exit_order_id: Mapped[str | None] = mapped_column(String(80), index=True)
+    exit_status: Mapped[str | None] = mapped_column(String(80))
+    source_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_imported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[OrderStatus] = mapped_column(Enum(OrderStatus), index=True)
     customer_reference: Mapped[str | None] = mapped_column(String(100))
     job_name: Mapped[str | None] = mapped_column(String(160), index=True)
@@ -276,14 +282,14 @@ class Order(Base, TimestampMixin):
     tax_total: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
     total: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
     sync_status: Mapped[SyncStatus] = mapped_column(Enum(SyncStatus), default=SyncStatus.pending)
-    __table_args__ = (Index("ix_orders_store_status_created", "store_id", "status", "created_at"),)
+    __table_args__ = (Index("ix_orders_store_status_created", "store_id", "status", "created_at"), Index("ux_orders_exit_order_id", "exit_order_id", unique=True))
 
 
 class OrderItem(Base, TimestampMixin):
     __tablename__ = "order_items"
     id: Mapped[int] = mapped_column(primary_key=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"), index=True)
-    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"))
+    product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"))
     sku: Mapped[str] = mapped_column(String(50))
     description: Mapped[str] = mapped_column(Text)
     quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3))
@@ -352,6 +358,16 @@ class AuditEvent(Base):
     entity_id: Mapped[str | None] = mapped_column(String(80))
     metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class IntegrationCursor(Base):
+    __tablename__ = "integration_cursors"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source: Mapped[str] = mapped_column(String(50), unique=True, index=True)
+    cursor_value: Mapped[str | None] = mapped_column(String(200))
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class IntegrationOutbox(Base):

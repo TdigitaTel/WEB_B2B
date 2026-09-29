@@ -219,3 +219,25 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api \
 ```
 
 Consulta la cobertura obtenida con `python -m scripts.check_postgres_images`.
+
+### Bandeja operativa unificada WEB + EXIT
+
+La pantalla de comandas lee una proyección común en PostgreSQL. Cada pedido conserva:
+
+- `source_system`: sistema donde nació (`WEB` o `EXIT`).
+- `authority_system`: sistema que controla su estado actual. Un pedido web cambia a `EXIT` cuando recibe `exit_order_id`.
+- `exit_order_id` y `exit_status`: identidad y estado originales de EXIT.
+- `source_updated_at` y `last_imported_at`: control de versiones e importación.
+
+`backend/app/exit_orders.py` define el contrato `ExitOrderInput` y las funciones idempotentes `upsert_exit_order` e `import_exit_batch`. El futuro demonio debe leer cabecera y líneas desde la tabla de EXIT, convertir los estados y almacenes al contrato y llamar `import_exit_batch`. El cursor se guarda en `integration_cursors` dentro de la misma transacción que los pedidos.
+
+Cuando se confirme la tabla de EXIT habrá que mapear estos datos: identificador del pedido, número web cuando exista, cliente, almacén, estado, fecha de última modificación, totales y líneas (`artículo`, `descripción`, `cantidad`, `unidad`, `precio`, `descuento`, `IVA` y `total`).
+
+Para comprobar el cursor de la integración:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api \
+  python -m scripts.show_exit_order_cursor
+```
+
+Los cambios de estado realizados por operación generan eventos `ORDER_STATUS_CHANGED` en `integration_outbox`, listos para que el proceso de salida los escriba en EXIT cuando se defina su tabla de destino.
