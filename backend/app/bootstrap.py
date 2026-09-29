@@ -42,6 +42,8 @@ def main():
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS last_imported_at TIMESTAMPTZ",
                 "ALTER TABLE orders ALTER COLUMN user_id DROP NOT NULL",
                 "ALTER TABLE order_items ALTER COLUMN product_id DROP NOT NULL",
+                "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS fulfillment_zone VARCHAR(20)",
+                "CREATE INDEX IF NOT EXISTS ix_order_items_fulfillment_zone ON order_items(fulfillment_zone)",
                 "CREATE UNIQUE INDEX IF NOT EXISTS ux_orders_exit_order_id ON orders(exit_order_id) WHERE exit_order_id IS NOT NULL",
                 "CREATE INDEX IF NOT EXISTS ix_orders_source_system ON orders(source_system)",
                 "CREATE INDEX IF NOT EXISTS ix_orders_authority_system ON orders(authority_system)",

@@ -241,3 +241,23 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api \
 ```
 
 Los cambios de estado realizados por operación generan eventos `ORDER_STATUS_CHANGED` en `integration_outbox`, listos para que el proceso de salida los escriba en EXIT cuando se defina su tabla de destino.
+
+### Pedidos pendientes de EXIT para Operaciones
+
+El lector usa `dbo.PedidoVentaCabecera` y `dbo.PedidoVentaDetalle`. Solo proyecta cabeceras que cumplan `StatusPedido = 'S'` y `PorcentajePendiente <> 100`. En cada comanda separa las líneas mediante `ex_tipopedvlinkardex`: `KARDEX` aparece como preparación de Kardex y `SGA` como preparación de estantes/SGA.
+
+Antes de importar, inspecciona diez pedidos sin modificar PostgreSQL:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api \
+  python -m scripts.inspect_exit_pending_orders
+```
+
+Si el mapeo es correcto, sincroniza hasta mil pedidos pendientes:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api \
+  python -m scripts.sync_exit_pending_orders
+```
+
+Ambos procesos resuelven los nombres reales de las columnas mediante `INFORMATION_SCHEMA`. Las equivalencias de almacén iniciales son `00→ALM`, `01→COR`, `02→FER`, `04→SAN` y `05→SAX`.

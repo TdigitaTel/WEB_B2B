@@ -23,6 +23,7 @@ class ExitOrderLineInput(BaseModel):
     discount_pct: Decimal = Decimal("0")
     tax_rate: Decimal = Decimal("21")
     line_total: Decimal | None = None
+    fulfillment_zone: str = "OTROS"
 
 
 class ExitOrderInput(BaseModel):
@@ -99,7 +100,7 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
         db.add(OrderItem(order_id=order.id, product_id=products.get(line.sku).id if products.get(line.sku) else None,
                          sku=line.sku, description=line.description, quantity=line.quantity, unit=line.unit,
                          unit_price=line.unit_price, discount_pct=line.discount_pct, tax_rate=line.tax_rate,
-                         line_total=line_total))
+                         line_total=line_total, fulfillment_zone=line.fulfillment_zone))
     if is_new or previous_status != status:
         db.add(OrderStatusHistory(order_id=order.id, status=status, changed_by_user_id=integration_user.id,
                                   note="Estado recibido desde EXIT"))

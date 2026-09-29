@@ -298,6 +298,7 @@ class OrderItem(Base, TimestampMixin):
     discount_pct: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=0)
     tax_rate: Mapped[Decimal] = mapped_column(Numeric(6, 2))
     line_total: Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    fulfillment_zone: Mapped[str | None] = mapped_column(String(20), index=True)
 
 
 class OrderStatusHistory(Base):

@@ -47,3 +47,11 @@ ARTICLE = {
     "price_with_tax": "PrecioVentaConIVA0",
     "price_without_tax": "PrecioVentaSinIVA0",
 }
+
+# Pedidos pendientes para la bandeja de operación. Los nombres de campos
+# alternativos se resuelven contra INFORMATION_SCHEMA en cada instalación.
+EXIT_SALES_ORDER = {
+    "schema": "dbo",
+    "header_table": "PedidoVentaCabecera",
+    "detail_table": "PedidoVentaDetalle",
+}
