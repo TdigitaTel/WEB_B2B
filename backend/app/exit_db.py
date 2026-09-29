@@ -11,7 +11,7 @@ HEADER_CANDIDATES = {
     "series": ("SeriePedido", "Serie"),
     "number": ("NumeroPedido", "NumeroPedidoVenta", "Numero"),
     "customer": ("CodigoCliente", "Cliente"),
-    "warehouse": ("CodigoAlmacen", "Almacen"),
+    "delegation": ("IdDelegacion",),
     "status": ("StatusPedido",),
     "pending_pct": ("PorcentajePendiente",),
     "date": ("FechaPedido", "Fecha"),
@@ -34,8 +34,6 @@ DETAIL_CANDIDATES = {
     "line_total": ("ImporteLiquido", "ImporteNeto", "ImporteLinea"),
     "zone": ("ex_tipopedvlinkardex", "Ex_TipoPedVLinKardex"),
 }
-STORE_MAP = {"0": "ALM", "00": "ALM", "1": "COR", "01": "COR", "2": "FER", "02": "FER", "4": "SAN", "04": "SAN", "5": "SAX", "05": "SAX"}
-
 
 def _columns(connection, table: str, candidates: dict[str, tuple[str, ...]]) -> dict[str, str | None]:
     with connection.cursor() as cursor:
@@ -82,20 +80,21 @@ def fetch_pending_exit_orders(limit: int = 200) -> list[ExitOrderInput]:
     with connect_sqlserver() as connection:
         header = _columns(connection, header_table, HEADER_CANDIDATES)
         detail = _columns(connection, detail_table, DETAIL_CANDIDATES)
-        _required(header, ("year", "series", "number", "customer", "warehouse", "status", "pending_pct"), header_table)
+        _required(header, ("year", "series", "number", "customer", "delegation", "status", "pending_pct"), header_table)
         _required(detail, ("year", "series", "number", "sku", "quantity", "zone"), detail_table)
         hs = {key: _discovered_column(value) for key, value in header.items() if value}
         ds = {key: _discovered_column(value) for key, value in detail.items() if value}
-        header_fields = ("year", "series", "number", "customer", "warehouse", "date", "reference", "notes", "subtotal", "total")
+        header_fields = ("year", "series", "number", "customer", "delegation", "date", "reference", "notes", "subtotal", "total")
         header_sql = (
             f"SELECT TOP {max(1, min(limit, 1000))} {', '.join(_select('h', header, f) for f in header_fields)} "
             f"FROM {schema}.{_identifier(header_table)} h "
             f"WHERE LTRIM(RTRIM(CONVERT(varchar(20),h.{hs['status']})))=%s "
             f"AND COALESCE(h.{hs['pending_pct']},0)<>%s "
+            f"AND LTRIM(RTRIM(CONVERT(varchar(20),h.{hs['delegation']})))=%s "
             f"ORDER BY h.{hs['year']} DESC,h.{hs['series']} DESC,h.{hs['number']} DESC"
         )
         with connection.cursor() as cursor:
-            cursor.execute(header_sql, ("S", 100))
+            cursor.execute(header_sql, ("S", 100, "00"))
             headers = cursor.fetchall()
         if not headers:
             return []
@@ -108,10 +107,12 @@ def fetch_pending_exit_orders(limit: int = 200) -> list[ExitOrderInput]:
         detail_sql = (
             f"SELECT {', '.join(_select('d', detail, f) for f in detail_fields)} "
             f"FROM {schema}.{_identifier(detail_table)} d JOIN {schema}.{_identifier(header_table)} h ON {join} "
-            f"WHERE LTRIM(RTRIM(CONVERT(varchar(20),h.{hs['status']})))=%s AND COALESCE(h.{hs['pending_pct']},0)<>%s"
+            f"WHERE LTRIM(RTRIM(CONVERT(varchar(20),h.{hs['status']})))=%s "
+            f"AND COALESCE(h.{hs['pending_pct']},0)<>%s "
+            f"AND LTRIM(RTRIM(CONVERT(varchar(20),h.{hs['delegation']})))=%s"
         )
         with connection.cursor() as cursor:
-            cursor.execute(detail_sql, ("S", 100))
+            cursor.execute(detail_sql, ("S", 100, "00"))
             detail_rows = [row for row in cursor.fetchall() if _key(row) in wanted]
 
     lines_by_key: dict[tuple[str, str, str], list[ExitOrderLineInput]] = {key: [] for key in wanted}
@@ -134,10 +135,9 @@ def fetch_pending_exit_orders(limit: int = 200) -> list[ExitOrderInput]:
     for row in headers:
         year, series, number = _key(row)
         external_id = f"{year}/{series}/{number}"
-        raw_store = str(row.get("warehouse") or "").strip().upper()
         result.append(ExitOrderInput(
             exit_order_id=external_id, order_number=f"EXIT-{year}-{series}-{number}"[:40],
-            customer_code=str(row.get("customer") or "").strip(), store_code=STORE_MAP.get(raw_store, raw_store),
+            customer_code=str(row.get("customer") or "").strip(), store_code="ALM",
             status="ENVIADO", source_updated_at=imported_at, customer_reference=str(row.get("reference") or "").strip() or None,
             notes=str(row.get("notes") or "").strip() or None, subtotal=_decimal(row.get("subtotal")),
             tax_total=max(Decimal("0"), _decimal(row.get("total"))-_decimal(row.get("subtotal"))), total=_decimal(row.get("total")),
