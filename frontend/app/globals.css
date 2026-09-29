@@ -99,3 +99,6 @@ body{background:linear-gradient(180deg,#f6f9fb 0,#f1f5f7 420px,#f5f6f7 100%)}.se
 
 /* Estado servido con contraste alto dentro de las cabeceras KARDEX y SGA. */
 .dispatch-zone>header .zone-served,.dispatch-zone.zone-KARDEX>header .zone-served,.dispatch-zone.zone-SGA>header .zone-served{display:inline-flex;align-items:center;border:2px solid #0d2f4d;background:#d9f2ff;color:#0d2f4d!important;box-shadow:0 1px 0 #ffffff80;padding:4px 8px;font-weight:950}
+
+/* Rojo corporativo suave para destacar el estado finalizado. */
+.dispatch-zone>header .zone-served,.dispatch-zone.zone-KARDEX>header .zone-served,.dispatch-zone.zone-SGA>header .zone-served{border-color:#ed2b24;background:#ffe8e6;color:#a91f1a!important;box-shadow:0 1px 0 #ffffffa8}
