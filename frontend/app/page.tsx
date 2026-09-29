@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 type View = "home" | "catalog" | "orders" | "documents" | "ops" | "account";
 type User = { id: string; name: string; email: string; role: string };
@@ -24,8 +24,8 @@ type CatalogFilters = { areaId: string; familyId: string; subfamilyId: string; p
 
 const emptyCatalogFilters: CatalogFilters = { areaId: "", familyId: "", subfamilyId: "", productTypeId: "" };
 
-function productsUrl(text: string, filters: CatalogFilters) {
-  const params = new URLSearchParams({ q: text, page_size: "48" });
+function productsUrl(text: string, filters: CatalogFilters, page = 1) {
+  const params = new URLSearchParams({ q: text, page: String(page), page_size: "48" });
   if (filters.areaId) params.set("area_id", filters.areaId);
   if (filters.familyId) params.set("family_id", filters.familyId);
   if (filters.subfamilyId) params.set("subfamily_id", filters.subfamilyId);
@@ -57,6 +57,8 @@ export default function Page() {
   const [suggestionsEnabled, setSuggestionsEnabled] = useState(true);
   const [products, setProducts] = useState<Product[]>([]);
   const [totalProducts, setTotalProducts] = useState(0);
+  const [catalogPage, setCatalogPage] = useState(1);
+  const [loadingMoreProducts, setLoadingMoreProducts] = useState(false);
   const [classification, setClassification] = useState<AreaNode[]>([]);
   const [catalogFilters, setCatalogFilters] = useState<CatalogFilters>(emptyCatalogFilters);
   const [stores, setStores] = useState<Store[]>([]);
@@ -104,7 +106,7 @@ export default function Page() {
   const searchProducts = useCallback(async (text = query, filters = catalogFilters) => {
     if (!user || isOperator) return;
     const result = await api<{ items: Product[]; total: number }>(productsUrl(text, filters));
-    setProducts(result.items); setTotalProducts(result.total);
+    setProducts(result.items); setTotalProducts(result.total); setCatalogPage(1);
   }, [query, catalogFilters, user, isOperator]);
 
   useEffect(() => {
@@ -113,11 +115,26 @@ export default function Page() {
     const timer = window.setTimeout(async () => {
       try {
         const result = await api<{items:Product[];total:number}>(productsUrl(query, catalogFilters), {signal:controller.signal});
-        setProducts(result.items); setTotalProducts(result.total); setError("");
+        setProducts(result.items); setTotalProducts(result.total); setCatalogPage(1); setLoadingMoreProducts(false); setError("");
       } catch(e) { if (!controller.signal.aborted) setError((e as Error).message); }
     }, 220);
     return () => { clearTimeout(timer); controller.abort(); };
   }, [query, catalogFilters, user, isOperator]);
+
+  const loadMoreProducts = useCallback(async () => {
+    if (!user || isOperator || loadingMoreProducts || products.length >= totalProducts) return;
+    const nextPage = catalogPage + 1;
+    setLoadingMoreProducts(true);
+    try {
+      const result = await api<{items:Product[];total:number}>(productsUrl(query, catalogFilters, nextPage));
+      setProducts(current => {
+        const known = new Set(current.map(product => product.id));
+        return [...current, ...result.items.filter(product => !known.has(product.id))];
+      });
+      setTotalProducts(result.total); setCatalogPage(nextPage);
+    } catch (e) { setError((e as Error).message); }
+    finally { setLoadingMoreProducts(false); }
+  }, [user, isOperator, loadingMoreProducts, products.length, totalProducts, catalogPage, query, catalogFilters]);
 
   useEffect(() => {
     if (!suggestionsEnabled || query.trim().length < 2 || isOperator) { setSuggestions([]); return; }
@@ -183,7 +200,7 @@ export default function Page() {
     </header>
     <div className="service-strip"><span>ÁREA PROFESIONAL · Compra a tu ritmo</span><span>5 delegaciones · Recogida en tienda</span></div>{error && <div className="page error" role="alert">{error}</div>}
     {view === "home" && <Home customer={customer} orders={orders} products={products.slice(0,8)} classification={classification} onNavigate={setView} onSelectArea={areaId=>{setCatalogFilters({areaId:String(areaId),familyId:"",subfamilyId:"",productTypeId:""});setView("catalog")}} onAdd={addProduct} />}
-    {view === "catalog" && <Catalog products={products} total={totalProducts} classification={classification} filters={catalogFilters} setFilters={setCatalogFilters} onAdd={addProduct} />}
+    {view === "catalog" && <Catalog products={products} total={totalProducts} classification={classification} filters={catalogFilters} setFilters={setCatalogFilters} onAdd={addProduct} onLoadMore={loadMoreProducts} loadingMore={loadingMoreProducts} />}
     {view === "orders" && <Orders orders={orders} onRepeat={repeatOrder} />}
     {view === "documents" && <Documents notes={deliveryNotes} invoices={invoices} />}
     {view === "account" && <Account user={user} customer={customer} />}
@@ -214,10 +231,13 @@ function Home({customer,orders,products,classification,onNavigate,onSelectArea,o
   <aside className="activity-panel panel"><div className="section-heading"><h2>Mis pedidos</h2><span className="count">{active.length}</span></div><p className="small">El estado de tus últimas compras.</p>{active.slice(0,3).map(o=><div className="compact-order" key={o.id}><b>{o.number}</b><span className="small">{o.store} · {o.job_name||"Sin obra"}</span><span className="status">{statusLabel(o.status)}</span></div>)}{!active.length&&<p className="small">No tienes pedidos activos.</p>}<button className="ghost block" onClick={()=>onNavigate("orders")}>Ver todos mis pedidos →</button><div className="store-note"><b>Cerca de tu próxima obra</b><p>Almeiras · A Coruña · Sanxenxo · Ferrol · Santiago</p></div></aside></div></div>;
 }
 
-function Catalog({products,total,classification,filters,setFilters,onAdd}:{products:Product[];total:number;classification:AreaNode[];filters:CatalogFilters;setFilters:(f:CatalogFilters)=>void;onAdd:(id:string,qty?:number)=>void}) {
+function Catalog({products,total,classification,filters,setFilters,onAdd,onLoadMore,loadingMore}:{products:Product[];total:number;classification:AreaNode[];filters:CatalogFilters;setFilters:(f:CatalogFilters)=>void;onAdd:(id:string,qty?:number)=>void;onLoadMore:()=>Promise<void>;loadingMore:boolean}) {
   const [filtersOpen,setFiltersOpen]=useState(false);
   const [openStockId,setOpenStockId]=useState<string|null>(null);
   const [sort,setSort]=useState("relevance");
+  const loadMoreRef=useRef<HTMLDivElement|null>(null);
+  const hasMore=products.length<total;
+  useEffect(()=>{const target=loadMoreRef.current;if(!target||!hasMore)return;const observer=new IntersectionObserver(entries=>{if(entries[0]?.isIntersecting&&!loadingMore)onLoadMore().catch(()=>{})},{rootMargin:"600px 0px"});observer.observe(target);return()=>observer.disconnect()},[hasMore,loadingMore,onLoadMore]);
   const selectArea=(id:number|string)=>setFilters({areaId:String(id),familyId:"",subfamilyId:"",productTypeId:""});
   const selectFamily=(areaId:number,id:number)=>setFilters({areaId:String(areaId),familyId:String(id),subfamilyId:"",productTypeId:""});
   const selectSubfamily=(areaId:number,familyId:number,id:number)=>setFilters({areaId:String(areaId),familyId:String(familyId),subfamilyId:String(id),productTypeId:""});
@@ -225,7 +245,7 @@ function Catalog({products,total,classification,filters,setFilters,onAdd}:{produ
   const area=classification.find(x=>String(x.id)===filters.areaId); const family=area?.families.find(x=>String(x.id)===filters.familyId); const subfamily=family?.subfamilies.find(x=>String(x.id)===filters.subfamilyId); const type=subfamily?.product_types.find(x=>String(x.id)===filters.productTypeId);
   const sorted=[...products].sort((a,b)=>sort==="price-asc"?a.price_with_tax-b.price_with_tax:sort==="price-desc"?b.price_with_tax-a.price_with_tax:sort==="name"?a.name.localeCompare(b.name,"es"):0);
   const hasFilters=!!(filters.areaId||filters.familyId||filters.subfamilyId||filters.productTypeId);
-  return <div className="page catalog-page"><div className="catalog-title"><div><span className="eyebrow">CATÁLOGO PROFESIONAL</span><h1>{type?.name||subfamily?.name||family?.name||area?.name||"Productos para tu instalación"}</h1><p>Encuentra material por departamento y afina el resultado con filtros.</p></div><div className="catalog-count"><strong>{total.toLocaleString("es-ES")}</strong><span>referencias</span></div></div>{hasFilters&&<nav className="catalog-breadcrumb" aria-label="Ruta de categoría"><button onClick={()=>setFilters(emptyCatalogFilters)}>Catálogo</button><span>›</span>{area&&<><button onClick={()=>selectArea(area.id)}>{area.name}</button></>}{family&&<><span>›</span><button onClick={()=>selectFamily(area!.id,family.id)}>{family.name}</button></>}{subfamily&&<><span>›</span><button onClick={()=>selectSubfamily(area!.id,family!.id,subfamily.id)}>{subfamily.name}</button></>}{type&&<><span>›</span><b>{type.name}</b></>}</nav>}{hasFilters&&<div className="active-filter-bar"><span>Filtros aplicados</span>{area&&<button onClick={()=>setFilters(emptyCatalogFilters)}>{area.name} ×</button>}{family&&<button onClick={()=>selectArea(area!.id)}>{family.name} ×</button>}{subfamily&&<button onClick={()=>selectFamily(area!.id,family!.id)}>{subfamily.name} ×</button>}{type&&<button onClick={()=>selectSubfamily(area!.id,family!.id,subfamily!.id)}>{type.name} ×</button>}<button className="clear-all" onClick={()=>setFilters(emptyCatalogFilters)}>Limpiar todo</button></div>}<div className="catalog-toolbar"><button className="mobile-filter-button" onClick={()=>setFiltersOpen(true)}>☷ Filtrar</button><div><b>{total.toLocaleString("es-ES")} resultados</b><div className="small">Precio y disponibilidad actualizados</div></div><label className="sort-control">Ordenar por<select value={sort} onChange={e=>setSort(e.target.value)}><option value="relevance">Relevancia</option><option value="name">Nombre</option><option value="price-asc">Precio: menor a mayor</option><option value="price-desc">Precio: mayor a menor</option></select></label></div><div className="facet-layout"><aside className={`facet-panel ${filtersOpen?"open":""}`}><div className="facet-head"><div><b>Filtrar por</b><small>Selecciona una opción</small></div><button onClick={()=>setFiltersOpen(false)}>×</button></div><details className="facet-group" open><summary>Departamento</summary><div className="facet-options"><button className={!filters.areaId?"active":""} onClick={()=>setFilters(emptyCatalogFilters)}>Todos <span>{classification.reduce((sum,item)=>sum+item.count,0)}</span></button>{classification.map(item=><button key={item.id} className={filters.areaId===String(item.id)?"active":""} onClick={()=>selectArea(item.id)}>{item.name}<span>{item.count}</span></button>)}</div></details>{area&&<details className="facet-group" open><summary>Familia</summary><div className="facet-options">{area.families.map(item=><button key={item.id} className={filters.familyId===String(item.id)?"active":""} onClick={()=>selectFamily(area.id,item.id)}>{item.name}<span>{item.count}</span></button>)}</div></details>}{family&&<details className="facet-group" open><summary>Subfamilia</summary><div className="facet-options">{family.subfamilies.map(item=><button key={item.id} className={filters.subfamilyId===String(item.id)?"active":""} onClick={()=>selectSubfamily(area!.id,family.id,item.id)}>{item.name}<span>{item.count}</span></button>)}</div></details>}{subfamily&&<details className="facet-group" open><summary>Tipo de producto</summary><div className="facet-options">{subfamily.product_types.map(item=><button key={item.id} className={filters.productTypeId===String(item.id)?"active":""} onClick={()=>selectType(area!.id,family!.id,subfamily.id,item.id)}>{item.name}<span>{item.count}</span></button>)}</div></details>}<button className="primary facet-done" onClick={()=>setFiltersOpen(false)}>Ver {total.toLocaleString("es-ES")} productos</button></aside>{filtersOpen&&<button className="facet-backdrop" aria-label="Cerrar filtros" onClick={()=>setFiltersOpen(false)}/>}<section className="catalog-results"><div className="products">{sorted.map(p=><ProductCard key={p.id} product={p} onAdd={onAdd} stockOpen={openStockId===p.id} onStockToggle={open=>setOpenStockId(open?p.id:null)}/>)}</div>{!products.length&&<div className="empty-state"><h2>No encontramos ese material</h2><p>Prueba otra referencia, menos palabras o limpia los filtros aplicados.</p></div>}</section></div></div>
+  return <div className="page catalog-page"><div className="catalog-title"><div><span className="eyebrow">CATÁLOGO PROFESIONAL</span><h1>{type?.name||subfamily?.name||family?.name||area?.name||"Productos para tu instalación"}</h1><p>Encuentra material por departamento y afina el resultado con filtros.</p></div><div className="catalog-count"><strong>{total.toLocaleString("es-ES")}</strong><span>referencias</span></div></div>{hasFilters&&<nav className="catalog-breadcrumb" aria-label="Ruta de categoría"><button onClick={()=>setFilters(emptyCatalogFilters)}>Catálogo</button><span>›</span>{area&&<><button onClick={()=>selectArea(area.id)}>{area.name}</button></>}{family&&<><span>›</span><button onClick={()=>selectFamily(area!.id,family.id)}>{family.name}</button></>}{subfamily&&<><span>›</span><button onClick={()=>selectSubfamily(area!.id,family!.id,subfamily.id)}>{subfamily.name}</button></>}{type&&<><span>›</span><b>{type.name}</b></>}</nav>}{hasFilters&&<div className="active-filter-bar"><span>Filtros aplicados</span>{area&&<button onClick={()=>setFilters(emptyCatalogFilters)}>{area.name} ×</button>}{family&&<button onClick={()=>selectArea(area!.id)}>{family.name} ×</button>}{subfamily&&<button onClick={()=>selectFamily(area!.id,family!.id)}>{subfamily.name} ×</button>}{type&&<button onClick={()=>selectSubfamily(area!.id,family!.id,subfamily!.id)}>{type.name} ×</button>}<button className="clear-all" onClick={()=>setFilters(emptyCatalogFilters)}>Limpiar todo</button></div>}<div className="catalog-toolbar"><button className="mobile-filter-button" onClick={()=>setFiltersOpen(true)}>☷ Filtrar</button><div><b>{total.toLocaleString("es-ES")} resultados</b><div className="small">Precio y disponibilidad actualizados</div></div><label className="sort-control">Ordenar por<select value={sort} onChange={e=>setSort(e.target.value)}><option value="relevance">Relevancia</option><option value="name">Nombre</option><option value="price-asc">Precio: menor a mayor</option><option value="price-desc">Precio: mayor a menor</option></select></label></div><div className="facet-layout"><aside className={`facet-panel ${filtersOpen?"open":""}`}><div className="facet-head"><div><b>Filtrar por</b><small>Selecciona una opción</small></div><button onClick={()=>setFiltersOpen(false)}>×</button></div><details className="facet-group" open><summary>Departamento</summary><div className="facet-options"><button className={!filters.areaId?"active":""} onClick={()=>setFilters(emptyCatalogFilters)}>Todos <span>{classification.reduce((sum,item)=>sum+item.count,0)}</span></button>{classification.map(item=><button key={item.id} className={filters.areaId===String(item.id)?"active":""} onClick={()=>selectArea(item.id)}>{item.name}<span>{item.count}</span></button>)}</div></details>{area&&<details className="facet-group" open><summary>Familia</summary><div className="facet-options">{area.families.map(item=><button key={item.id} className={filters.familyId===String(item.id)?"active":""} onClick={()=>selectFamily(area.id,item.id)}>{item.name}<span>{item.count}</span></button>)}</div></details>}{family&&<details className="facet-group" open><summary>Subfamilia</summary><div className="facet-options">{family.subfamilies.map(item=><button key={item.id} className={filters.subfamilyId===String(item.id)?"active":""} onClick={()=>selectSubfamily(area!.id,family.id,item.id)}>{item.name}<span>{item.count}</span></button>)}</div></details>}{subfamily&&<details className="facet-group" open><summary>Tipo de producto</summary><div className="facet-options">{subfamily.product_types.map(item=><button key={item.id} className={filters.productTypeId===String(item.id)?"active":""} onClick={()=>selectType(area!.id,family!.id,subfamily.id,item.id)}>{item.name}<span>{item.count}</span></button>)}</div></details>}<button className="primary facet-done" onClick={()=>setFiltersOpen(false)}>Ver {total.toLocaleString("es-ES")} productos</button></aside>{filtersOpen&&<button className="facet-backdrop" aria-label="Cerrar filtros" onClick={()=>setFiltersOpen(false)}/>}<section className="catalog-results"><div className="products">{sorted.map(p=><ProductCard key={p.id} product={p} onAdd={onAdd} stockOpen={openStockId===p.id} onStockToggle={open=>setOpenStockId(open?p.id:null)}/>)}</div>{!products.length&&<div className="empty-state"><h2>No encontramos ese material</h2><p>Prueba otra referencia, menos palabras o limpia los filtros aplicados.</p></div>}<div ref={loadMoreRef} className="catalog-load-more" aria-live="polite">{loadingMore?"Cargando más productos…":hasMore?"Desplázate para ver más":`${products.length.toLocaleString("es-ES")} productos mostrados`}</div></section></div></div>
 }
 
 function ProductCard({product,onAdd,stockOpen=false,onStockToggle=()=>{}}:{product:Product;onAdd:(id:string,qty?:number)=>void;stockOpen?:boolean;onStockToggle?:(open:boolean)=>void}) { const [qty,setQty]=useState(1); const [imageFailed,setImageFailed]=useState(false); return <article className="product"><div className="product-image-wrap"><span className="product-code">Ref. {product.sku}</span><div className={`product-visual ${imageFailed?"image-missing":""}`}>{!imageFailed?<img src={product.image_url} alt={product.name} loading="lazy" onError={()=>setImageFailed(true)}/>:<><span aria-hidden="true">{product.family.slice(0,2).toUpperCase()}</span><small>{product.family}</small></>}</div></div><div className="product-body"><span className="family-name">{product.family}</span><h3>{product.name}</h3><span className="sku">{product.brand} · Código {product.sku}</span><div className="price-block"><span>Precio con IVA</span><div className="price">{money(product.price_with_tax)}</div><small>{money(product.price_without_tax)} sin IVA</small></div><details className="stock-popover" open={stockOpen}><summary className="stock" onClick={event=>{event.preventDefault();onStockToggle(!stockOpen)}} aria-label={`Stock total ${product.total_available} unidades. Abrir detalle por almacén`}><span className="availability-dot"/> {Math.max(0,Math.round(product.total_available))} uds. disponibles <span aria-hidden="true">ⓘ</span></summary><div className="stock-detail"><b>Disponibilidad por almacén</b><small className="stock-help">Pulsa de nuevo en el total para cerrar.</small>{product.stock.length?product.stock.map(item=><div className="stock-row" key={item.store_code}><span>{item.store}<small>Almacén {item.store_code}</small></span><strong>{item.available.toLocaleString("es-ES",{maximumFractionDigits:2})} uds.</strong></div>):<p>Sin existencias en los almacenes incluidos.</p>}<div className="stock-note">No incluye los almacenes configurados como excluidos.</div></div></details><div className="product-actions"><label><span>Uds.</span><input className="qty" type="number" min="1" value={qty} onChange={e=>setQty(Math.max(1,Number(e.target.value)))}/></label><button className="secondary block" onClick={()=>onAdd(product.id,qty)}>Añadir al carrito</button></div></div></article> }
