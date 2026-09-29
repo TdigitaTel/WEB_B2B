@@ -76,8 +76,9 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
         )
         db.add(order)
         db.flush()
-    elif order.source_updated_at and incoming.source_updated_at <= order.source_updated_at and order.source_created_by:
-        return order
+    # Las unidades pendientes viven en el detalle de EXIT y pueden cambiar sin que
+    # la fecha de modificación de la cabecera avance. Por eso se refrescan siempre
+    # las líneas del pedido durante la sincronización.
 
     previous_status = order.status
     order.exit_order_id = incoming.exit_order_id

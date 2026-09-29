@@ -118,11 +118,15 @@ def order_payload(order: Order, db: Session, include_items: bool = False) -> dic
               "kardex_completed_at": order.kardex_completed_at, "kardex_duration_seconds": order.kardex_duration_seconds,
               "sga_completed_at": order.sga_completed_at, "sga_duration_seconds": order.sga_duration_seconds}
     if include_items:
-        result["items"] = [{"sku": item.sku, "description": item.description, "quantity": float(item.quantity),
-                            "unit": item.unit, "unit_price": float(item.unit_price), "line_total": float(item.line_total),
-                            "fulfillment_zone": item.fulfillment_zone or "OTROS",
-                            "pending_quantity": float(item.pending_quantity) if item.pending_quantity is not None else float(item.quantity)}
-                           for item in db.scalars(select(OrderItem).where(OrderItem.order_id == order.id).order_by(OrderItem.id)).all()]
+        result["items"] = []
+        for item in db.scalars(select(OrderItem).where(OrderItem.order_id == order.id).order_by(OrderItem.id)).all():
+            pending = item.pending_quantity if item.pending_quantity is not None else item.quantity
+            served = max(Decimal("0"), item.quantity - pending)
+            result["items"].append({"sku": item.sku, "description": item.description,
+                                    "quantity": float(item.quantity), "served_quantity": float(served),
+                                    "pending_quantity": float(pending), "unit": item.unit,
+                                    "unit_price": float(item.unit_price), "line_total": float(item.line_total),
+                                    "fulfillment_zone": item.fulfillment_zone or "OTROS"})
         history = db.scalars(select(OrderStatusHistory).where(OrderStatusHistory.order_id == order.id).order_by(OrderStatusHistory.created_at)).all()
         result["history"] = [{"status": h.status.value, "note": h.note, "created_at": h.created_at} for h in history]
         notes = db.scalars(select(DeliveryNote).where(DeliveryNote.order_id == order.id).order_by(DeliveryNote.created_at)).all()
