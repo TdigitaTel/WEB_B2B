@@ -218,6 +218,30 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api \
   python -m scripts.import_provider_images /tmp/imagenes.csv
 ```
 
+Para localizar imágenes en las webs oficiales de GEBO, IBIDE y GENEBRE se usa un proceso en dos pasos. Primero genera un CSV de revisión sin modificar la base de datos:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api \
+  python -m scripts.scrape_official_brand_images \
+  --brands GEBO IBIDE GENEBRE \
+  --output /tmp/official_brand_image_candidates.csv
+
+docker compose -f docker-compose.yml -f docker-compose.prod.yml cp \
+  api:/tmp/official_brand_image_candidates.csv ./official_brand_image_candidates.csv
+```
+
+El archivo conserva la referencia, la ficha oficial, la URL de la imagen, la puntuación y el motivo de la coincidencia. Después de revisarlo, la misma búsqueda puede guardar en PostgreSQL solo las coincidencias de alta confianza:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api \
+  python -m scripts.scrape_official_brand_images \
+  --brands GEBO IBIDE GENEBRE \
+  --output /tmp/official_brand_image_results.csv \
+  --apply
+```
+
+La herramienta respeta `robots.txt`, limita la frecuencia de peticiones, restringe la navegación a los dominios configurados y no reemplaza imágenes existentes. Cada binario queda acompañado por URL de origen, proveedor y huella SHA-256. `--overwrite` permite sustituir imágenes existentes únicamente cuando se indica junto con `--apply`.
+
 Consulta la cobertura obtenida con `python -m scripts.check_postgres_images`.
 
 ### Bandeja operativa unificada WEB + EXIT
