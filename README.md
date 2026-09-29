@@ -222,8 +222,9 @@ Para localizar imágenes en las webs oficiales de GEBO, IBIDE y GENEBRE se usa u
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api \
-  python -m scripts.scrape_official_brand_images \
+  python -u -m scripts.scrape_official_brand_images \
   --brands GEBO IBIDE GENEBRE \
+  --progress-every 10 \
   --output /tmp/official_brand_image_candidates.csv
 
 docker compose -f docker-compose.yml -f docker-compose.prod.yml cp \
@@ -234,8 +235,9 @@ El archivo conserva la referencia, la ficha oficial, la URL de la imagen, la pun
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api \
-  python -m scripts.scrape_official_brand_images \
+  python -u -m scripts.scrape_official_brand_images \
   --brands GEBO IBIDE GENEBRE \
+  --progress-every 10 \
   --output /tmp/official_brand_image_results.csv \
   --apply
 ```

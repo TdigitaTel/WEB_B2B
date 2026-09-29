@@ -188,7 +188,8 @@ def products_for_brand(db, brand: str) -> list[Product]:
     ).all()
 
 
-def crawl_brand(client: httpx.Client, brand: str, products: list[Product], max_pages: int, delay: float) -> list[Candidate]:
+def crawl_brand(client: httpx.Client, brand: str, products: list[Product], max_pages: int, delay: float,
+                progress_every: int) -> list[Candidate]:
     source = SOURCES[brand]
     queue = deque(source["seeds"])
     visited: set[str] = set()
@@ -199,11 +200,15 @@ def crawl_brand(client: httpx.Client, brand: str, products: list[Product], max_p
         if len(reference) >= 4:
             references[reference].append(product)
     matches: dict[int, Candidate] = {}
+    print({"brand": brand, "status": "starting", "products": len(products), "max_pages": max_pages}, flush=True)
     while queue and len(visited) < max_pages:
         url = urldefrag(queue.popleft())[0]
         if url in visited or urlparse(url).netloc.lower() not in source["hosts"]:
             continue
         visited.add(url)
+        if len(visited) == 1 or len(visited) % progress_every == 0:
+            print({"brand": brand, "status": "crawling", "pages": len(visited),
+                   "queued": len(queue), "candidates": len(matches), "url": url}, flush=True)
         if not robots_for(client, url, robots).can_fetch(USER_AGENT, url):
             continue
         try:
@@ -212,7 +217,7 @@ def crawl_brand(client: httpx.Client, brand: str, products: list[Product], max_p
                 continue
             parser = PageParser(); parser.feed(response.text)
         except Exception as exc:
-            print({"brand": brand, "url": url, "status": "error", "detail": str(exc)})
+            print({"brand": brand, "url": url, "status": "error", "detail": str(exc)}, flush=True)
             continue
         title = " ".join(parser.title)
         searchable = compact(title + " " + " ".join(parser.text))
@@ -238,7 +243,8 @@ def crawl_brand(client: httpx.Client, brand: str, products: list[Product], max_p
                 queue.append(linked)
         if delay:
             time.sleep(delay)
-    print({"brand": brand, "pages": len(visited), "products": len(products), "candidates": len(matches)})
+    print({"brand": brand, "status": "complete", "pages": len(visited),
+           "products": len(products), "candidates": len(matches)}, flush=True)
     return list(matches.values())
 
 
@@ -274,16 +280,21 @@ def main():
     parser.add_argument("--output", default="/tmp/official_brand_image_candidates.csv")
     parser.add_argument("--max-pages", type=int, default=400)
     parser.add_argument("--delay", type=float, default=0.35)
+    parser.add_argument("--progress-every", type=int, default=10,
+                        help="Muestra el avance cada N páginas (predeterminado: 10)")
     parser.add_argument("--apply", action="store_true", help="Guarda coincidencias con puntuación >= 80 en PostgreSQL")
     parser.add_argument("--overwrite", action="store_true", help="Sustituye imágenes existentes; requiere --apply")
     args = parser.parse_args()
     if args.overwrite and not args.apply:
         parser.error("--overwrite requiere --apply")
+    if args.progress_every < 1:
+        parser.error("--progress-every debe ser mayor que cero")
     candidates: list[Candidate] = []
     stats: dict[str, int] = {}
     with SessionLocal() as db, httpx.Client(follow_redirects=True, timeout=30, headers={"User-Agent": USER_AGENT}) as client:
         for brand in args.brands:
-            candidates.extend(crawl_brand(client, brand, products_for_brand(db, brand), args.max_pages, args.delay))
+            candidates.extend(crawl_brand(client, brand, products_for_brand(db, brand), args.max_pages,
+                                          args.delay, args.progress_every))
         output = Path(args.output)
         output.parent.mkdir(parents=True, exist_ok=True)
         with output.open("w", encoding="utf-8-sig", newline="") as file:
@@ -301,7 +312,7 @@ def main():
                                  "brand": candidate.brand, "description": candidate.product.short_description,
                                  "page_url": candidate.page_url, "image_url": candidate.image_url,
                                  "score": candidate.score, "reason": candidate.reason, "status": status})
-    print({"status": "ok", "output": str(Path(args.output)), "candidates": len(candidates), "results": stats})
+    print({"status": "ok", "output": str(Path(args.output)), "candidates": len(candidates), "results": stats}, flush=True)
 
 
 if __name__ == "__main__":
