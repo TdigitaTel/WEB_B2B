@@ -261,3 +261,14 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api \
 ```
 
 Ambos procesos resuelven los nombres reales de las columnas mediante `INFORMATION_SCHEMA`. La delegación `00` se asigna a la tienda interna `ALM` (Almeiras); esta consulta no utiliza un campo de almacén.
+
+### Sincronización en línea de pedidos EXIT
+
+El servicio `exit-order-sync` consulta EXIT cada 10 segundos y actualiza la proyección operativa en PostgreSQL. Usa un bloqueo asesor de PostgreSQL para impedir ciclos simultáneos, registra el último error y Docker lo reinicia automáticamente. La frecuencia puede cambiarse en `.env` con `EXIT_ORDER_SYNC_INTERVAL_SECONDS`; el mínimo admitido es 5 segundos.
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build exit-order-sync
+docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f --tail=100 exit-order-sync
+```
+
+No hace falta configurar `crontab`.

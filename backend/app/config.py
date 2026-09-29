@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     sqlserver_password: str = ""
     sqlserver_stock_excluded_warehouses: str = "97,98"
     product_image_source: str = "auto"
+    exit_order_sync_interval_seconds: int = 10
+    exit_order_sync_batch_size: int = 1000
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 
