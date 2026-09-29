@@ -244,11 +244,13 @@ function displayOrderNumber(order:Order) { return order.exit_order_id?.split("/"
 function orderNumberValue(order:Order) { const value=displayOrderNumber(order); const numeric=Number(value.replace(/\D/g,"")); return Number.isFinite(numeric)?numeric:0; }
 
 function CommandItems({order}:{order:Order}) {
+  const [openZones,setOpenZones]=useState<Set<string>>(()=>new Set(["KARDEX"]));
   const zones=[{id:"KARDEX",label:"KARDEX"},{id:"SGA",label:"ESTANTERÍA / SGA"}];
   const pending=(item:OrderLine)=>item.pending_quantity??item.quantity;
   const uniqueCount=(items:OrderLine[])=>new Set(items.map(item=>item.sku)).size;
   const renderItems=(items:OrderLine[])=><>{items.map(item=>{const served=pending(item)<=0;return <div className={`dispatch-line ${served?"is-served":""}`} key={`${order.id}-${item.fulfillment_zone}-${item.sku}`}><b>{item.sku}</b><span>{item.description}</span><strong>{served?<em>SERVIDO</em>:<><em>PENDIENTE</em><small>{pending(item).toLocaleString("es-ES",{maximumFractionDigits:2})} uds.</small></>}</strong></div>})}{!items.length&&<p className="dispatch-empty">Sin materiales en esta zona</p>}</>;
-  const renderZone=(id:string,label:string,items:OrderLine[])=><section className={`dispatch-zone zone-${id}`} key={id}><header><h3>{label}</h3><span className={items.length>0&&items.every(item=>pending(item)<=0)?"zone-served":""}>{items.length>0&&items.every(item=>pending(item)<=0)?"SERVIDO":`${uniqueCount(items)} referencias`}</span></header><div className="dispatch-columns"><small>Código</small><small>Material</small><small>Estado</small></div><div className="dispatch-lines">{renderItems(items)}</div><footer>Tipos de material <b>{uniqueCount(items)}</b></footer></section>;
+  const toggleZone=(id:string)=>setOpenZones(current=>{const next=new Set(current);next.has(id)?next.delete(id):next.add(id);return next});
+  const renderZone=(id:string,label:string,items:OrderLine[])=><details className={`dispatch-zone zone-${id}`} key={id} open={openZones.has(id)}><summary onClick={event=>{event.preventDefault();toggleZone(id)}}><h3>{label}</h3><span className={items.length>0&&items.every(item=>pending(item)<=0)?"zone-served":""}>{items.length>0&&items.every(item=>pending(item)<=0)?"SERVIDO":`${uniqueCount(items)} referencias`}</span><i aria-hidden="true">⌄</i></summary><div className="dispatch-columns"><small>Código</small><small>Material</small><small>Estado</small></div><div className="dispatch-lines">{renderItems(items)}</div><footer>Tipos de material <b>{uniqueCount(items)}</b></footer></details>;
   return <div className="dispatch-zones">{zones.map(zone=>renderZone(zone.id,zone.label,(order.items||[]).filter(item=>zone.id==="KARDEX"?item.fulfillment_zone==="KARDEX":item.fulfillment_zone!=="KARDEX")))}</div>
 }
 
