@@ -19,7 +19,8 @@ def main():
         "other_lines": sum(1 for line in order.lines if line.fulfillment_zone == "OTROS"),
         "total": float(order.total),
     } for order in orders]
-    print({"filter": "IdDelegacion='00' AND StatusPedido='S' AND PorcentajePendiente<>100", "schema": schema, "error": error, "sample": sample})
+    print({"filter": "IdDelegacion='00' (pedidos recientes, con todas sus líneas)",
+           "schema": schema, "error": error, "sample": sample})
 
 
 if __name__ == "__main__":

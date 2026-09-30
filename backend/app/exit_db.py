@@ -111,14 +111,19 @@ def _exit_datetime(date_value, time_value=None) -> datetime:
     return base.replace(hour=hour, minute=minute, second=second, microsecond=0, tzinfo=ZoneInfo("Europe/Madrid"))
 
 def fetch_pending_exit_orders(limit: int = 200) -> list[ExitOrderInput]:
-    """Obtiene pedidos de la delegación 00 y conserva el estado EXIT para cerrar los servidos."""
+    """Obtiene pedidos recientes de la delegación 00 con todas sus líneas.
+
+    El nombre se conserva por compatibilidad con el demonio. La bandeja operativa
+    decide qué pedidos siguen pendientes; la proyección histórica también necesita
+    los pedidos servidos para enseñar su detalle completo al cliente.
+    """
     header_table = EXIT_SALES_ORDER["header_table"]
     detail_table = EXIT_SALES_ORDER["detail_table"]
     schema = _identifier(EXIT_SALES_ORDER["schema"])
     with connect_sqlserver() as connection:
         header = _columns(connection, header_table, HEADER_CANDIDATES)
         detail = _columns(connection, detail_table, DETAIL_CANDIDATES)
-        _required(header, ("year", "series", "number", "customer", "delegation", "status", "pending_pct"), header_table)
+        _required(header, ("year", "series", "number", "customer", "delegation", "status"), header_table)
         _required(detail, ("year", "series", "number", "sku", "quantity", "zone"), detail_table)
         hs = {key: _discovered_column(value) for key, value in header.items() if value}
         ds = {key: _discovered_column(value) for key, value in detail.items() if value}
@@ -126,29 +131,34 @@ def fetch_pending_exit_orders(limit: int = 200) -> list[ExitOrderInput]:
         header_sql = (
             f"SELECT TOP {max(1, min(limit, 1000))} {', '.join(_select('h', header, f) for f in header_fields)} "
             f"FROM {schema}.{_identifier(header_table)} h "
-            f"WHERE COALESCE(h.{hs['pending_pct']},0)<>%s "
-            f"AND LTRIM(RTRIM(CONVERT(varchar(20),h.{hs['delegation']})))=%s "
+            f"WHERE LTRIM(RTRIM(CONVERT(varchar(20),h.{hs['delegation']})))=%s "
             f"ORDER BY h.{hs['year']} DESC,h.{hs['series']} DESC,h.{hs['number']} DESC"
         )
         with connection.cursor() as cursor:
-            cursor.execute(header_sql, (100, "00"))
+            cursor.execute(header_sql, ("00",))
             headers = cursor.fetchall()
         if not headers:
             return []
         wanted = {_key(row) for row in headers}
         detail_fields = ("year", "series", "number", "line", "sku", "description", "quantity", "pending_quantity", "unit_price", "discount_pct", "tax_rate", "line_total", "zone")
+        selected_keys = ", ".join(
+            f"LTRIM(RTRIM(CONVERT(varchar(100),h.{hs[field]}))) AS [key_{field}]"
+            for field in ("year", "series", "number")
+        )
         join = " AND ".join(
-            f"LTRIM(RTRIM(CONVERT(varchar(100),d.{ds[field]})))=LTRIM(RTRIM(CONVERT(varchar(100),h.{hs[field]})))"
+            f"LTRIM(RTRIM(CONVERT(varchar(100),d.{ds[field]})))=selected.[key_{field}]"
             for field in ("year", "series", "number")
         )
         detail_sql = (
+            f"WITH selected AS (SELECT TOP {max(1, min(limit, 1000))} {selected_keys} "
+            f"FROM {schema}.{_identifier(header_table)} h "
+            f"WHERE LTRIM(RTRIM(CONVERT(varchar(20),h.{hs['delegation']})))=%s "
+            f"ORDER BY h.{hs['year']} DESC,h.{hs['series']} DESC,h.{hs['number']} DESC) "
             f"SELECT {', '.join(_select('d', detail, f) for f in detail_fields)} "
-            f"FROM {schema}.{_identifier(detail_table)} d JOIN {schema}.{_identifier(header_table)} h ON {join} "
-            f"WHERE COALESCE(h.{hs['pending_pct']},0)<>%s "
-            f"AND LTRIM(RTRIM(CONVERT(varchar(20),h.{hs['delegation']})))=%s"
+            f"FROM {schema}.{_identifier(detail_table)} d JOIN selected ON {join}"
         )
         with connection.cursor() as cursor:
-            cursor.execute(detail_sql, (100, "00"))
+            cursor.execute(detail_sql, ("00",))
             detail_rows = [row for row in cursor.fetchall() if _key(row) in wanted]
 
     lines_by_key: dict[tuple[str, str, str], list[ExitOrderLineInput]] = {key: [] for key in wanted}
