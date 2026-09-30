@@ -8,7 +8,6 @@ PostgreSQL conserva la seguridad, los carritos, los pedidos B2B y su trazabilida
 |---|---|---|
 | `users` | `id`, `public_id`, `email`, `password_hash`, `full_name`, `role`, `erp_customer_code`, `active`, `last_login_at` | `customer_id → customers`, `store_id → stores` |
 | `customers` | datos de clientes sintéticos/legados; EXITERP sigue siendo la fuente maestra | `usual_store_id → stores` |
-| `customer_addresses` | etiqueta, tipo, dirección, ciudad, CP | `customer_id → customers` |
 | `stores` | código, nombre, dirección, activo | Referenciada por usuarios, inventario, pedidos y documentos |
 | `brands` | nombre | Referenciada por productos |
 | `categories` | nombre, slug | Referenciada por productos |
@@ -17,10 +16,7 @@ PostgreSQL conserva la seguridad, los carritos, los pedidos B2B y su trazabilida
 | `material_subfamilies` | código, nombre | `family_id → material_families` |
 | `material_product_types` | código, nombre | `subfamily_id → material_subfamilies` |
 | `products` | SKU, referencias, descripciones, precio, IVA, clasificación, imagen binaria y procedencia | marca, categoría y jerarquía de materiales |
-| `product_images` | URL, texto alternativo, indicador principal | `product_id → products` |
-| `product_relations` | tipo de relación, validación | producto y producto relacionado → `products` |
 | `material_import_rows` | archivo, hoja, fila y datos originales JSON | `product_id → products` |
-| `inventory` | existencia física, reserva y fecha de origen | `product_id → products`, `store_id → stores` |
 | `carts` | identificador público, código cliente, estado | usuario, cliente legado y tienda |
 | `cart_items` | producto y cantidad | `cart_id → carts`, `product_id → products` |
 | `orders` | número B2B único, cliente, totales, estado y cuatro campos mínimos de integración EXIT | usuario, cliente legado y tienda |
@@ -31,8 +27,13 @@ PostgreSQL conserva la seguridad, los carritos, los pedidos B2B y su trazabilida
 | `notifications` | título, mensaje y lectura | cliente/usuario |
 | `audit_events` | acción, entidad, metadatos JSON y fecha | usuario/cliente |
 | `integration_outbox` | evento, payload, estado, intentos y error | Integración asíncrona por `aggregate_id` |
-| `integration_cursors` | fuente, cursor, último éxito y error | Control técnico de integraciones antiguas |
 | `professional_registration_requests` | solicitud profesional y aceptación de condiciones | Sin clave externa |
+
+## Tablas documentales que se conservan
+
+`delivery_notes` significa **albaranes**. Se conserva porque permite relacionar cada albarán con su pedido, tienda y cliente, mostrarlo en “Albaranes y facturas” y descargar su PDF. `invoices` cumple la misma función para las facturas. Ambas forman parte del flujo solicitado y no son tablas técnicas sobrantes.
+
+La depuración elimina `customer_addresses`, `product_images`, `product_relations`, `inventory` e `integration_cursors`: sus funciones fueron sustituidas respectivamente por EXITERP, la imagen binaria de `products`, la ausencia de recomendaciones activas, el stock en línea de EXIT y la consulta directa del tablero.
 
 ## Campos de `orders`
 
@@ -59,10 +60,8 @@ PostgreSQL conserva la seguridad, los carritos, los pedidos B2B y su trazabilida
 ```mermaid
 erDiagram
     STORES ||--o{ USERS : asigna
-    STORES ||--o{ INVENTORY : contiene
     STORES ||--o{ ORDERS : recibe
     CUSTOMERS ||--o{ USERS : acceso_legacy
-    CUSTOMERS ||--o{ CUSTOMER_ADDRESSES : tiene
     USERS ||--o{ CARTS : gestiona
     CARTS ||--|{ CART_ITEMS : contiene
     PRODUCTS ||--o{ CART_ITEMS : solicitado
@@ -71,8 +70,6 @@ erDiagram
     MATERIAL_AREAS ||--o{ MATERIAL_FAMILIES : agrupa
     MATERIAL_FAMILIES ||--o{ MATERIAL_SUBFAMILIES : agrupa
     MATERIAL_SUBFAMILIES ||--o{ MATERIAL_PRODUCT_TYPES : agrupa
-    PRODUCTS ||--o{ INVENTORY : existencia
-    PRODUCTS ||--o{ PRODUCT_IMAGES : imagen
     ORDERS ||--|{ ORDER_ITEMS : contiene
     PRODUCTS ||--o{ ORDER_ITEMS : referencia
     USERS ||--o{ ORDERS : crea

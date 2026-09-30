@@ -8,7 +8,7 @@ from .auth import hash_password
 from .config import settings
 from .db import SessionLocal
 from .models import (
-    Brand, Category, Customer, CustomerAddress, DeliveryNote, Invoice, Inventory,
+    Brand, Category, Customer, DeliveryNote, Invoice,
     Order, OrderItem, OrderStatus, OrderStatusHistory, Product, Store, SyncStatus, User,
 )
 
@@ -131,20 +131,6 @@ def seed():
             db.bulk_insert_mappings(Product, part)
         db.commit()
 
-        product_ids = db.scalars(select(Product.id).order_by(Product.id)).all()
-        inventory_rows = []
-        for product_id in product_ids:
-            for store in stores:
-                physical = (product_id * 17 + store.id * 23) % 130
-                reserved = min((product_id * 3 + store.id) % 12, physical)
-                inventory_rows.append({"product_id": product_id, "store_id": store.id, "physical_qty": physical, "reserved_qty": reserved})
-                if len(inventory_rows) >= 5000:
-                    db.bulk_insert_mappings(Inventory, inventory_rows)
-                    inventory_rows = []
-        if inventory_rows:
-            db.bulk_insert_mappings(Inventory, inventory_rows)
-        db.commit()
-
         password = hash_password("123456")
         surnames = ["García", "Fernández", "Rodríguez", "López", "Pérez", "Vázquez", "Castro", "Núñez", "Santos", "Iglesias"]
         for i in range(1, settings.seed_customers + 1):
@@ -159,7 +145,6 @@ def seed():
             db.add(customer)
             db.flush()
             db.add(User(email=customer.email, password_hash=password, full_name=f"Comprador {surnames[i % len(surnames)]}", role="CLIENTE_ADMIN", customer_id=customer.id, erp_customer_code=customer.erp_id))
-            db.add(CustomerAddress(customer_id=customer.id, label="Dirección fiscal", address_type="FISCAL", address=customer.billing_address, city="A Coruña", postal_code=str(15000 + i), is_default=True))
         db.add(User(email="operador@bermudez.test", password_hash=password, full_name="Operador A Coruña", role="OPERADOR_TIENDA", store_id=stores[1].id))
         db.add(User(email="admin@bermudez.test", password_hash=password, full_name="Administrador", role="ADMIN"))
         db.commit()

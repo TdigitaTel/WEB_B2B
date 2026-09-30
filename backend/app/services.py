@@ -4,7 +4,7 @@ from typing import Protocol
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
-from .models import Customer, Inventory, Product, Store
+from .models import Customer, Product
 from .search import normalize_query
 
 
@@ -101,32 +101,12 @@ class PostgresPriceService:
         return (Decimal(product.list_price) * multiplier).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
-class PostgresStockService:
-    def __init__(self, db: Session):
-        self.db = db
-
-    def stock_for(self, product_id: int):
-        rows = self.db.execute(
-            select(Inventory, Store).join(Store, Store.id == Inventory.store_id)
-            .where(Inventory.product_id == product_id, Store.active.is_(True)).order_by(Store.name)
-        ).all()
-        return [{
-            "store_id": store.public_id,
-            "store_code": store.code,
-            "store": store.name,
-            "physical": float(inv.physical_qty),
-            "reserved": float(inv.reserved_qty),
-            "available": float(inv.physical_qty - inv.reserved_qty),
-            "updated_at": inv.updated_source_at,
-        } for inv, store in rows]
-
-
 def product_view(product: Product, customer: Customer, db: Session, stock: list[dict] | None = None,
                  erp_price: dict | None = None) -> dict:
     fallback_price = PostgresPriceService().price_for(product, customer)
     price_with_tax = erp_price["with_tax"] if erp_price else float(fallback_price)
     price_without_tax = erp_price["without_tax"] if erp_price else float(product.list_price)
-    stock = PostgresStockService(db).stock_for(product.id) if stock is None else stock
+    stock = stock or []
     return {
         "id": product.public_id,
         "image_url": f"/api/v1/products/{product.public_id}/image",

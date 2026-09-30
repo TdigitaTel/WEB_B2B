@@ -87,6 +87,11 @@ def main():
                 "ALTER TABLE orders DROP COLUMN IF EXISTS sga_duration_seconds",
                 "ALTER TABLE orders DROP COLUMN IF EXISTS source_updated_at",
                 "ALTER TABLE orders DROP COLUMN IF EXISTS last_imported_at",
+                "DROP TABLE IF EXISTS customer_addresses",
+                "DROP TABLE IF EXISTS product_images",
+                "DROP TABLE IF EXISTS product_relations",
+                "DROP TABLE IF EXISTS inventory",
+                "DROP TABLE IF EXISTS integration_cursors",
             ):
                 conn.execute(text(statement))
             conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))

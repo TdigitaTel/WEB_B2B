@@ -4,14 +4,14 @@ El futuro demonio solo debe transformar cada registro de cabecera/detalle de EXI
 contrato ``ExitOrderInput`` y llamar ``upsert_exit_order`` dentro de una transacción.
 No contiene nombres de tablas de EXIT porque todavía deben ser confirmados.
 """
-from datetime import datetime, timezone
+from datetime import datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from .models import IntegrationCursor, Order, OrderItem, OrderStatus, OrderStatusHistory, Product, Store, SyncStatus, User
+from .models import Order, OrderItem, OrderStatus, OrderStatusHistory, Product, Store, SyncStatus, User
 
 
 class ExitOrderLineInput(BaseModel):
@@ -118,19 +118,8 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
 
 
 def import_exit_batch(db: Session, records: list[ExitOrderInput], integration_user: User, cursor_value: str) -> int:
-    """Importa una página y avanza el cursor en la misma transacción.
-
-    Si algo falla, quien ejecuta el demonio debe hacer rollback: así el cursor nunca
-    avanza sin que todos los pedidos de la página hayan quedado guardados.
-    """
+    """Compatibilidad manual para importar una página sin cursor persistente."""
     for record in records:
         upsert_exit_order(db, record, integration_user)
-    cursor = db.scalar(select(IntegrationCursor).where(IntegrationCursor.source == "EXIT_ORDERS"))
-    if not cursor:
-        cursor = IntegrationCursor(source="EXIT_ORDERS")
-        db.add(cursor)
-    cursor.cursor_value = cursor_value
-    cursor.last_success_at = datetime.now(timezone.utc)
-    cursor.last_error = None
     db.commit()
     return len(records)

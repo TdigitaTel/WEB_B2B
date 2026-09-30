@@ -26,7 +26,7 @@ from .models import (
     OrderStatus, OrderStatusHistory, Product, ProfessionalRegistrationRequest, Store, SyncStatus, User,
 )
 from .schemas import CartItemIn, CartItemUpdate, LoginIn, OrderCreate, StatusChange
-from .services import PostgresCatalogService, PostgresStockService, product_view
+from .services import PostgresCatalogService, product_view
 
 app = FastAPI(title="Bermúdez B2B API", version="1.0.0", openapi_url="/api/v1/openapi.json", docs_url="/docs")
 logger = logging.getLogger(__name__)

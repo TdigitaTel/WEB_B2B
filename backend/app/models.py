@@ -81,18 +81,6 @@ class User(Base, TimestampMixin):
     customer: Mapped[Customer | None] = relationship()
 
 
-class CustomerAddress(Base, TimestampMixin):
-    __tablename__ = "customer_addresses"
-    id: Mapped[int] = mapped_column(primary_key=True)
-    customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id", ondelete="CASCADE"), index=True)
-    label: Mapped[str] = mapped_column(String(100))
-    address_type: Mapped[str] = mapped_column(String(30))
-    address: Mapped[str] = mapped_column(Text)
-    city: Mapped[str] = mapped_column(String(100))
-    postal_code: Mapped[str] = mapped_column(String(12))
-    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
-
-
 class ProfessionalRegistrationRequest(Base, TimestampMixin):
     __tablename__ = "professional_registration_requests"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -207,36 +195,6 @@ class MaterialImportRow(Base, TimestampMixin):
     product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"), index=True)
     raw_data: Mapped[dict] = mapped_column(JSON)
     __table_args__ = (UniqueConstraint("source_file", "source_sheet", "source_row"),)
-
-
-class ProductImage(Base, TimestampMixin):
-    __tablename__ = "product_images"
-    id: Mapped[int] = mapped_column(primary_key=True)
-    product_id: Mapped[int] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"), index=True)
-    url: Mapped[str] = mapped_column(Text)
-    alt_text: Mapped[str] = mapped_column(String(240))
-    is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
-
-
-class ProductRelation(Base, TimestampMixin):
-    __tablename__ = "product_relations"
-    id: Mapped[int] = mapped_column(primary_key=True)
-    product_id: Mapped[int] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"), index=True)
-    related_product_id: Mapped[int] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"))
-    relation_type: Mapped[str] = mapped_column(String(30))
-    validated: Mapped[bool] = mapped_column(Boolean, default=False)
-    __table_args__ = (UniqueConstraint("product_id", "related_product_id", "relation_type"),)
-
-
-class Inventory(Base, TimestampMixin):
-    __tablename__ = "inventory"
-    id: Mapped[int] = mapped_column(primary_key=True)
-    product_id: Mapped[int] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"))
-    store_id: Mapped[int] = mapped_column(ForeignKey("stores.id", ondelete="CASCADE"))
-    physical_qty: Mapped[Decimal] = mapped_column(Numeric(14, 3), default=0)
-    reserved_qty: Mapped[Decimal] = mapped_column(Numeric(14, 3), default=0)
-    updated_source_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    __table_args__ = (UniqueConstraint("product_id", "store_id"), Index("ix_inventory_store_product", "store_id", "product_id"))
 
 
 class Cart(Base, TimestampMixin):
@@ -362,16 +320,6 @@ class AuditEvent(Base):
     entity_id: Mapped[str | None] = mapped_column(String(80))
     metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-
-class IntegrationCursor(Base):
-    __tablename__ = "integration_cursors"
-    id: Mapped[int] = mapped_column(primary_key=True)
-    source: Mapped[str] = mapped_column(String(50), unique=True, index=True)
-    cursor_value: Mapped[str | None] = mapped_column(String(200))
-    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    last_error: Mapped[str | None] = mapped_column(Text)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class IntegrationOutbox(Base):
