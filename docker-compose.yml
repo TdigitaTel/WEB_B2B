@@ -36,26 +36,6 @@ services:
       - "127.0.0.1:${API_PORT:-8000}:8000"
     restart: unless-stopped
 
-  exit-order-sync:
-    build: ./backend
-    command: ["python", "-m", "scripts.exit_order_daemon"]
-    environment:
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-bermudez}:${POSTGRES_PASSWORD:-cambia_esta_clave}@db:5432/${POSTGRES_DB:-bermudez_b2b}
-      SQLSERVER_HOST: ${SQLSERVER_HOST:-}
-      SQLSERVER_PORT: ${SQLSERVER_PORT:-1433}
-      SQLSERVER_DATABASE: ${SQLSERVER_DATABASE:-}
-      SQLSERVER_USER: ${SQLSERVER_USER:-}
-      SQLSERVER_PASSWORD: ${SQLSERVER_PASSWORD:-}
-      EXIT_ORDER_SYNC_INTERVAL_SECONDS: ${EXIT_ORDER_SYNC_INTERVAL_SECONDS:-10}
-      EXIT_ORDER_SYNC_BATCH_SIZE: ${EXIT_ORDER_SYNC_BATCH_SIZE:-1000}
-      EXIT_ORDER_SYNC_LOOKBACK_MINUTES: ${EXIT_ORDER_SYNC_LOOKBACK_MINUTES:-60}
-    depends_on:
-      db:
-        condition: service_healthy
-      api:
-        condition: service_started
-    restart: unless-stopped
-
   web:
     build: ./frontend
     environment:

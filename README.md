@@ -290,7 +290,7 @@ Ambos procesos resuelven los nombres reales de las columnas mediante `INFORMATIO
 
 ### Sincronización en línea de pedidos EXIT
 
-El servicio `exit-order-sync` consulta EXIT cada 10 segundos y actualiza la proyección operativa en PostgreSQL. Solo lee pedidos de Almeiras (`IdDelegacion = '00'`) registrados dentro de la ventana reciente, que por defecto es de 60 minutos. Usa un bloqueo asesor de PostgreSQL para impedir ciclos simultáneos, registra el último error y Docker lo reinicia automáticamente. La frecuencia y la ventana pueden cambiarse en `.env` con `EXIT_ORDER_SYNC_INTERVAL_SECONDS` y `EXIT_ORDER_SYNC_LOOKBACK_MINUTES`; el intervalo mínimo admitido es 5 segundos.
+La bandeja operativa consulta EXIT en línea y no copia sus pedidos en PostgreSQL. Las vistas `Activos Kardex` y `Activos SGA` se actualizan cada 10 segundos y leen únicamente `IdDelegacion = '00'`. La vista `Atendidos` consulta bajo demanda el rango de `FechaGrabacion` indicado por el operador. El antiguo servicio `exit-order-sync` ya no forma parte del despliegue.
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build exit-order-sync

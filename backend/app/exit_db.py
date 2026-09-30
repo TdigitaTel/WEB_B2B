@@ -1,12 +1,11 @@
 """Lectura de pedidos pendientes desde EXIT/SQL Server."""
-from datetime import date, datetime, time as dt_time, timedelta, timezone
+from datetime import date, datetime, time as dt_time, timezone
 from zoneinfo import ZoneInfo
 from decimal import Decimal
 
 from .erp_db import _discovered_column, _identifier, connect_sqlserver
 from .erp_schema import EXIT_SALES_ORDER
 from .exit_orders import ExitOrderInput, ExitOrderLineInput
-from .config import settings
 
 HEADER_CANDIDATES = {
     "year": ("EjercicioPedido", "Ejercicio"),
@@ -122,7 +121,8 @@ def _exit_datetime(date_value, time_value=None) -> datetime:
                     hour = minute = second = 0
     return base.replace(hour=hour, minute=minute, second=second, microsecond=0, tzinfo=ZoneInfo("Europe/Madrid"))
 
-def fetch_pending_exit_orders(limit: int = 200) -> list[ExitOrderInput]:
+def fetch_exit_orders_live(view: str = "active_kardex", date_from: date | None = None,
+                           date_to: date | None = None, limit: int = 500) -> list[ExitOrderInput]:
     """Obtiene pedidos recientes de la delegación 00 con todas sus líneas.
 
     El nombre se conserva por compatibilidad con el demonio. La bandeja operativa
@@ -140,20 +140,37 @@ def fetch_pending_exit_orders(limit: int = 200) -> list[ExitOrderInput]:
         hs = {key: _discovered_column(value) for key, value in header.items() if value}
         ds = {key: _discovered_column(value) for key, value in detail.items() if value}
         header_fields = ("year", "series", "number", "customer", "delegation", "status", "date", "recorded_date", "recorded_time", "created_by", "updated_at", "reference", "notes", "subtotal", "total")
+        header_where = [f"LTRIM(RTRIM(CONVERT(varchar(20),h.{hs['delegation']})))=%s"]
+        header_parameters: list = ["00"]
+        if view == "attended":
+            _required(header, ("recorded_date",), header_table)
+            start = date_from or datetime.now(ZoneInfo("Europe/Madrid")).date()
+            end = date_to or start
+            header_where.extend((
+                f"UPPER(LTRIM(RTRIM(CONVERT(varchar(20),h.{hs['status']}))))=%s",
+                f"CONVERT(date,h.{hs['recorded_date']}) BETWEEN %s AND %s",
+            ))
+            header_parameters.extend(("S", start, end))
+        else:
+            header_where.append(
+                f"COALESCE(UPPER(LTRIM(RTRIM(CONVERT(varchar(20),h.{hs['status']})))),'')<>%s"
+            )
+            header_parameters.append("S")
         header_sql = (
             f"SELECT TOP {max(1, min(limit, 1000))} {', '.join(_select('h', header, f) for f in header_fields)} "
             f"FROM {schema}.{_identifier(header_table)} h "
-            f"WHERE LTRIM(RTRIM(CONVERT(varchar(20),h.{hs['delegation']})))=%s "
+            f"WHERE {' AND '.join(header_where)} "
             f"ORDER BY h.{hs['year']} DESC,h.{hs['series']} DESC,h.{hs['number']} DESC"
         )
         with connection.cursor() as cursor:
-            cursor.execute(header_sql, ("00",))
+            cursor.execute(header_sql, tuple(header_parameters))
             headers = cursor.fetchall()
-        cutoff = datetime.now(ZoneInfo("Europe/Madrid")) - timedelta(
-            minutes=max(1, settings.exit_order_sync_lookback_minutes)
-        )
-        headers = [row for row in headers
-                   if _exit_datetime(row.get("recorded_date") or row.get("date"), row.get("recorded_time")) >= cutoff]
+        if view == "attended":
+            headers = [row for row in headers if start <= _exit_datetime(
+                row.get("recorded_date") or row.get("date"), row.get("recorded_time")
+            ).date() <= end]
+        else:
+            headers = [row for row in headers if str(row.get("status") or "").strip().upper() != "S"]
         if not headers:
             return []
         wanted = {_key(row) for row in headers}
@@ -223,4 +240,17 @@ def fetch_pending_exit_orders(limit: int = 200) -> list[ExitOrderInput]:
             tax_total=max(Decimal("0"), _decimal(row.get("total"))-_decimal(row.get("subtotal"))), total=_decimal(row.get("total")),
             lines=lines_by_key.get((year, series, number), []),
         ))
+    if view in {"active_kardex", "active_sga"}:
+        zone = "KARDEX" if view == "active_kardex" else "SGA"
+        result = [order for order in result if any(
+            line.fulfillment_zone == zone and
+            (line.served_quantity if line.served_quantity is not None
+             else max(Decimal("0"), line.quantity - (line.pending_quantity or line.quantity))) < line.quantity
+            for line in order.lines
+        )]
     return result
+
+
+def fetch_pending_exit_orders(limit: int = 200) -> list[ExitOrderInput]:
+    """Compatibilidad temporal para utilidades antiguas; el tablero usa consulta directa."""
+    return fetch_exit_orders_live("active_kardex", limit=limit)

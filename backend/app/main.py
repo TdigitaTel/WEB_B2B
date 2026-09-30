@@ -1,5 +1,6 @@
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from functools import lru_cache
 from io import BytesIO
 import logging
 from pathlib import Path
@@ -18,6 +19,7 @@ from .erp_db import (
     fetch_customer, fetch_product_image, fetch_product_price, fetch_product_prices,
     fetch_product_stock, fetch_product_stocks, image_media_type,
 )
+from .exit_db import fetch_exit_orders_live
 from .models import (
     Cart, CartItem, Customer, DeliveryNote, IntegrationOutbox, Invoice, Notification,
     MaterialArea, MaterialFamily, MaterialProductType, MaterialSubfamily, Order, OrderItem,
@@ -28,6 +30,12 @@ from .services import PostgresCatalogService, PostgresStockService, product_view
 
 app = FastAPI(title="Bermúdez B2B API", version="1.0.0", openapi_url="/api/v1/openapi.json", docs_url="/docs")
 logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=2000)
+def exit_customer_name(code: str) -> str:
+    customer = fetch_customer(code)
+    return (customer or {}).get("trade_name") or (customer or {}).get("legal_name") or code
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 
@@ -495,10 +503,31 @@ ALLOWED_TRANSITIONS = {
 
 
 @app.get("/api/v1/store/orders")
-def store_orders(user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
-    stmt = select(Order).order_by(Order.created_at.desc()).limit(200)
-    if user.role == "OPERADOR_TIENDA": stmt = stmt.where(Order.store_id == user.store_id)
-    return [order_payload(o, db, True) for o in db.scalars(stmt).all()]
+def store_orders(view: str = Query("active_kardex", pattern="^(active_kardex|active_sga|attended)$"),
+                 date_from: date | None = None, date_to: date | None = None,
+                 user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN"))):
+    records = fetch_exit_orders_live(view, date_from, date_to)
+    customer_names: dict[str, str] = {}
+    for code in dict.fromkeys(record.customer_code for record in records):
+        try:
+            customer_names[code] = exit_customer_name(code)
+        except Exception:
+            customer_names[code] = code
+    return [{
+        "id": record.exit_order_id, "number": record.order_number, "status": record.status,
+        "store": "Almeiras", "store_code": "00", "customer_code": record.customer_code,
+        "customer": customer_names.get(record.customer_code, record.customer_code),
+        "created_by": record.source_created_by or "EXIT", "created_at": record.recorded_at,
+        "customer_reference": record.customer_reference, "notes": record.notes,
+        "subtotal": float(record.subtotal), "tax_total": float(record.tax_total), "total": float(record.total),
+        "source_system": "EXIT", "authority_system": "EXIT", "exit_order_id": record.exit_order_id,
+        "exit_status": record.source_status,
+        "items": [{"sku": line.sku, "description": line.description, "quantity": float(line.quantity),
+                   "served_quantity": float(line.served_quantity or 0),
+                   "pending_quantity": float(line.pending_quantity or 0), "unit": line.unit,
+                   "unit_price": float(line.unit_price), "line_total": float(line.line_total or 0),
+                   "fulfillment_zone": line.fulfillment_zone} for line in record.lines],
+    } for record in records]
 
 
 @app.post("/api/v1/store/orders/{order_id}/transitions")
