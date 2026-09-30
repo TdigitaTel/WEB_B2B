@@ -58,7 +58,9 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
     except ValueError as exc:
         raise ValueError(f"Estado EXIT no mapeado: {incoming.status}") from exc
 
-    order = db.scalar(select(Order).where(Order.exit_order_id == incoming.exit_order_id))
+    order = db.scalar(select(Order).where(Order.nro_pedido_exit == incoming.exit_order_id))
+    if not order:
+        order = db.scalar(select(Order).where(Order.exit_order_id == incoming.exit_order_id))
     if not order and incoming.web_order_number:
         order = db.scalar(select(Order).where(Order.order_number == incoming.web_order_number))
     is_new = order is None
@@ -73,6 +75,10 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
             source_system="EXIT",
             authority_system="EXIT",
             exit_order_id=incoming.exit_order_id,
+            nro_pedido_exit=incoming.exit_order_id,
+            fecha_registro_exit=incoming.recorded_at,
+            origen_pedido="EXIT",
+            estado_registro_exit=incoming.source_status or incoming.status,
             sync_status=SyncStatus.synced,
         )
         db.add(order)
@@ -83,6 +89,11 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
 
     previous_status = order.status
     order.exit_order_id = incoming.exit_order_id
+    order.nro_pedido_exit = incoming.exit_order_id
+    order.fecha_registro_exit = incoming.recorded_at or order.fecha_registro_exit
+    order.estado_registro_exit = incoming.source_status or incoming.status
+    if is_new:
+        order.origen_pedido = "EXIT"
     if incoming.recorded_at:
         order.created_at = incoming.recorded_at
     order.exit_status = incoming.source_status or incoming.status

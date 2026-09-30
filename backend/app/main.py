@@ -123,6 +123,8 @@ def order_payload(order: Order, db: Session, include_items: bool = False) -> dic
               "customer": customer_name, "created_by": order.source_created_by or (creator.full_name if creator else "Integración EXIT"),
               "source_system": order.source_system, "authority_system": order.authority_system,
               "exit_order_id": order.exit_order_id, "exit_status": order.exit_status,
+              "nro_pedido_exit": order.nro_pedido_exit, "fecha_registro_exit": order.fecha_registro_exit,
+              "origen_pedido": order.origen_pedido, "estado_registro_exit": order.estado_registro_exit,
               "kardex_completed_at": order.kardex_completed_at, "kardex_duration_seconds": order.kardex_duration_seconds,
               "sga_completed_at": order.sga_completed_at, "sga_duration_seconds": order.sga_duration_seconds}
     if include_items:
@@ -373,7 +375,8 @@ def create_order(data: OrderCreate, user: User = Depends(current_user), db: Sess
     if not rows: raise HTTPException(400, "El pedido está vacío")
     prices = _erp_unit_prices([product for _, product in rows])
     order = Order(order_number=f"TMP-{cart.public_id[:20]}", customer_id=legacy_customer_id(user), customer_code=customer_code, user_id=user.id, store_id=store.id,
-                  status=OrderStatus.sent, source_system="WEB", authority_system="WEB", customer_reference=data.customer_reference, job_name=data.job_name, notes=data.notes,
+                  status=OrderStatus.sent, source_system="WEB", authority_system="WEB", origen_pedido="B2B",
+                  customer_reference=data.customer_reference, job_name=data.job_name, notes=data.notes,
                   subtotal=0, tax_total=0, total=0, sync_status=SyncStatus.pending)
     db.add(order); db.flush(); order.order_number = f"WEB-{datetime.now().year}-{order.id:07d}"
     subtotal = Decimal("0")

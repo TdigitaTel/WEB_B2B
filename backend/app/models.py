@@ -272,6 +272,10 @@ class Order(Base, TimestampMixin):
     authority_system: Mapped[str] = mapped_column(String(20), default="WEB", index=True)
     exit_order_id: Mapped[str | None] = mapped_column(String(80), index=True)
     exit_status: Mapped[str | None] = mapped_column(String(80))
+    nro_pedido_exit: Mapped[str | None] = mapped_column(String(80), index=True)
+    fecha_registro_exit: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    origen_pedido: Mapped[str] = mapped_column(String(20), default="B2B", index=True)
+    estado_registro_exit: Mapped[str | None] = mapped_column(String(80))
     source_created_by: Mapped[str | None] = mapped_column(String(120))
     kardex_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     kardex_duration_seconds: Mapped[int | None] = mapped_column(Integer)
@@ -287,7 +291,11 @@ class Order(Base, TimestampMixin):
     tax_total: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
     total: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
     sync_status: Mapped[SyncStatus] = mapped_column(Enum(SyncStatus), default=SyncStatus.pending)
-    __table_args__ = (Index("ix_orders_store_status_created", "store_id", "status", "created_at"), Index("ux_orders_exit_order_id", "exit_order_id", unique=True))
+    __table_args__ = (
+        Index("ix_orders_store_status_created", "store_id", "status", "created_at"),
+        Index("ux_orders_exit_order_id", "exit_order_id", unique=True),
+        Index("ux_orders_nro_pedido_exit", "nro_pedido_exit", unique=True),
+    )
 
 
 class OrderItem(Base, TimestampMixin):

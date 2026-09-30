@@ -38,7 +38,7 @@ Abre:
 
 | Tipo | Usuario | Contraseña |
 |---|---|---|
-| Cliente 1 | `compras001@cliente.test` | `123456` |
+| Cliente EXITERP 00004 (DAVID PUMARES FERNANDEZ) | `pumaresdavid@gmail.com` | `123456` |
 | Cliente 2 | `compras002@cliente.test` | `123456` |
 | Operador | `operador@bermudez.test` | `123456` |
 | Administrador | `admin@bermudez.test` | `123456` |
