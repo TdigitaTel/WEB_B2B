@@ -268,21 +268,10 @@ class Order(Base, TimestampMixin):
     customer_code: Mapped[str | None] = mapped_column(String(40), index=True)
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), index=True)
-    source_system: Mapped[str] = mapped_column(String(20), default="WEB", index=True)
-    authority_system: Mapped[str] = mapped_column(String(20), default="WEB", index=True)
-    exit_order_id: Mapped[str | None] = mapped_column(String(80), index=True)
-    exit_status: Mapped[str | None] = mapped_column(String(80))
     nro_pedido_exit: Mapped[str | None] = mapped_column(String(80), index=True)
     fecha_registro_exit: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     origen_pedido: Mapped[str] = mapped_column(String(20), default="B2B", index=True)
     estado_registro_exit: Mapped[str | None] = mapped_column(String(80))
-    source_created_by: Mapped[str | None] = mapped_column(String(120))
-    kardex_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    kardex_duration_seconds: Mapped[int | None] = mapped_column(Integer)
-    sga_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    sga_duration_seconds: Mapped[int | None] = mapped_column(Integer)
-    source_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    last_imported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[OrderStatus] = mapped_column(Enum(OrderStatus), index=True)
     customer_reference: Mapped[str | None] = mapped_column(String(100))
     job_name: Mapped[str | None] = mapped_column(String(160), index=True)
@@ -293,7 +282,6 @@ class Order(Base, TimestampMixin):
     sync_status: Mapped[SyncStatus] = mapped_column(Enum(SyncStatus), default=SyncStatus.pending)
     __table_args__ = (
         Index("ix_orders_store_status_created", "store_id", "status", "created_at"),
-        Index("ux_orders_exit_order_id", "exit_order_id", unique=True),
         Index("ux_orders_nro_pedido_exit", "nro_pedido_exit", unique=True),
     )
 

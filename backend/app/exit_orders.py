@@ -59,8 +59,6 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
         raise ValueError(f"Estado EXIT no mapeado: {incoming.status}") from exc
 
     order = db.scalar(select(Order).where(Order.nro_pedido_exit == incoming.exit_order_id))
-    if not order:
-        order = db.scalar(select(Order).where(Order.exit_order_id == incoming.exit_order_id))
     if not order and incoming.web_order_number:
         order = db.scalar(select(Order).where(Order.order_number == incoming.web_order_number))
     is_new = order is None
@@ -72,9 +70,6 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
             user_id=integration_user.id,
             store_id=store.id,
             status=status,
-            source_system="EXIT",
-            authority_system="EXIT",
-            exit_order_id=incoming.exit_order_id,
             nro_pedido_exit=incoming.exit_order_id,
             fecha_registro_exit=incoming.recorded_at,
             origen_pedido="EXIT",
@@ -88,7 +83,6 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
     # las líneas del pedido durante la sincronización.
 
     previous_status = order.status
-    order.exit_order_id = incoming.exit_order_id
     order.nro_pedido_exit = incoming.exit_order_id
     order.fecha_registro_exit = incoming.recorded_at or order.fecha_registro_exit
     order.estado_registro_exit = incoming.source_status or incoming.status
@@ -96,11 +90,6 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
         order.origen_pedido = "EXIT"
     if incoming.recorded_at:
         order.created_at = incoming.recorded_at
-    order.exit_status = incoming.source_status or incoming.status
-    order.source_created_by = incoming.source_created_by
-    order.authority_system = "EXIT"
-    order.source_updated_at = incoming.source_updated_at
-    order.last_imported_at = datetime.now(timezone.utc)
     order.customer_code = incoming.customer_code
     order.store_id = store.id
     order.status = status
@@ -111,23 +100,6 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
     order.tax_total = incoming.tax_total
     order.total = incoming.total
     order.sync_status = SyncStatus.synced
-
-    started_at = incoming.recorded_at or order.created_at
-    completed_at = incoming.source_updated_at or datetime.now(timezone.utc)
-    elapsed_seconds = max(0, int((completed_at - started_at).total_seconds()))
-    kardex_lines = [line for line in incoming.lines if line.fulfillment_zone == "KARDEX"]
-    sga_lines = [line for line in incoming.lines if line.fulfillment_zone != "KARDEX"]
-    def is_served(line: ExitOrderLineInput) -> bool:
-        if line.served_quantity is not None:
-            return line.served_quantity >= line.quantity
-        return (line.pending_quantity if line.pending_quantity is not None else line.quantity) <= 0
-
-    if kardex_lines and all(is_served(line) for line in kardex_lines) and order.kardex_completed_at is None:
-        order.kardex_completed_at = completed_at
-        order.kardex_duration_seconds = elapsed_seconds
-    if sga_lines and all(is_served(line) for line in sga_lines) and order.sga_completed_at is None:
-        order.sga_completed_at = completed_at
-        order.sga_duration_seconds = elapsed_seconds
 
     db.execute(delete(OrderItem).where(OrderItem.order_id == order.id))
     skus = [line.sku for line in incoming.lines]

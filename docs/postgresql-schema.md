@@ -23,7 +23,7 @@ PostgreSQL conserva la seguridad, los carritos, los pedidos B2B y su trazabilida
 | `inventory` | existencia física, reserva y fecha de origen | `product_id → products`, `store_id → stores` |
 | `carts` | identificador público, código cliente, estado | usuario, cliente legado y tienda |
 | `cart_items` | producto y cantidad | `cart_id → carts`, `product_id → products` |
-| `orders` | número B2B único, cliente, totales, estado e integración EXIT | usuario, cliente legado y tienda |
+| `orders` | número B2B único, cliente, totales, estado y cuatro campos mínimos de integración EXIT | usuario, cliente legado y tienda |
 | `order_items` | SKU, descripción, cantidades pedida/servida/pendiente, precio, zona | `order_id → orders`, `product_id → products` |
 | `order_status_history` | estado, nota y fecha | `order_id → orders`, `changed_by_user_id → users` |
 | `delivery_notes` | número, total y PDF | cliente, pedido y tienda |
@@ -52,8 +52,6 @@ PostgreSQL conserva la seguridad, los carritos, los pedidos B2B y su trazabilida
 | `status` | enum | Estado de trabajo B2B |
 | `customer_reference`, `job_name`, `notes` | texto | Datos comerciales del pedido |
 | `subtotal`, `tax_total`, `total` | numeric | Importes |
-| `source_system`, `authority_system`, `exit_order_id`, `exit_status` | integración heredada | Se mantienen por compatibilidad durante la transición |
-| `source_created_by`, tiempos KARDEX/SGA y fechas de sincronización | trazabilidad | Operación y medición |
 | `created_at`, `updated_at`, `deleted_at` | timestamptz | Auditoría temporal |
 
 ## Diagrama de relaciones

@@ -34,37 +34,33 @@ def main():
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_code VARCHAR(40)",
                 "ALTER TABLE orders ALTER COLUMN customer_id DROP NOT NULL",
                 "CREATE INDEX IF NOT EXISTS ix_orders_customer_code ON orders(customer_code)",
-                "ALTER TABLE orders ADD COLUMN IF NOT EXISTS source_system VARCHAR(20) DEFAULT 'WEB' NOT NULL",
-                "ALTER TABLE orders ADD COLUMN IF NOT EXISTS authority_system VARCHAR(20) DEFAULT 'WEB' NOT NULL",
-                "ALTER TABLE orders ADD COLUMN IF NOT EXISTS exit_order_id VARCHAR(80)",
-                "ALTER TABLE orders ADD COLUMN IF NOT EXISTS exit_status VARCHAR(80)",
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS nro_pedido_exit VARCHAR(80)",
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS fecha_registro_exit TIMESTAMPTZ",
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS origen_pedido VARCHAR(20) DEFAULT 'B2B' NOT NULL",
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS estado_registro_exit VARCHAR(80)",
-                "ALTER TABLE orders ADD COLUMN IF NOT EXISTS source_updated_at TIMESTAMPTZ",
-                "ALTER TABLE orders ADD COLUMN IF NOT EXISTS last_imported_at TIMESTAMPTZ",
+                """DO $$ BEGIN
+                    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='orders' AND column_name='exit_order_id') THEN
+                        EXECUTE 'UPDATE orders SET nro_pedido_exit=exit_order_id WHERE nro_pedido_exit IS NULL AND exit_order_id IS NOT NULL';
+                    END IF;
+                    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='orders' AND column_name='source_updated_at') THEN
+                        EXECUTE 'UPDATE orders SET fecha_registro_exit=source_updated_at WHERE fecha_registro_exit IS NULL AND nro_pedido_exit IS NOT NULL';
+                    END IF;
+                    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='orders' AND column_name='exit_status') THEN
+                        EXECUTE 'UPDATE orders SET estado_registro_exit=exit_status WHERE estado_registro_exit IS NULL AND exit_status IS NOT NULL';
+                    END IF;
+                    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='orders' AND column_name='source_system') THEN
+                        EXECUTE 'UPDATE orders SET origen_pedido=''EXIT'' WHERE source_system=''EXIT''';
+                    END IF;
+                END $$""",
                 "ALTER TABLE orders ALTER COLUMN user_id DROP NOT NULL",
                 "ALTER TABLE order_items ALTER COLUMN product_id DROP NOT NULL",
                 "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS fulfillment_zone VARCHAR(20)",
                 "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS pending_quantity NUMERIC(14,3)",
                 "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS served_quantity NUMERIC(14,3)",
-                "ALTER TABLE orders ADD COLUMN IF NOT EXISTS source_created_by VARCHAR(120)",
-                "ALTER TABLE orders ADD COLUMN IF NOT EXISTS kardex_completed_at TIMESTAMPTZ",
-                "ALTER TABLE orders ADD COLUMN IF NOT EXISTS kardex_duration_seconds INTEGER",
-                "ALTER TABLE orders ADD COLUMN IF NOT EXISTS sga_completed_at TIMESTAMPTZ",
-                "ALTER TABLE orders ADD COLUMN IF NOT EXISTS sga_duration_seconds INTEGER",
                 "CREATE INDEX IF NOT EXISTS ix_order_items_fulfillment_zone ON order_items(fulfillment_zone)",
-                "CREATE UNIQUE INDEX IF NOT EXISTS ux_orders_exit_order_id ON orders(exit_order_id) WHERE exit_order_id IS NOT NULL",
                 "CREATE UNIQUE INDEX IF NOT EXISTS ux_orders_nro_pedido_exit ON orders(nro_pedido_exit) WHERE nro_pedido_exit IS NOT NULL",
                 "CREATE INDEX IF NOT EXISTS ix_orders_origen_pedido ON orders(origen_pedido)",
-                "UPDATE orders SET nro_pedido_exit = exit_order_id WHERE nro_pedido_exit IS NULL AND exit_order_id IS NOT NULL",
-                "UPDATE orders SET fecha_registro_exit = source_updated_at WHERE fecha_registro_exit IS NULL AND exit_order_id IS NOT NULL",
-                "UPDATE orders SET estado_registro_exit = exit_status WHERE estado_registro_exit IS NULL AND exit_status IS NOT NULL",
-                "UPDATE orders SET origen_pedido = 'EXIT' WHERE source_system = 'EXIT' AND origen_pedido = 'B2B'",
                 "UPDATE orders SET origen_pedido = 'B2B' WHERE origen_pedido IS NULL OR origen_pedido NOT IN ('B2B', 'EXIT')",
-                "CREATE INDEX IF NOT EXISTS ix_orders_source_system ON orders(source_system)",
-                "CREATE INDEX IF NOT EXISTS ix_orders_authority_system ON orders(authority_system)",
                 "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS customer_code VARCHAR(40)",
                 "ALTER TABLE notifications ALTER COLUMN customer_id DROP NOT NULL",
                 "CREATE INDEX IF NOT EXISTS ix_notifications_customer_code ON notifications(customer_code)",
@@ -76,6 +72,21 @@ def main():
                 "CREATE INDEX IF NOT EXISTS ix_products_classification_confidence ON products(classification_confidence)",
                 "CREATE INDEX IF NOT EXISTS ix_products_source_system ON products(source_system)",
                 "CREATE INDEX IF NOT EXISTS ix_products_image_sha256 ON products(image_sha256)",
+                "DROP INDEX IF EXISTS ux_orders_exit_order_id",
+                "DROP INDEX IF EXISTS ix_orders_exit_order_id",
+                "DROP INDEX IF EXISTS ix_orders_source_system",
+                "DROP INDEX IF EXISTS ix_orders_authority_system",
+                "ALTER TABLE orders DROP COLUMN IF EXISTS source_system",
+                "ALTER TABLE orders DROP COLUMN IF EXISTS authority_system",
+                "ALTER TABLE orders DROP COLUMN IF EXISTS exit_order_id",
+                "ALTER TABLE orders DROP COLUMN IF EXISTS exit_status",
+                "ALTER TABLE orders DROP COLUMN IF EXISTS source_created_by",
+                "ALTER TABLE orders DROP COLUMN IF EXISTS kardex_completed_at",
+                "ALTER TABLE orders DROP COLUMN IF EXISTS kardex_duration_seconds",
+                "ALTER TABLE orders DROP COLUMN IF EXISTS sga_completed_at",
+                "ALTER TABLE orders DROP COLUMN IF EXISTS sga_duration_seconds",
+                "ALTER TABLE orders DROP COLUMN IF EXISTS source_updated_at",
+                "ALTER TABLE orders DROP COLUMN IF EXISTS last_imported_at",
             ):
                 conn.execute(text(statement))
             conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
