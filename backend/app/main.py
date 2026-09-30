@@ -120,8 +120,11 @@ def order_payload(order: Order, db: Session, include_items: bool = False) -> dic
     if include_items:
         result["items"] = []
         for item in db.scalars(select(OrderItem).where(OrderItem.order_id == order.id).order_by(OrderItem.id)).all():
-            pending = item.pending_quantity if item.pending_quantity is not None else item.quantity
-            served = max(Decimal("0"), item.quantity - pending)
+            served = (item.served_quantity if item.served_quantity is not None else
+                      max(Decimal("0"), item.quantity - item.pending_quantity)
+                      if item.pending_quantity is not None else Decimal("0"))
+            pending = (item.pending_quantity if item.pending_quantity is not None
+                       else max(Decimal("0"), item.quantity - served))
             result["items"].append({"sku": item.sku, "description": item.description,
                                     "quantity": float(item.quantity), "served_quantity": float(served),
                                     "pending_quantity": float(pending), "unit": item.unit,

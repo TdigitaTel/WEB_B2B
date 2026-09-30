@@ -44,6 +44,7 @@ def main():
                 "ALTER TABLE order_items ALTER COLUMN product_id DROP NOT NULL",
                 "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS fulfillment_zone VARCHAR(20)",
                 "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS pending_quantity NUMERIC(14,3)",
+                "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS served_quantity NUMERIC(14,3)",
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS source_created_by VARCHAR(120)",
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS kardex_completed_at TIMESTAMPTZ",
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS kardex_duration_seconds INTEGER",

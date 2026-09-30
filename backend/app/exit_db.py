@@ -33,6 +33,7 @@ DETAIL_CANDIDATES = {
     "sku": ("CodigoArticulo", "Articulo"),
     "description": ("DescripcionArticulo", "DescripcionLinea", "Descripcion"),
     "quantity": ("Unidades", "UnidadesPedidas", "Cantidad"),
+    "served_quantity": ("UnidadesServidas",),
     "pending_quantity": ("UnidadesPendientesDeServir", "UnidadesPendientesdeServir", "UnidadesPendientes", "UnidadesPendientes2_"),
     "unit_price": ("Precio", "PrecioVenta", "PrecioArticulo"),
     "discount_pct": ("PorcentajeDescuento1", "Descuento", "Descuento1"),
@@ -140,7 +141,7 @@ def fetch_pending_exit_orders(limit: int = 200) -> list[ExitOrderInput]:
         if not headers:
             return []
         wanted = {_key(row) for row in headers}
-        detail_fields = ("year", "series", "number", "line", "sku", "description", "quantity", "pending_quantity", "unit_price", "discount_pct", "tax_rate", "line_total", "zone")
+        detail_fields = ("year", "series", "number", "line", "sku", "description", "quantity", "served_quantity", "pending_quantity", "unit_price", "discount_pct", "tax_rate", "line_total", "zone")
         selected_keys = ", ".join(
             f"LTRIM(RTRIM(CONVERT(varchar(100),h.{hs[field]}))) AS [key_{field}]"
             for field in ("year", "series", "number")
@@ -166,12 +167,20 @@ def fetch_pending_exit_orders(limit: int = 200) -> list[ExitOrderInput]:
         quantity = _decimal(row.get("quantity"))
         if quantity <= 0:
             continue
+        served_quantity = (_decimal(row.get("served_quantity"))
+                           if row.get("served_quantity") is not None else None)
+        pending_quantity = (_decimal(row.get("pending_quantity"))
+                            if row.get("pending_quantity") is not None else None)
+        if pending_quantity is None and served_quantity is not None:
+            pending_quantity = max(Decimal("0"), quantity - served_quantity)
         zone = str(row.get("zone") or "").strip().upper()
         if zone != "KARDEX":
             zone = "SGA"
         lines_by_key[_key(row)].append(ExitOrderLineInput(
             sku=str(row.get("sku") or "").strip(), description=str(row.get("description") or row.get("sku") or "").strip(),
-            quantity=quantity, pending_quantity=_decimal(row.get("pending_quantity")) if row.get("pending_quantity") is not None else quantity, unit_price=_decimal(row.get("unit_price")),
+            quantity=quantity, served_quantity=served_quantity,
+            pending_quantity=pending_quantity if pending_quantity is not None else quantity,
+            unit_price=_decimal(row.get("unit_price")),
             discount_pct=_decimal(row.get("discount_pct")), tax_rate=_decimal(row.get("tax_rate") or 21),
             line_total=_decimal(row.get("line_total")) if row.get("line_total") is not None else None,
             fulfillment_zone=zone,

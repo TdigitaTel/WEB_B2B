@@ -24,6 +24,7 @@ class ExitOrderLineInput(BaseModel):
     tax_rate: Decimal = Decimal("21")
     line_total: Decimal | None = None
     fulfillment_zone: str = "OTROS"
+    served_quantity: Decimal | None = None
     pending_quantity: Decimal | None = None
 
 
@@ -105,10 +106,15 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
     elapsed_seconds = max(0, int((completed_at - started_at).total_seconds()))
     kardex_lines = [line for line in incoming.lines if line.fulfillment_zone == "KARDEX"]
     sga_lines = [line for line in incoming.lines if line.fulfillment_zone != "KARDEX"]
-    if kardex_lines and all((line.pending_quantity if line.pending_quantity is not None else line.quantity) <= 0 for line in kardex_lines) and order.kardex_completed_at is None:
+    def is_served(line: ExitOrderLineInput) -> bool:
+        if line.served_quantity is not None:
+            return line.served_quantity >= line.quantity
+        return (line.pending_quantity if line.pending_quantity is not None else line.quantity) <= 0
+
+    if kardex_lines and all(is_served(line) for line in kardex_lines) and order.kardex_completed_at is None:
         order.kardex_completed_at = completed_at
         order.kardex_duration_seconds = elapsed_seconds
-    if sga_lines and all((line.pending_quantity if line.pending_quantity is not None else line.quantity) <= 0 for line in sga_lines) and order.sga_completed_at is None:
+    if sga_lines and all(is_served(line) for line in sga_lines) and order.sga_completed_at is None:
         order.sga_completed_at = completed_at
         order.sga_duration_seconds = elapsed_seconds
 
@@ -120,7 +126,8 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
         db.add(OrderItem(order_id=order.id, product_id=products.get(line.sku).id if products.get(line.sku) else None,
                          sku=line.sku, description=line.description, quantity=line.quantity, unit=line.unit,
                          unit_price=line.unit_price, discount_pct=line.discount_pct, tax_rate=line.tax_rate,
-                         line_total=line_total, fulfillment_zone=line.fulfillment_zone, pending_quantity=line.pending_quantity))
+                         line_total=line_total, fulfillment_zone=line.fulfillment_zone,
+                         served_quantity=line.served_quantity, pending_quantity=line.pending_quantity))
     if is_new or previous_status != status:
         db.add(OrderStatusHistory(order_id=order.id, status=status, changed_by_user_id=integration_user.id,
                                   note="Estado recibido desde EXIT"))
