@@ -290,11 +290,6 @@ Ambos procesos resuelven los nombres reales de las columnas mediante `INFORMATIO
 
 ### Sincronización en línea de pedidos EXIT
 
-La bandeja operativa consulta EXIT en línea y no copia sus pedidos en PostgreSQL. Las vistas `Activos Kardex` y `Activos SGA` se actualizan cada 10 segundos y leen únicamente `IdDelegacion = '00'`. La vista `Atendidos` consulta bajo demanda el rango de `FechaGrabacion` indicado por el operador. El antiguo servicio `exit-order-sync` ya no forma parte del despliegue.
+La bandeja operativa consulta EXIT en línea y no copia sus pedidos en PostgreSQL. Las vistas `Activos Kardex` y `Activos SGA` se actualizan cada 10 segundos y leen únicamente `IdDelegacion = '00'` y `FechaGrabacion = TODAY()`, usando la fecha actual de SQL Server. La vista `Atendidos` consulta bajo demanda el rango de `FechaGrabacion` indicado por el operador. El antiguo servicio `exit-order-sync` ya no forma parte del despliegue.
 
-```bash
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build exit-order-sync
-docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f --tail=100 exit-order-sync
-```
-
-No hace falta configurar `crontab`.
+No hace falta configurar `crontab` ni ejecutar un contenedor de sincronización.

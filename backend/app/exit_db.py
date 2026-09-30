@@ -123,11 +123,10 @@ def _exit_datetime(date_value, time_value=None) -> datetime:
 
 def fetch_exit_orders_live(view: str = "active_kardex", date_from: date | None = None,
                            date_to: date | None = None, limit: int = 500) -> list[ExitOrderInput]:
-    """Obtiene pedidos recientes de la delegación 00 con todas sus líneas.
+    """Obtiene pedidos de la delegación 00 con todas sus líneas.
 
-    El nombre se conserva por compatibilidad con el demonio. La bandeja operativa
-    decide qué pedidos siguen pendientes; la proyección histórica también necesita
-    los pedidos servidos para enseñar su detalle completo al cliente.
+    Los activos se limitan al día actual de SQL Server. Los atendidos usan el rango
+    solicitado por el operador.
     """
     header_table = EXIT_SALES_ORDER["header_table"]
     detail_table = EXIT_SALES_ORDER["detail_table"]
@@ -152,9 +151,11 @@ def fetch_exit_orders_live(view: str = "active_kardex", date_from: date | None =
             ))
             header_parameters.extend(("S", start, end))
         else:
-            header_where.append(
-                f"COALESCE(UPPER(LTRIM(RTRIM(CONVERT(varchar(20),h.{hs['status']})))),'')<>%s"
-            )
+            _required(header, ("recorded_date",), header_table)
+            header_where.extend((
+                f"COALESCE(UPPER(LTRIM(RTRIM(CONVERT(varchar(20),h.{hs['status']})))),'')<>%s",
+                f"CONVERT(date,h.{hs['recorded_date']})=CONVERT(date,GETDATE())",
+            ))
             header_parameters.append("S")
         header_sql = (
             f"SELECT TOP {max(1, min(limit, 1000))} {', '.join(_select('h', header, f) for f in header_fields)} "
@@ -170,7 +171,10 @@ def fetch_exit_orders_live(view: str = "active_kardex", date_from: date | None =
                 row.get("recorded_date") or row.get("date"), row.get("recorded_time")
             ).date() <= end]
         else:
-            headers = [row for row in headers if str(row.get("status") or "").strip().upper() != "S"]
+            today = datetime.now(ZoneInfo("Europe/Madrid")).date()
+            headers = [row for row in headers if
+                       str(row.get("status") or "").strip().upper() != "S" and
+                       _exit_datetime(row.get("recorded_date"), row.get("recorded_time")).date() == today]
         if not headers:
             return []
         wanted = {_key(row) for row in headers}
