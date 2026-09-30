@@ -496,7 +496,7 @@ ALLOWED_TRANSITIONS = {
 
 @app.get("/api/v1/store/orders")
 def store_orders(user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
-    stmt = select(Order).order_by(Order.created_at.desc()).limit(1000)
+    stmt = select(Order).order_by(Order.created_at.desc()).limit(200)
     if user.role == "OPERADOR_TIENDA": stmt = stmt.where(Order.store_id == user.store_id)
     return [order_payload(o, db, True) for o in db.scalars(stmt).all()]
 
