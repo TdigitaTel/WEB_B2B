@@ -31,7 +31,7 @@ PostgreSQL conserva la seguridad, los carritos, los pedidos B2B y su trazabilida
 
 ## Tablas documentales que se conservan
 
-`delivery_notes` significa **albaranes**. Se conserva porque permite relacionar cada albarán con su pedido, tienda y cliente, mostrarlo en “Albaranes y facturas” y descargar su PDF. `invoices` cumple la misma función para las facturas. Ambas forman parte del flujo solicitado y no son tablas técnicas sobrantes.
+`delivery_notes` e `invoices` son tablas transitorias heredadas. La arquitectura objetivo consulta albaranes y facturas directamente en EXITERP; se eliminarán cuando se confirmen los nombres reales de sus tablas y columnas en esa instalación. `python -m scripts.inspect_exit_documents` obtiene ese mapa sin modificar datos.
 
 La depuración elimina `customer_addresses`, `product_images`, `product_relations`, `inventory` e `integration_cursors`: sus funciones fueron sustituidas respectivamente por EXITERP, la imagen binaria de `products`, la ausencia de recomendaciones activas, el stock en línea de EXIT y la consulta directa del tablero.
 
