@@ -2,7 +2,7 @@ import pymssql
 import re
 
 from .config import settings
-from .erp_schema import ARTICLE, CUSTOMER, IMAGE, STOCK, WAREHOUSE
+from .erp_schema import ARTICLE, CUSTOMER, IMAGE, SALES_DOCUMENTS, STOCK, WAREHOUSE
 
 
 def connect_sqlserver():
@@ -86,6 +86,76 @@ def fetch_customer(customer_code: str) -> dict | None:
         "price_list": str(row.get("price_list") or "").strip(),
         "discount_pct": float(row.get("discount_pct") or 0),
     }
+
+
+def _document_id(year, series, number) -> str:
+    return f"{str(year).strip()}~{str(series).strip()}~{str(number).strip()}"
+
+
+def fetch_customer_delivery_notes(customer_code: str, limit: int = 200) -> list[dict]:
+    """Consulta albaranes de venta directamente en EXITERP."""
+    schema = _identifier(SALES_DOCUMENTS["schema"])
+    table = _identifier(SALES_DOCUMENTS["delivery_header"])
+    sql = (
+        f"SELECT TOP {max(1, min(limit, 1000))} EjercicioAlbaran, SerieAlbaran, NumeroAlbaran, "
+        "FechaAlbaran, CodigoCliente, IdDelegacion, BaseImponible, TotalCuotaIva AS TaxTotal, ImporteFactura, "
+        "StatusFacturado, EjercicioPedido, SeriePedido, NumeroPedido, "
+        f"EjercicioFactura, SerieFactura, NumeroFactura FROM {schema}.{table} "
+        "WHERE LTRIM(RTRIM(CONVERT(varchar(100), CodigoCliente)))=%s "
+        "ORDER BY FechaAlbaran DESC, EjercicioAlbaran DESC, SerieAlbaran DESC, NumeroAlbaran DESC"
+    )
+    with connect_sqlserver() as connection, connection.cursor() as cursor:
+        cursor.execute(sql, (str(customer_code).strip(),))
+        rows = cursor.fetchall()
+    return [{
+        "id": _document_id(row["EjercicioAlbaran"], row["SerieAlbaran"], row["NumeroAlbaran"]),
+        "number": f'{row["EjercicioAlbaran"]}-{str(row["SerieAlbaran"]).strip()}-{row["NumeroAlbaran"]}',
+        "created_at": row["FechaAlbaran"],
+        "subtotal": float(row.get("BaseImponible") or 0),
+        "tax_total": float(row.get("TaxTotal") or 0),
+        "total": float(row.get("ImporteFactura") or 0),
+        "status": "FACTURADO" if int(row.get("StatusFacturado") or 0) else "PENDIENTE_DE_FACTURAR",
+        "store_code": str(row.get("IdDelegacion") or "").strip(),
+        "order_number": _document_id(row.get("EjercicioPedido"), row.get("SeriePedido"), row.get("NumeroPedido")),
+        "invoice_number": (_document_id(row.get("EjercicioFactura"), row.get("SerieFactura"), row.get("NumeroFactura"))
+                           if int(row.get("NumeroFactura") or 0) else None),
+        "source": "EXIT",
+    } for row in rows]
+
+
+def fetch_customer_invoices(customer_code: str, limit: int = 200) -> list[dict]:
+    """Consulta facturas de venta directamente en EXITERP."""
+    schema = _identifier(SALES_DOCUMENTS["schema"])
+    table = _identifier(SALES_DOCUMENTS["invoice_header"])
+    tax_table = _identifier(SALES_DOCUMENTS["invoice_tax"])
+    due_dates = ", ".join(f"i.FechaVencimiento{index}" for index in range(1, 13))
+    sql = (
+        f"SELECT TOP {max(1, min(limit, 1000))} f.EjercicioFactura, f.SerieFactura, f.NumeroFactura, "
+        "f.FechaFactura, f.FechaRegistro, f.CodigoCliente, f.IdDelegacion, f.BaseImponible, "
+        "f.TotalCuotaIva AS TaxTotal, f.ImporteFactura, f.StatusCartera, f.Documento, "
+        f"COALESCE({due_dates}) AS FechaVencimiento FROM {schema}.{table} f "
+        f"LEFT JOIN {schema}.{tax_table} i ON i.CodigoEmpresa=f.CodigoEmpresa "
+        "AND i.EjercicioFactura=f.EjercicioFactura AND i.SerieFactura=f.SerieFactura "
+        "AND i.NumeroFactura=f.NumeroFactura "
+        "WHERE LTRIM(RTRIM(CONVERT(varchar(100), f.CodigoCliente)))=%s "
+        "ORDER BY f.FechaFactura DESC, f.EjercicioFactura DESC, f.SerieFactura DESC, f.NumeroFactura DESC"
+    )
+    with connect_sqlserver() as connection, connection.cursor() as cursor:
+        cursor.execute(sql, (str(customer_code).strip(),))
+        rows = cursor.fetchall()
+    return [{
+        "id": _document_id(row["EjercicioFactura"], row["SerieFactura"], row["NumeroFactura"]),
+        "number": f'{row["EjercicioFactura"]}-{str(row["SerieFactura"]).strip()}-{row["NumeroFactura"]}',
+        "created_at": row.get("FechaFactura") or row.get("FechaRegistro"),
+        "due_date": row.get("FechaVencimiento"),
+        "subtotal": float(row.get("BaseImponible") or 0),
+        "tax_total": float(row.get("TaxTotal") or 0),
+        "total": float(row.get("ImporteFactura") or 0),
+        "status": str(row.get("StatusCartera") or "REGISTRADA"),
+        "store_code": str(row.get("IdDelegacion") or "").strip(),
+        "document": str(row.get("Documento") or "").strip() or None,
+        "source": "EXIT",
+    } for row in rows]
 
 
 def fetch_product_image(article_code: str) -> bytes | None:

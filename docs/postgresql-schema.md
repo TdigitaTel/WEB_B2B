@@ -22,16 +22,22 @@ PostgreSQL conserva la seguridad, los carritos, los pedidos B2B y su trazabilida
 | `orders` | número B2B único, cliente, totales, estado y cuatro campos mínimos de integración EXIT | usuario, cliente legado y tienda |
 | `order_items` | SKU, descripción, cantidades pedida/servida/pendiente, precio, zona | `order_id → orders`, `product_id → products` |
 | `order_status_history` | estado, nota y fecha | `order_id → orders`, `changed_by_user_id → users` |
-| `delivery_notes` | número, total y PDF | cliente, pedido y tienda |
-| `invoices` | número, vencimiento, importes, estado y PDF | cliente y pedido |
 | `notifications` | título, mensaje y lectura | cliente/usuario |
 | `audit_events` | acción, entidad, metadatos JSON y fecha | usuario/cliente |
 | `integration_outbox` | evento, payload, estado, intentos y error | Integración asíncrona por `aggregate_id` |
 | `professional_registration_requests` | solicitud profesional y aceptación de condiciones | Sin clave externa |
 
-## Tablas documentales que se conservan
+## Documentos comerciales
 
-`delivery_notes` e `invoices` son tablas transitorias heredadas. La arquitectura objetivo consulta albaranes y facturas directamente en EXITERP; se eliminarán cuando se confirmen los nombres reales de sus tablas y columnas en esa instalación. `python -m scripts.inspect_exit_documents` obtiene ese mapa sin modificar datos.
+Los albaranes se consultan directamente en `dbo.AlbaranVentaCabecera` y las facturas en `dbo.FacturaVenta`/`dbo.FacturaVentaIva`. PostgreSQL no almacena copias de esos documentos.
+
+Las relaciones documentales de EXIT son:
+
+- `AlbaranVentaCabecera` → `AlbaranVentaLineas` por `EjercicioAlbaran`, `SerieAlbaran`, `NumeroAlbaran`.
+- `AlbaranVentaCabecera` → `PedidoVentaCabecera` por `EjercicioPedido`, `SeriePedido`, `NumeroPedido`.
+- `AlbaranVentaCabecera` → `FacturaVenta` por `EjercicioFactura`, `SerieFactura`, `NumeroFactura`.
+- `FacturaVenta` → `FacturaVentaIva` por `CodigoEmpresa`, `EjercicioFactura`, `SerieFactura`, `NumeroFactura`.
+- `GesDocAlbaranes` y `GesDocFacturas` conservan la ruta de los archivos asociados a cada clave documental.
 
 La depuración elimina `customer_addresses`, `product_images`, `product_relations`, `inventory` e `integration_cursors`: sus funciones fueron sustituidas respectivamente por EXITERP, la imagen binaria de `products`, la ausencia de recomendaciones activas, el stock en línea de EXIT y la consulta directa del tablero.
 
@@ -75,8 +81,6 @@ erDiagram
     USERS ||--o{ ORDERS : crea
     ORDERS ||--o{ ORDER_STATUS_HISTORY : historial
     USERS ||--o{ ORDER_STATUS_HISTORY : cambia
-    ORDERS ||--o{ DELIVERY_NOTES : genera
-    ORDERS ||--o{ INVOICES : factura
     USERS ||--o{ NOTIFICATIONS : recibe
     USERS ||--o{ AUDIT_EVENTS : ejecuta
 ```

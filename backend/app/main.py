@@ -1,13 +1,9 @@
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from functools import lru_cache
-from io import BytesIO
 import logging
-from pathlib import Path
-from zipfile import ZIP_DEFLATED, ZipFile
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Response
-from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -16,12 +12,13 @@ from .auth import audit, create_access_token, current_user, require_roles, verif
 from .config import settings
 from .db import get_db
 from .erp_db import (
-    fetch_customer, fetch_product_image, fetch_product_price, fetch_product_prices,
+    fetch_customer, fetch_customer_delivery_notes, fetch_customer_invoices,
+    fetch_product_image, fetch_product_price, fetch_product_prices,
     fetch_product_stock, fetch_product_stocks, image_media_type,
 )
 from .exit_db import fetch_exit_orders_live
 from .models import (
-    Cart, CartItem, Customer, DeliveryNote, IntegrationOutbox, Invoice, Notification,
+    Cart, CartItem, Customer, IntegrationOutbox, Notification,
     MaterialArea, MaterialFamily, MaterialProductType, MaterialSubfamily, Order, OrderItem,
     OrderStatus, OrderStatusHistory, Product, ProfessionalRegistrationRequest, Store, SyncStatus, User,
 )
@@ -138,15 +135,7 @@ def order_payload(order: Order, db: Session, include_items: bool = False) -> dic
                                     "fulfillment_zone": item.fulfillment_zone or "OTROS"})
         history = db.scalars(select(OrderStatusHistory).where(OrderStatusHistory.order_id == order.id).order_by(OrderStatusHistory.created_at)).all()
         result["history"] = [{"status": h.status.value, "note": h.note, "created_at": h.created_at} for h in history]
-        notes = db.scalars(select(DeliveryNote).where(DeliveryNote.order_id == order.id).order_by(DeliveryNote.created_at)).all()
-        invoices = db.scalars(select(Invoice).where(Invoice.order_id == order.id).order_by(Invoice.created_at)).all()
-        result["documents"] = [
-            {"id": row.public_id, "type": "ALBARAN", "number": row.number, "total": float(row.total),
-             "created_at": row.created_at, "available": bool(row.pdf_path)} for row in notes
-        ] + [
-            {"id": row.public_id, "type": "FACTURA", "number": row.number, "total": float(row.total),
-             "created_at": row.created_at, "status": row.status, "available": bool(row.pdf_path)} for row in invoices
-        ]
+        result["documents"] = []
         stage_dates = {"REGISTRADO": order.created_at, "EN_PREPARACION": None, "PREPARADO": None, "FACTURADO": None}
         for event in history:
             if event.status in {OrderStatus.sent, OrderStatus.received}:
@@ -155,8 +144,6 @@ def order_payload(order: Order, db: Session, include_items: bool = False) -> dic
                 stage_dates["EN_PREPARACION"] = stage_dates["EN_PREPARACION"] or event.created_at
             elif event.status in {OrderStatus.ready, OrderStatus.delivered}:
                 stage_dates["PREPARADO"] = stage_dates["PREPARADO"] or event.created_at
-        if invoices:
-            stage_dates["FACTURADO"] = invoices[0].created_at
         result["workflow"] = [{"status": status, "completed_at": completed_at} for status, completed_at in stage_dates.items()]
         result["workflow_status"] = next((row["status"] for row in reversed(result["workflow"]) if row["completed_at"]), "REGISTRADO")
     return result
@@ -432,64 +419,13 @@ def repeat_order(order_id: str, user: User = Depends(current_user), db: Session 
 @app.get("/api/v1/delivery-notes")
 def delivery_notes(user: User = Depends(current_user), db: Session = Depends(get_db)):
     customer_for(user, db)
-    if not user.customer_id:
-        return []
-    rows = db.scalars(select(DeliveryNote).where(DeliveryNote.customer_id == user.customer_id).order_by(DeliveryNote.created_at.desc())).all()
-    return [{"id": x.public_id, "number": x.number, "total": float(x.total), "created_at": x.created_at} for x in rows]
+    return fetch_customer_delivery_notes(customer_code_for(user, db))
 
 
 @app.get("/api/v1/invoices")
 def invoices(user: User = Depends(current_user), db: Session = Depends(get_db)):
     customer_for(user, db)
-    if not user.customer_id:
-        return []
-    rows = db.scalars(select(Invoice).where(Invoice.customer_id == user.customer_id).order_by(Invoice.created_at.desc())).all()
-    return [{"id": x.public_id, "number": x.number, "due_date": x.due_date, "subtotal": float(x.subtotal),
-             "tax_total": float(x.tax_total), "total": float(x.total), "status": x.status} for x in rows]
-
-
-@app.get("/api/v1/documents/{document_type}/{document_id}/file")
-def document_file(document_type: str, document_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    customer_for(user, db)
-    model = DeliveryNote if document_type.upper() == "ALBARAN" else Invoice if document_type.upper() == "FACTURA" else None
-    if not model:
-        raise HTTPException(404, "Tipo de documento no valido")
-    document = db.scalar(select(model).where(model.public_id == document_id, model.customer_id == user.customer_id)) if user.customer_id else None
-    if not document or not document.pdf_path:
-        raise HTTPException(404, "Documento no disponible")
-    path = Path(document.pdf_path)
-    if not path.is_file():
-        raise HTTPException(404, "El archivo del documento no esta disponible")
-    return FileResponse(path, media_type="application/pdf", filename=f"{document.number}.pdf")
-
-
-@app.get("/api/v1/documents/download")
-def download_documents(date_from: date | None = None, date_to: date | None = None,
-                       user: User = Depends(current_user), db: Session = Depends(get_db)):
-    customer_for(user, db)
-    if not user.customer_id:
-        raise HTTPException(404, "No hay documentos históricos asociados")
-    files: list[tuple[str, Path]] = []
-    for model, prefix in ((DeliveryNote, "albaran"), (Invoice, "factura")):
-        stmt = select(model).where(model.customer_id == user.customer_id, model.pdf_path.is_not(None))
-        if date_from:
-            stmt = stmt.where(func.date(model.created_at) >= date_from)
-        if date_to:
-            stmt = stmt.where(func.date(model.created_at) <= date_to)
-        for document in db.scalars(stmt.order_by(model.created_at.desc())).all():
-            path = Path(document.pdf_path)
-            if path.is_file():
-                files.append((f"{prefix}_{document.number}.pdf", path))
-    if not files:
-        raise HTTPException(404, "No hay archivos disponibles para las fechas seleccionadas")
-    output = BytesIO()
-    with ZipFile(output, "w", ZIP_DEFLATED) as archive:
-        for filename, path in files:
-            archive.write(path, arcname=filename)
-    output.seek(0)
-    return StreamingResponse(output, media_type="application/zip", headers={
-        "Content-Disposition": 'attachment; filename="documentos_pedidos.zip"'
-    })
+    return fetch_customer_invoices(customer_code_for(user, db))
 
 
 ALLOWED_TRANSITIONS = {

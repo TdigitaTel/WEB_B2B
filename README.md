@@ -13,7 +13,7 @@ Aplicación B2B mobile-first para que instaladores busquen material, consulten p
 - Precio profesional calculado según el cliente.
 - Carrito persistente y pedido rápido por varias líneas.
 - Pedidos, snapshots históricos y repetición.
-- Albaranes y facturas sintéticos.
+- Albaranes y facturas consultados directamente en EXITERP.
 - Panel de tienda con transiciones de estado.
 - Aislamiento de datos entre clientes, auditoría y outbox para el futuro ERP.
 

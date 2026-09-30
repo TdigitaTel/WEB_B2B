@@ -92,6 +92,8 @@ def main():
                 "DROP TABLE IF EXISTS product_relations",
                 "DROP TABLE IF EXISTS inventory",
                 "DROP TABLE IF EXISTS integration_cursors",
+                "DROP TABLE IF EXISTS delivery_notes",
+                "DROP TABLE IF EXISTS invoices",
             ):
                 conn.execute(text(statement))
             conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))

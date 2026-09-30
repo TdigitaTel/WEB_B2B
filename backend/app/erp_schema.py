@@ -55,3 +55,13 @@ EXIT_SALES_ORDER = {
     "header_table": "PedidoVentaCabecera",
     "detail_table": "PedidoVentaLineas",
 }
+
+SALES_DOCUMENTS = {
+    "schema": "dbo",
+    "delivery_header": "AlbaranVentaCabecera",
+    "delivery_lines": "AlbaranVentaLineas",
+    "invoice_header": "FacturaVenta",
+    "invoice_tax": "FacturaVentaIva",
+    "delivery_files": "GesDocAlbaranes",
+    "invoice_files": "GesDocFacturas",
+}

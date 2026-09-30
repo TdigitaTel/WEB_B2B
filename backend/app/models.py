@@ -272,33 +272,6 @@ class OrderStatusHistory(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-class DeliveryNote(Base, TimestampMixin):
-    __tablename__ = "delivery_notes"
-    id: Mapped[int] = mapped_column(primary_key=True)
-    public_id: Mapped[str] = mapped_column(String(36), unique=True, default=public_uuid)
-    number: Mapped[str] = mapped_column(String(40), unique=True)
-    customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"), index=True)
-    order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"))
-    store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"))
-    total: Mapped[Decimal] = mapped_column(Numeric(14, 2))
-    pdf_path: Mapped[str | None] = mapped_column(Text)
-
-
-class Invoice(Base, TimestampMixin):
-    __tablename__ = "invoices"
-    id: Mapped[int] = mapped_column(primary_key=True)
-    public_id: Mapped[str] = mapped_column(String(36), unique=True, default=public_uuid)
-    number: Mapped[str] = mapped_column(String(40), unique=True)
-    customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"), index=True)
-    order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"))
-    due_date: Mapped[datetime] = mapped_column(Date)
-    subtotal: Mapped[Decimal] = mapped_column(Numeric(14, 2))
-    tax_total: Mapped[Decimal] = mapped_column(Numeric(14, 2))
-    total: Mapped[Decimal] = mapped_column(Numeric(14, 2))
-    status: Mapped[str] = mapped_column(String(30), default="PENDIENTE")
-    pdf_path: Mapped[str | None] = mapped_column(Text)
-
-
 class Notification(Base, TimestampMixin):
     __tablename__ = "notifications"
     id: Mapped[int] = mapped_column(primary_key=True)

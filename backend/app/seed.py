@@ -1,5 +1,4 @@
 import random
-from datetime import date, timedelta
 from decimal import Decimal
 
 from sqlalchemy import func, select
@@ -8,7 +7,7 @@ from .auth import hash_password
 from .config import settings
 from .db import SessionLocal
 from .models import (
-    Brand, Category, Customer, DeliveryNote, Invoice,
+    Brand, Category, Customer,
     Order, OrderItem, OrderStatus, OrderStatusHistory, Product, Store, SyncStatus, User,
 )
 
@@ -175,11 +174,6 @@ def seed():
                                      line_total=line))
                 order.subtotal = subtotal; order.tax_total = (subtotal * Decimal("0.21")).quantize(Decimal("0.01")); order.total = order.subtotal + order.tax_total
                 db.add(OrderStatusHistory(order_id=order.id, status=order.status, changed_by_user_id=user.id, note="Estado sintético inicial"))
-                if order.status == OrderStatus.delivered:
-                    db.add(DeliveryNote(number=f"ALB-2026-{sequence:06d}", customer_id=customer.id, order_id=order.id, store_id=order.store_id, total=order.total))
-                    db.add(Invoice(number=f"FAC-2026-{sequence:06d}", customer_id=customer.id, order_id=order.id,
-                                   due_date=date.today() + timedelta(days=30), subtotal=order.subtotal,
-                                   tax_total=order.tax_total, total=order.total, status="PENDIENTE"))
                 sequence += 1
         db.commit()
     finally:
