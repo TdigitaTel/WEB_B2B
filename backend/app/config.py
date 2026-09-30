@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     product_image_source: str = "auto"
     exit_order_sync_interval_seconds: int = 10
     exit_order_sync_batch_size: int = 1000
+    exit_order_sync_lookback_minutes: int = 60
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 

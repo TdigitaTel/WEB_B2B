@@ -1,11 +1,12 @@
 """Lectura de pedidos pendientes desde EXIT/SQL Server."""
-from datetime import datetime, timezone
+from datetime import date, datetime, time as dt_time, timedelta, timezone
 from zoneinfo import ZoneInfo
 from decimal import Decimal
 
 from .erp_db import _discovered_column, _identifier, connect_sqlserver
 from .erp_schema import EXIT_SALES_ORDER
 from .exit_orders import ExitOrderInput, ExitOrderLineInput
+from .config import settings
 
 HEADER_CANDIDATES = {
     "year": ("EjercicioPedido", "Ejercicio"),
@@ -96,19 +97,29 @@ def _decimal(value) -> Decimal:
 
 
 def _exit_datetime(date_value, time_value=None) -> datetime:
-    base = date_value if isinstance(date_value, datetime) else datetime.now()
+    if isinstance(date_value, datetime):
+        base = date_value
+    elif isinstance(date_value, date):
+        base = datetime.combine(date_value, dt_time.min)
+    else:
+        base = datetime.now()
     hour = minute = second = 0
     if time_value is not None:
-        raw = Decimal(str(time_value or 0))
-        if Decimal("0") < raw < Decimal("1"):
-            seconds = int(raw * Decimal("86400"))
-            hour, remainder = divmod(seconds, 3600)
-            minute, second = divmod(remainder, 60)
+        if isinstance(time_value, datetime):
+            hour, minute, second = time_value.hour, time_value.minute, time_value.second
+        elif isinstance(time_value, dt_time):
+            hour, minute, second = time_value.hour, time_value.minute, time_value.second
         else:
-            digits = str(abs(int(raw))).zfill(6)[-6:]
-            hour, minute, second = int(digits[:2]), int(digits[2:4]), int(digits[4:6])
-            if hour > 23 or minute > 59 or second > 59:
-                hour = minute = second = 0
+            raw = Decimal(str(time_value or 0))
+            if Decimal("0") < raw < Decimal("1"):
+                seconds = int(raw * Decimal("86400"))
+                hour, remainder = divmod(seconds, 3600)
+                minute, second = divmod(remainder, 60)
+            else:
+                digits = str(abs(int(raw))).zfill(6)[-6:]
+                hour, minute, second = int(digits[:2]), int(digits[2:4]), int(digits[4:6])
+                if hour > 23 or minute > 59 or second > 59:
+                    hour = minute = second = 0
     return base.replace(hour=hour, minute=minute, second=second, microsecond=0, tzinfo=ZoneInfo("Europe/Madrid"))
 
 def fetch_pending_exit_orders(limit: int = 200) -> list[ExitOrderInput]:
@@ -138,29 +149,34 @@ def fetch_pending_exit_orders(limit: int = 200) -> list[ExitOrderInput]:
         with connection.cursor() as cursor:
             cursor.execute(header_sql, ("00",))
             headers = cursor.fetchall()
+        cutoff = datetime.now(ZoneInfo("Europe/Madrid")) - timedelta(
+            minutes=max(1, settings.exit_order_sync_lookback_minutes)
+        )
+        headers = [row for row in headers
+                   if _exit_datetime(row.get("recorded_date") or row.get("date"), row.get("recorded_time")) >= cutoff]
         if not headers:
             return []
         wanted = {_key(row) for row in headers}
         detail_fields = ("year", "series", "number", "line", "sku", "description", "quantity", "served_quantity", "pending_quantity", "unit_price", "discount_pct", "tax_rate", "line_total", "zone")
-        selected_keys = ", ".join(
-            f"LTRIM(RTRIM(CONVERT(varchar(100),h.{hs[field]}))) AS [key_{field}]"
-            for field in ("year", "series", "number")
-        )
-        join = " AND ".join(
-            f"LTRIM(RTRIM(CONVERT(varchar(100),d.{ds[field]})))=selected.[key_{field}]"
-            for field in ("year", "series", "number")
-        )
-        detail_sql = (
-            f"WITH selected AS (SELECT TOP {max(1, min(limit, 1000))} {selected_keys} "
-            f"FROM {schema}.{_identifier(header_table)} h "
-            f"WHERE LTRIM(RTRIM(CONVERT(varchar(20),h.{hs['delegation']})))=%s "
-            f"ORDER BY h.{hs['year']} DESC,h.{hs['series']} DESC,h.{hs['number']} DESC) "
-            f"SELECT {', '.join(_select('d', detail, f) for f in detail_fields)} "
-            f"FROM {schema}.{_identifier(detail_table)} d JOIN selected ON {join}"
-        )
-        with connection.cursor() as cursor:
-            cursor.execute(detail_sql, ("00",))
-            detail_rows = [row for row in cursor.fetchall() if _key(row) in wanted]
+        detail_rows = []
+        wanted_list = list(wanted)
+        for start in range(0, len(wanted_list), 200):
+            batch = wanted_list[start:start + 200]
+            conditions = []
+            parameters = []
+            for year, series, number in batch:
+                conditions.append("(" + " AND ".join(
+                    f"LTRIM(RTRIM(CONVERT(varchar(100),d.{ds[field]})))=%s"
+                    for field in ("year", "series", "number")
+                ) + ")")
+                parameters.extend((year, series, number))
+            detail_sql = (
+                f"SELECT {', '.join(_select('d', detail, f) for f in detail_fields)} "
+                f"FROM {schema}.{_identifier(detail_table)} d WHERE {' OR '.join(conditions)}"
+            )
+            with connection.cursor() as cursor:
+                cursor.execute(detail_sql, tuple(parameters))
+                detail_rows.extend(cursor.fetchall())
 
     lines_by_key: dict[tuple[str, str, str], list[ExitOrderLineInput]] = {key: [] for key in wanted}
     for row in detail_rows:
