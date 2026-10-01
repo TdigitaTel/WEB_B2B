@@ -106,6 +106,23 @@ def main():
             conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
             conn.execute(text("CREATE EXTENSION IF NOT EXISTS unaccent"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_products_search_trgm ON products USING gin (normalized_search gin_trgm_ops)"))
+        # Los valores nuevos del enum solo se pueden utilizar después de confirmar
+        # la transacción que ejecutó ALTER TYPE.
+        with engine.begin() as conn:
+            conn.execute(text("""
+                WITH migrated AS (
+                    UPDATE orders
+                    SET status = 'pending', estado_registro_exit = 'PENDIENTE', updated_at = NOW()
+                    WHERE nro_pedido_exit IS NULL AND status = 'sent'
+                    RETURNING id, user_id
+                )
+                INSERT INTO order_status_history
+                    (order_id, status, changed_by_user_id, source, note, created_at)
+                SELECT id, 'pending', user_id, 'WEB',
+                       'Estado anterior migrado a PENDIENTE', NOW()
+                FROM migrated
+                WHERE user_id IS NOT NULL
+            """))
     from .seed import seed
     seed()
 
