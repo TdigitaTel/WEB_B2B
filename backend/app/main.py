@@ -134,7 +134,9 @@ def order_payload(order: Order, db: Session, include_items: bool = False) -> dic
                                     "unit_price": float(item.unit_price), "line_total": float(item.line_total),
                                     "fulfillment_zone": item.fulfillment_zone or "OTROS"})
         history = db.scalars(select(OrderStatusHistory).where(OrderStatusHistory.order_id == order.id).order_by(OrderStatusHistory.created_at)).all()
-        result["history"] = [{"estado_registro_exit": h.estado_registro_exit, "source": h.source, "note": h.note, "created_at": h.created_at} for h in history]
+        result["history_enabled"] = settings.show_order_status_history
+        if settings.show_order_status_history:
+            result["history"] = [{"estado_registro_exit": h.estado_registro_exit, "source": h.source, "note": h.note, "created_at": h.created_at} for h in history]
         result["documents"] = []
         current_state = order.estado_registro_exit.strip().upper()
         visible_stage = {

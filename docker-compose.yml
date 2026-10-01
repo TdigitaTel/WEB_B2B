@@ -20,6 +20,7 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-bermudez}:${POSTGRES_PASSWORD:-cambia_esta_clave}@db:5432/${POSTGRES_DB:-bermudez_b2b}
       JWT_SECRET: ${JWT_SECRET:-desarrollo_local_cambiar}
       INTEGRATION_API_KEY: ${INTEGRATION_API_KEY:-}
+      SHOW_ORDER_STATUS_HISTORY: ${SHOW_ORDER_STATUS_HISTORY:-true}
       SEED_PRODUCTS: ${SEED_PRODUCTS:-15000}
       SEED_CUSTOMERS: ${SEED_CUSTOMERS:-100}
       OPENAI_API_KEY: ${OPENAI_API_KEY}

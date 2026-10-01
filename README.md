@@ -167,6 +167,14 @@ Las aplicaciones externas pueden actualizar un pedido mediante `order_id` (UUID 
 
 `orders.estado_registro_exit` es el único campo de estado del pedido. El histórico usa el campo del mismo nombre en `order_status_history`. La escritura se realiza mediante el código de la API, en la misma transacción; PostgreSQL no utiliza triggers para este flujo. Una actualización SQL directa no genera histórico.
 
+La pantalla de pedidos muestra temporalmente un enlace desplegable con el histórico. Se controla desde `.env`:
+
+```env
+SHOW_ORDER_STATUS_HISTORY=true
+```
+
+Usa `false` y recrea `api` y `web` cuando quieras ocultarlo.
+
 ```http
 PATCH /api/v1/integrations/orders/estado
 Content-Type: application/json
