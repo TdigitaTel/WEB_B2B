@@ -129,6 +129,35 @@ def fetch_customer_delivery_notes(customer_code: str, limit: int = 200) -> list[
     with connect_sqlserver() as connection, connection.cursor() as cursor:
         cursor.execute(sql, (str(customer_code).strip(),))
         rows = cursor.fetchall()
+        lines_table = _identifier(SALES_DOCUMENTS["delivery_lines"])
+        line_sql = (
+            f"WITH selected AS (SELECT TOP {max(1, min(limit, 1000))} CodigoEmpresa, EjercicioAlbaran, "
+            f"SerieAlbaran, NumeroAlbaran, FechaAlbaran FROM {schema}.{table} "
+            "WHERE LTRIM(RTRIM(CONVERT(varchar(100), CodigoCliente)))=%s "
+            "ORDER BY FechaAlbaran DESC, EjercicioAlbaran DESC, SerieAlbaran DESC, NumeroAlbaran DESC) "
+            "SELECT l.EjercicioAlbaran, l.SerieAlbaran, l.NumeroAlbaran, l.Orden, l.CodigoArticulo, "
+            "l.DescripcionArticulo, l.Descripcion2Articulo, l.UnidadMedida1_, l.Unidades, l.Precio, "
+            "l.[%Descuento] AS Descuento, l.ImporteNeto, l.BaseImponible, l.[%Iva] AS Iva, "
+            "l.CuotaIva, l.ImporteLiquido, l.CodigoAlmacen "
+            f"FROM {schema}.{lines_table} l INNER JOIN selected s ON s.CodigoEmpresa=l.CodigoEmpresa "
+            "AND s.EjercicioAlbaran=l.EjercicioAlbaran AND s.SerieAlbaran=l.SerieAlbaran "
+            "AND s.NumeroAlbaran=l.NumeroAlbaran ORDER BY l.EjercicioAlbaran DESC, l.SerieAlbaran, "
+            "l.NumeroAlbaran DESC, l.Orden"
+        )
+        cursor.execute(line_sql, (str(customer_code).strip(),))
+        line_rows = cursor.fetchall()
+    lines_by_document: dict[str, list[dict]] = {}
+    for line in line_rows:
+        key = _document_id(line["EjercicioAlbaran"], line["SerieAlbaran"], line["NumeroAlbaran"])
+        lines_by_document.setdefault(key, []).append({
+            "line": int(line.get("Orden") or 0), "sku": str(line.get("CodigoArticulo") or "").strip(),
+            "description": " ".join(part for part in (str(line.get("DescripcionArticulo") or "").strip(), str(line.get("Descripcion2Articulo") or "").strip()) if part),
+            "unit": str(line.get("UnidadMedida1_") or "UD").strip(), "quantity": float(line.get("Unidades") or 0),
+            "unit_price": float(line.get("Precio") or 0), "discount_pct": float(line.get("Descuento") or 0),
+            "net_amount": float(line.get("ImporteNeto") or line.get("BaseImponible") or 0),
+            "tax_rate": float(line.get("Iva") or 0), "tax_amount": float(line.get("CuotaIva") or 0),
+            "total": float(line.get("ImporteLiquido") or 0), "warehouse": str(line.get("CodigoAlmacen") or "").strip(),
+        })
     return [{
         "id": _document_id(row["EjercicioAlbaran"], row["SerieAlbaran"], row["NumeroAlbaran"]),
         "number": f'{row["EjercicioAlbaran"]}-{str(row["SerieAlbaran"]).strip()}-{row["NumeroAlbaran"]}',
@@ -142,6 +171,7 @@ def fetch_customer_delivery_notes(customer_code: str, limit: int = 200) -> list[
         "invoice_number": (_document_id(row.get("EjercicioFactura"), row.get("SerieFactura"), row.get("NumeroFactura"))
                            if int(row.get("NumeroFactura") or 0) else None),
         "source": "EXIT",
+        "items": lines_by_document.get(_document_id(row["EjercicioAlbaran"], row["SerieAlbaran"], row["NumeroAlbaran"]), []),
     } for row in rows]
 
 

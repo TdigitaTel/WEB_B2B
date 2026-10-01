@@ -552,6 +552,21 @@ def document_file(kind: str, document_id: str, user: User = Depends(current_user
         pdf.setFont("Helvetica-Bold", 10); pdf.drawString(45, y, f"{label}:")
         pdf.setFont("Helvetica", 10); pdf.drawString(175, y, str(value))
         y -= 22
+    items = row.get("items") or []
+    if items:
+        y -= 8; pdf.setFont("Helvetica-Bold", 11); pdf.drawString(45, y, "Detalle despachado"); y -= 20
+        pdf.setFont("Helvetica-Bold", 8)
+        pdf.drawString(45, y, "Código"); pdf.drawString(110, y, "Descripción")
+        pdf.drawRightString(410, y, "Cantidad"); pdf.drawRightString(475, y, "Precio"); pdf.drawRightString(550, y, "Importe")
+        y -= 14
+        for item in items:
+            if y < 65:
+                pdf.showPage(); y = height - 55
+            description = str(item.get("description") or "")[:48]
+            pdf.setFont("Helvetica", 7.5); pdf.drawString(45, y, str(item.get("sku") or ""))
+            pdf.drawString(110, y, description); pdf.drawRightString(410, y, f'{item.get("quantity", 0):.2f}')
+            pdf.drawRightString(475, y, f'{item.get("unit_price", 0):.2f}'); pdf.drawRightString(550, y, f'{item.get("net_amount", 0):.2f}')
+            y -= 13
     pdf.setFont("Helvetica-Oblique", 8)
     pdf.drawString(45, 45, "Documento generado a partir de los datos disponibles en EXIT.")
     pdf.save(); output.seek(0)
