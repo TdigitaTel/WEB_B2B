@@ -146,7 +146,7 @@ def order_payload(order: Order, db: Session, include_items: bool = False) -> dic
         }]
         invoice_dates = [event.created_at for event in history if event.status == OrderStatus.invoiced]
         stage_dates = {
-            "PENDIENTE": min(pending_dates) if pending_dates else order.created_at,
+            "PENDIENTE": max(pending_dates) if pending_dates else order.created_at,
             "EN_PROCESAMIENTO": max(processing_dates) if processing_dates else None,
             "PENDIENTE_RECOJO": max(pickup_dates) if pickup_dates else None,
             "FACTURADO": max(invoice_dates) if invoice_dates else None,

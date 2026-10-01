@@ -67,7 +67,7 @@ Cada cambio genera una fila nueva en `order_status_history`; nunca se reemplaza 
 
 | Etapa visible | Estados técnicos | Fecha mostrada |
 |---|---|---|
-| Pendiente | `BORRADOR`, `PENDIENTE` | La fecha más antigua |
+| Pendiente | `BORRADOR`, `PENDIENTE` | La fecha más reciente |
 | En procesamiento | `REGISTRADO`, `EN_PROCESO` | La fecha más reciente |
 | Pendiente de recojo | `ATENDIDO` | Fecha de atención |
 | Facturado | `FACTURADO` | Fecha de facturación |
