@@ -12,8 +12,8 @@ from app.erp_db import fetch_customer_codes
 from app.models import User
 
 
-def sync_once() -> dict:
-    codes = fetch_customer_codes()
+def sync_once(after_code: str = "", batch_size: int = 30) -> dict:
+    codes = fetch_customer_codes(after_code=after_code, limit=batch_size)
     created = 0
     with SessionLocal() as db:
         users = db.scalars(select(User)).all()
@@ -29,7 +29,9 @@ def sync_once() -> dict:
             ))
             created += 1
         db.commit()
-    result = {"status": "ok", "exit_codes": len(codes), "created": created}
+    next_code = codes[-1] if codes else ""
+    result = {"status": "ok", "checked": len(codes), "created": created,
+              "from_after": after_code or None, "next_after": next_code or None}
     print(result, flush=True)
     return result
 
@@ -39,15 +41,19 @@ def main():
     parser.add_argument("--watch", action="store_true")
     parser.add_argument("--interval", type=int, default=settings.customer_sync_interval_seconds,
                         help="Segundos entre revisiones")
+    parser.add_argument("--batch-size", type=int, default=settings.customer_sync_batch_size,
+                        help="Cantidad máxima de clientes consultados en cada ciclo")
     args = parser.parse_args()
+    after_code = ""
     while True:
         try:
-            sync_once()
+            result = sync_once(after_code=after_code, batch_size=args.batch_size)
+            after_code = result["next_after"] or ""
         except Exception as exc:
             print({"status": "error", "error": str(exc)}, flush=True)
         if not args.watch:
             break
-        time.sleep(max(30, args.interval))
+        time.sleep(max(2, args.interval))
 
 
 if __name__ == "__main__":

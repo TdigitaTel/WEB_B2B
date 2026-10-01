@@ -88,22 +88,26 @@ def fetch_customer(customer_code: str) -> dict | None:
     }
 
 
-def fetch_customer_codes() -> list[str]:
-    """Devuelve únicamente los códigos existentes en EXIT, sin replicar datos maestros."""
+def fetch_customer_codes(after_code: str = "", limit: int = 30) -> list[str]:
+    """Devuelve una página de códigos EXIT, sin cargar la maestra completa."""
     schema = _identifier(CUSTOMER["schema"])
     table = _identifier(CUSTOMER["table"])
     with connect_sqlserver() as connection:
         columns = _customer_columns(connection)
         code_column = _discovered_column(columns["code"])
+        page_size = max(1, min(int(limit), 500))
         sql = (
-            f"SELECT DISTINCT LTRIM(RTRIM(CONVERT(varchar(100), {code_column}))) AS customer_code "
+            f"SELECT DISTINCT TOP {page_size} "
+            f"LTRIM(RTRIM(CONVERT(varchar(100), {code_column}))) AS customer_code "
             f"FROM {schema}.{table} WHERE {code_column} IS NOT NULL "
-            f"AND LTRIM(RTRIM(CONVERT(varchar(100), {code_column}))) <> ''"
+            f"AND LTRIM(RTRIM(CONVERT(varchar(100), {code_column}))) <> '' "
+            f"AND LTRIM(RTRIM(CONVERT(varchar(100), {code_column}))) > %s "
+            "ORDER BY customer_code"
         )
         with connection.cursor() as cursor:
-            cursor.execute(sql)
+            cursor.execute(sql, (str(after_code).strip(),))
             rows = cursor.fetchall()
-    return sorted({str(row["customer_code"]).strip() for row in rows if row.get("customer_code")})
+    return [str(row["customer_code"]).strip() for row in rows if row.get("customer_code")]
 
 
 def _document_id(year, series, number) -> str:

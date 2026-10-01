@@ -40,7 +40,7 @@ services:
 
   customer-sync:
     build: ./backend
-    command: ["python", "-m", "scripts.sync_exit_customer_accounts", "--watch", "--interval", "${CUSTOMER_SYNC_INTERVAL_SECONDS:-300}"]
+    command: ["python", "-m", "scripts.sync_exit_customer_accounts", "--watch", "--interval", "${CUSTOMER_SYNC_INTERVAL_SECONDS:-10}", "--batch-size", "${CUSTOMER_SYNC_BATCH_SIZE:-30}"]
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-bermudez}:${POSTGRES_PASSWORD:-cambia_esta_clave}@db:5432/${POSTGRES_DB:-bermudez_b2b}
       SQLSERVER_HOST: ${SQLSERVER_HOST:-}

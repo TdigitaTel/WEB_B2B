@@ -6,7 +6,8 @@ class Settings(BaseSettings):
     jwt_secret: str = "desarrollo_local_cambiar"
     integration_api_key: str = ""
     show_order_status_history: bool = True
-    customer_sync_interval_seconds: int = 300
+    customer_sync_interval_seconds: int = 10
+    customer_sync_batch_size: int = 30
     seed_products: int = 15000
     seed_customers: int = 100
     sqlserver_host: str = ""

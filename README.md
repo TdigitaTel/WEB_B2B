@@ -342,7 +342,8 @@ EXIT es la fuente única de los datos comerciales del cliente. La web consulta a
 El servicio `customer-sync` revisa periódicamente los códigos existentes en `dbo.clientes`. Cuando encuentra uno nuevo crea una cuenta local inactiva, sin copiar sus datos maestros. La frecuencia se configura en `.env`:
 
 ```env
-CUSTOMER_SYNC_INTERVAL_SECONDS=300
+CUSTOMER_SYNC_INTERVAL_SECONDS=10
+CUSTOMER_SYNC_BATCH_SIZE=30
 ```
 
 Puede comprobarse manualmente y consultarse su actividad con:
@@ -367,4 +368,4 @@ Content-Type: application/json
 }
 ```
 
-La respuesta devuelve el usuario de acceso, que para las cuentas detectadas automáticamente es el código EXIT. El cliente autenticado también puede modificar su propia contraseña desde **Mi cuenta**; esa operación usa `PATCH /api/v1/account/password` y exige la contraseña actual.
+Cada ciclo consulta como máximo 30 clientes y continúa desde el último código revisado. Al llegar al final vuelve al inicio de la maestra. La respuesta devuelve el usuario de acceso, que para las cuentas detectadas automáticamente es el código EXIT. El cliente autenticado también puede modificar su propia contraseña desde **Mi cuenta**; esa operación usa `PATCH /api/v1/account/password` y exige la contraseña actual.
