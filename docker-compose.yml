@@ -38,6 +38,21 @@ services:
       - "127.0.0.1:${API_PORT:-8000}:8000"
     restart: unless-stopped
 
+  customer-sync:
+    build: ./backend
+    command: ["python", "-m", "scripts.sync_exit_customer_accounts", "--watch", "--interval", "${CUSTOMER_SYNC_INTERVAL_SECONDS:-300}"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-bermudez}:${POSTGRES_PASSWORD:-cambia_esta_clave}@db:5432/${POSTGRES_DB:-bermudez_b2b}
+      SQLSERVER_HOST: ${SQLSERVER_HOST:-}
+      SQLSERVER_PORT: ${SQLSERVER_PORT:-1433}
+      SQLSERVER_DATABASE: ${SQLSERVER_DATABASE:-}
+      SQLSERVER_USER: ${SQLSERVER_USER:-}
+      SQLSERVER_PASSWORD: ${SQLSERVER_PASSWORD:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
   web:
     build: ./frontend
     environment:

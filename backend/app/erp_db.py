@@ -88,6 +88,24 @@ def fetch_customer(customer_code: str) -> dict | None:
     }
 
 
+def fetch_customer_codes() -> list[str]:
+    """Devuelve únicamente los códigos existentes en EXIT, sin replicar datos maestros."""
+    schema = _identifier(CUSTOMER["schema"])
+    table = _identifier(CUSTOMER["table"])
+    with connect_sqlserver() as connection:
+        columns = _customer_columns(connection)
+        code_column = _discovered_column(columns["code"])
+        sql = (
+            f"SELECT DISTINCT LTRIM(RTRIM(CONVERT(varchar(100), {code_column}))) AS customer_code "
+            f"FROM {schema}.{table} WHERE {code_column} IS NOT NULL "
+            f"AND LTRIM(RTRIM(CONVERT(varchar(100), {code_column}))) <> ''"
+        )
+        with connection.cursor() as cursor:
+            cursor.execute(sql)
+            rows = cursor.fetchall()
+    return sorted({str(row["customer_code"]).strip() for row in rows if row.get("customer_code")})
+
+
 def _document_id(year, series, number) -> str:
     return f"{str(year).strip()}~{str(series).strip()}~{str(number).strip()}"
 

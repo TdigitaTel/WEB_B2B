@@ -8,6 +8,16 @@ class LoginIn(BaseModel):
     password: str
 
 
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=6, max_length=200)
+
+
+class CustomerAccessReset(BaseModel):
+    customer_code: str = Field(min_length=1, max_length=40)
+    new_password: str = Field(min_length=6, max_length=200)
+
+
 class CartItemIn(BaseModel):
     product_id: str
     quantity: Decimal = Field(gt=0, le=99999)

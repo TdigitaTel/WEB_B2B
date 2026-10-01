@@ -334,3 +334,37 @@ Ambos procesos resuelven los nombres reales de las columnas mediante `INFORMATIO
 La bandeja operativa consulta EXIT en línea y no copia sus pedidos en PostgreSQL. Las vistas `Activos Kardex` y `Activos SGA` se actualizan cada 10 segundos y leen únicamente `IdDelegacion = '00'` y `FechaGrabacion = TODAY()`, usando la fecha actual de SQL Server. La vista `Atendidos` consulta bajo demanda el rango de `FechaGrabacion` indicado por el operador. El antiguo servicio `exit-order-sync` ya no forma parte del despliegue.
 
 No hace falta configurar `crontab` ni ejecutar un contenedor de sincronización.
+
+### Clientes EXIT y contraseñas de la web
+
+EXIT es la fuente única de los datos comerciales del cliente. La web consulta allí la razón social, nombre, NIF, dirección, correo, teléfono y condiciones comerciales. PostgreSQL solo relaciona el acceso con `users.erp_customer_code` y conserva la contraseña mediante un hash irreversible; no replica la ficha comercial.
+
+El servicio `customer-sync` revisa periódicamente los códigos existentes en `dbo.clientes`. Cuando encuentra uno nuevo crea una cuenta local inactiva, sin copiar sus datos maestros. La frecuencia se configura en `.env`:
+
+```env
+CUSTOMER_SYNC_INTERVAL_SECONDS=300
+```
+
+Puede comprobarse manualmente y consultarse su actividad con:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api \
+  python -m scripts.sync_exit_customer_accounts
+
+docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f customer-sync
+```
+
+Para habilitar una cuenta o restablecer su contraseña desde otra aplicación se usa la API protegida por `INTEGRATION_API_KEY`:
+
+```http
+PUT /api/v1/integrations/customer-access
+X-Integration-Key: CLAVE_DE_INTEGRACION
+Content-Type: application/json
+
+{
+  "customer_code": "11511",
+  "new_password": "79319588"
+}
+```
+
+La respuesta devuelve el usuario de acceso, que para las cuentas detectadas automáticamente es el código EXIT. El cliente autenticado también puede modificar su propia contraseña desde **Mi cuenta**; esa operación usa `PATCH /api/v1/account/password` y exige la contraseña actual.

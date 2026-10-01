@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .auth import audit, create_access_token, current_user, require_roles, verify_password
+from .auth import audit, create_access_token, current_user, hash_password, require_roles, verify_password
 from .config import settings
 from .db import get_db
 from .erp_db import (
@@ -23,7 +23,7 @@ from .models import (
     MaterialArea, MaterialFamily, MaterialProductType, MaterialSubfamily, Order, OrderItem,
     OrderStatusHistory, Product, ProfessionalRegistrationRequest, Store, SyncStatus, User,
 )
-from .schemas import CartItemIn, CartItemUpdate, ExternalStatusChange, LoginIn, OrderCreate, StatusChange
+from .schemas import CartItemIn, CartItemUpdate, CustomerAccessReset, ExternalStatusChange, LoginIn, OrderCreate, PasswordChange, StatusChange
 from .services import PostgresCatalogService, product_view
 
 app = FastAPI(title="Bermúdez B2B API", version="1.0.0", openapi_url="/api/v1/openapi.json", docs_url="/docs")
@@ -174,7 +174,7 @@ def health():
 @app.post("/api/v1/auth/login")
 def login(data: LoginIn, response: Response, db: Session = Depends(get_db)):
     user = db.scalar(select(User).where(func.lower(User.email) == data.email.strip().lower()))
-    if not user or not verify_password(data.password, user.password_hash):
+    if not user or not user.active or not verify_password(data.password, user.password_hash):
         raise HTTPException(401, "Usuario o contraseña incorrectos")
     customer = None
     if user.role not in {"OPERADOR_TIENDA", "ADMIN"}:
@@ -200,6 +200,18 @@ def account(user: User = Depends(current_user), db: Session = Depends(get_db)):
     display_name = (customer or {}).get("trade_name") or (customer or {}).get("legal_name") or user.full_name
     return {"user": {"id": user.public_id, "name": display_name, "email": user.email, "role": user.role},
             "customer": customer}
+
+
+@app.patch("/api/v1/account/password")
+def change_password(data: PasswordChange, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    if not verify_password(data.current_password, user.password_hash):
+        raise HTTPException(400, "La contraseña actual no es correcta")
+    if data.current_password == data.new_password:
+        raise HTTPException(400, "La contraseña nueva debe ser diferente")
+    user.password_hash = hash_password(data.new_password)
+    audit(db, user, "PASSWORD_CHANGED", "USER", user.public_id)
+    db.commit()
+    return {"ok": True}
 
 
 @app.post("/api/v1/registration-requests", status_code=201)
@@ -505,6 +517,34 @@ def require_integration_key(x_integration_key: str | None = Header(default=None)
         raise HTTPException(503, "La API de integración no está configurada")
     if not x_integration_key or not secrets.compare_digest(x_integration_key, configured):
         raise HTTPException(401, "Clave de integración incorrecta")
+
+
+@app.put("/api/v1/integrations/customer-access")
+def reset_customer_access(
+    data: CustomerAccessReset,
+    _: None = Depends(require_integration_key),
+    db: Session = Depends(get_db),
+):
+    code = data.customer_code.strip()
+    customer = fetch_customer(code)
+    if not customer:
+        raise HTTPException(404, "El cliente no existe en EXIT")
+    user = db.scalar(select(User).where(
+        (User.erp_customer_code == code) | (func.lower(User.email) == code.lower())
+    ))
+    if not user:
+        user = User(email=code.lower(), full_name=code, password_hash="", role="CLIENTE_ADMIN",
+                    erp_customer_code=code, customer_id=None, active=True)
+        db.add(user)
+    user.password_hash = hash_password(data.new_password)
+    user.role = "CLIENTE_ADMIN"
+    user.customer_id = None
+    user.erp_customer_code = code
+    user.active = True
+    db.flush()
+    audit(db, None, "CUSTOMER_ACCESS_RESET", "USER", user.public_id, {"customer_code": code})
+    db.commit()
+    return {"ok": True, "customer_code": code, "username": user.email}
 
 
 def integration_order(db: Session, order_id: str | None = None, order_number: str | None = None) -> Order | None:
