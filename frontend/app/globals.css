@@ -141,3 +141,4 @@ body{background:linear-gradient(180deg,#f6f9fb 0,#f1f5f7 420px,#f5f6f7 100%)}.se
 .workflow-badge.stage-PENDIENTE{background:#fff3cd;color:#7d5b00}.workflow-badge.stage-EN_PROCESAMIENTO{background:#e7f2fb;color:var(--blue)}.workflow-badge.stage-PENDIENTE_RECOJO{background:#e3f5ed;color:#176b4b}.workflow-badge.stage-FACTURADO{background:#e9edf0;color:var(--navy)}
 .draft-inline-action{border:0;border-radius:7px;background:var(--blue);color:#fff;padding:9px 12px;font-size:10px;font-weight:800;white-space:nowrap}
 @media(max-width:800px){.order-card>summary>:nth-child(5){display:flex}}
+.orders-heading-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}

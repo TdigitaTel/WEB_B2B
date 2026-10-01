@@ -272,7 +272,7 @@ class OrderStatusHistory(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"), index=True)
     status: Mapped[OrderStatus] = mapped_column(Enum(OrderStatus))
-    changed_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    changed_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     source: Mapped[str] = mapped_column(String(20), default="WEB")
     note: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

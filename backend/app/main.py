@@ -2,8 +2,9 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from functools import lru_cache
 import logging
+import secrets
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -22,7 +23,7 @@ from .models import (
     MaterialArea, MaterialFamily, MaterialProductType, MaterialSubfamily, Order, OrderItem,
     OrderStatus, OrderStatusHistory, Product, ProfessionalRegistrationRequest, Store, SyncStatus, User,
 )
-from .schemas import CartItemIn, CartItemUpdate, LoginIn, OrderCreate, StatusChange
+from .schemas import CartItemIn, CartItemUpdate, ExternalStatusChange, LoginIn, OrderCreate, StatusChange
 from .services import PostgresCatalogService, product_view
 
 app = FastAPI(title="Bermúdez B2B API", version="1.0.0", openapi_url="/api/v1/openapi.json", docs_url="/docs")
@@ -485,6 +486,88 @@ def delivery_notes(user: User = Depends(current_user), db: Session = Depends(get
 def invoices(user: User = Depends(current_user), db: Session = Depends(get_db)):
     customer_for(user, db)
     return fetch_customer_invoices(customer_code_for(user, db))
+
+
+INTEGRATION_STATUS_SEQUENCE = [
+    OrderStatus.pending,
+    OrderStatus.registered,
+    OrderStatus.processing,
+    OrderStatus.attended,
+    OrderStatus.invoiced,
+]
+INTEGRATION_LEGACY_STATUS = {
+    OrderStatus.draft: OrderStatus.pending,
+    OrderStatus.sent: OrderStatus.pending,
+    OrderStatus.received: OrderStatus.registered,
+    OrderStatus.preparing: OrderStatus.processing,
+    OrderStatus.partial: OrderStatus.processing,
+    OrderStatus.ready: OrderStatus.attended,
+    OrderStatus.delivered: OrderStatus.attended,
+}
+
+
+def require_integration_key(x_integration_key: str | None = Header(default=None)):
+    configured = settings.integration_api_key.strip()
+    if not configured:
+        raise HTTPException(503, "La API de integración no está configurada")
+    if not x_integration_key or not secrets.compare_digest(x_integration_key, configured):
+        raise HTTPException(401, "Clave de integración incorrecta")
+
+
+@app.patch("/api/v1/integrations/orders/status")
+def update_order_status_from_integration(
+    data: ExternalStatusChange,
+    _: None = Depends(require_integration_key),
+    db: Session = Depends(get_db),
+):
+    order_number = data.order_number.strip()
+    order = db.scalar(select(Order).where(
+        (Order.order_number == order_number) | (Order.nro_pedido_exit == order_number)
+    ))
+    if not order:
+        raise HTTPException(404, "Pedido no encontrado")
+    try:
+        requested = OrderStatus(data.status.strip().upper())
+    except ValueError as exc:
+        allowed = ", ".join(status.value for status in INTEGRATION_STATUS_SEQUENCE)
+        raise HTTPException(422, f"Estado no válido. Valores admitidos: {allowed}") from exc
+    if requested not in INTEGRATION_STATUS_SEQUENCE:
+        raise HTTPException(422, "La API externa solo admite estados del flujo operativo")
+    source = data.source.strip().upper()
+    if not source:
+        raise HTTPException(422, "El origen de la actualización es obligatorio")
+
+    current = INTEGRATION_LEGACY_STATUS.get(order.status, order.status)
+    if order.status != OrderStatus.draft and current not in INTEGRATION_STATUS_SEQUENCE:
+        raise HTTPException(409, f"El pedido está en un estado no actualizable: {order.status.value}")
+    current_index = -1 if order.status == OrderStatus.draft else INTEGRATION_STATUS_SEQUENCE.index(current)
+    requested_index = INTEGRATION_STATUS_SEQUENCE.index(requested)
+    if requested_index < current_index:
+        raise HTTPException(409, f"No se puede retroceder de {current.value} a {requested.value}")
+    if requested_index == current_index:
+        return {"changed": False, "order": order_payload(order, db, True)}
+
+    recorded = []
+    for status in INTEGRATION_STATUS_SEQUENCE[current_index + 1:requested_index + 1]:
+        db.add(OrderStatusHistory(
+            order_id=order.id,
+            status=status,
+            changed_by_user_id=None,
+            source=source,
+            note=data.note or f"Estado actualizado por {source}",
+            created_at=data.occurred_at or datetime.now(timezone.utc),
+        ))
+        recorded.append(status.value)
+    order.status = requested
+    if data.nro_pedido_exit:
+        order.nro_pedido_exit = data.nro_pedido_exit.strip()
+        order.fecha_registro_exit = data.occurred_at or order.fecha_registro_exit or datetime.now(timezone.utc)
+    if requested in {OrderStatus.registered, OrderStatus.processing, OrderStatus.attended, OrderStatus.invoiced}:
+        order.estado_registro_exit = requested.value
+    audit(db, None, "ORDER_STATUS_CHANGED_BY_INTEGRATION", "ORDER", order.public_id,
+          {"status": requested.value, "source": data.source, "recorded": recorded})
+    db.commit()
+    return {"changed": True, "recorded_statuses": recorded, "order": order_payload(order, db, True)}
 
 
 ALLOWED_TRANSITIONS = {

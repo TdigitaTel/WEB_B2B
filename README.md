@@ -155,6 +155,35 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api \
 
 La prueba solo consulta el nombre del servidor y de la base de datos. Si `WSRV25BBDD` no se resuelve desde Linux, usa su dirección IP en `SQLSERVER_HOST`.
 
+## API de actualización de estados
+
+Configura una clave larga en `.env`:
+
+```env
+INTEGRATION_API_KEY=una_clave_larga_y_aleatoria
+```
+
+Las aplicaciones externas pueden actualizar un pedido por su número B2B o por su número EXIT. El endpoint guarda una fila en `order_status_history` por cada cambio y completa estados intermedios cuando recibe un salto hacia adelante.
+
+```http
+PATCH /api/v1/integrations/orders/status
+Content-Type: application/json
+X-Integration-Key: una_clave_larga_y_aleatoria
+```
+
+```json
+{
+  "order_number": "WEB-2026-0000001",
+  "status": "REGISTRADO",
+  "source": "TRIGGER_EXIT",
+  "note": "Pedido creado en EXIT",
+  "nro_pedido_exit": "2026/AL/6006200",
+  "occurred_at": "2026-10-01T10:30:00+02:00"
+}
+```
+
+Estados válidos, en orden: `PENDIENTE`, `REGISTRADO`, `EN_PROCESO`, `ATENDIDO`, `FACTURADO`.
+
 ### Integración del catálogo con SQL Server
 
 La API concentra el acceso al ERP en `backend/app/erp_db.py`. La estructura conocida de EXITERP se mantiene en `backend/app/erp_schema.py`; allí se registran las tablas y columnas de imágenes, artículos, stock y almacenes. Por este motivo, los nombres de tablas no se guardan en `.env`.
