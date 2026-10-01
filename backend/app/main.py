@@ -146,6 +146,16 @@ def order_payload(order: Order, db: Session, include_items: bool = False) -> dic
             OrderStatus.attended, OrderStatus.ready, OrderStatus.delivered,
         }]
         invoice_dates = [event.created_at for event in history if event.status == OrderStatus.invoiced]
+        fallback_date = order.fecha_registro_exit or order.updated_at or order.created_at
+        if not processing_dates and order.status in {
+            OrderStatus.registered, OrderStatus.processing, OrderStatus.received,
+            OrderStatus.preparing, OrderStatus.partial,
+        }:
+            processing_dates = [fallback_date]
+        if not pickup_dates and order.status in {OrderStatus.attended, OrderStatus.ready, OrderStatus.delivered}:
+            pickup_dates = [fallback_date]
+        if not invoice_dates and order.status == OrderStatus.invoiced:
+            invoice_dates = [fallback_date]
         stage_dates = {
             "PENDIENTE": max(pending_dates) if pending_dates else order.created_at,
             "EN_PROCESAMIENTO": max(processing_dates) if processing_dates else None,

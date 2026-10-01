@@ -124,6 +124,48 @@ def main():
                 FROM migrated
                 WHERE user_id IS NOT NULL
             """))
+            conn.execute(text("""
+                WITH candidates AS (
+                    SELECT id, user_id,
+                           CASE UPPER(estado_registro_exit)
+                               WHEN 'REGISTRADO' THEN 'registered'::orderstatus
+                               WHEN 'EN_PROCESO' THEN 'processing'::orderstatus
+                               WHEN 'ATENDIDO' THEN 'attended'::orderstatus
+                               WHEN 'FACTURADO' THEN 'invoiced'::orderstatus
+                           END AS target_status
+                    FROM orders
+                    WHERE UPPER(COALESCE(estado_registro_exit, '')) IN
+                          ('REGISTRADO', 'EN_PROCESO', 'ATENDIDO', 'FACTURADO')
+                ), migrated AS (
+                    UPDATE orders o
+                    SET status = c.target_status, updated_at = NOW()
+                    FROM candidates c
+                    WHERE o.id = c.id AND o.status IS DISTINCT FROM c.target_status
+                    RETURNING o.id, o.user_id, o.status
+                )
+                INSERT INTO order_status_history
+                    (order_id, status, changed_by_user_id, source, note, created_at)
+                SELECT m.id, steps.status, m.user_id, 'EXIT',
+                       'Estado reparado desde estado_registro_exit', NOW()
+                FROM migrated m
+                CROSS JOIN LATERAL (
+                    VALUES
+                        ('registered'::orderstatus, 1),
+                        ('processing'::orderstatus, 2),
+                        ('attended'::orderstatus, 3),
+                        ('invoiced'::orderstatus, 4)
+                ) AS steps(status, position)
+                WHERE steps.position <= CASE m.status
+                    WHEN 'registered'::orderstatus THEN 1
+                    WHEN 'processing'::orderstatus THEN 2
+                    WHEN 'attended'::orderstatus THEN 3
+                    WHEN 'invoiced'::orderstatus THEN 4
+                END
+                AND NOT EXISTS (
+                    SELECT 1 FROM order_status_history h
+                    WHERE h.order_id = m.id AND h.status = steps.status
+                )
+            """))
     from .seed import seed
     seed()
 
