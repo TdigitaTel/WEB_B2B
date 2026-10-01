@@ -234,7 +234,7 @@ def fetch_exit_orders_live(view: str = "active_kardex", date_from: date | None =
         else:
             updated_at = imported_at
         source_status = str(row.get("status") or "").strip().upper()
-        local_status = "ENTREGADO" if source_status == "S" else "ENVIADO"
+        local_status = "ATENDIDO" if source_status == "S" else "EN_PROCESO"
         result.append(ExitOrderInput(
             exit_order_id=external_id, order_number=f"EXIT-{year}-{series}-{number}"[:40],
             customer_code=str(row.get("customer") or "").strip(), store_code="ALM",

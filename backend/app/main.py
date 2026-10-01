@@ -134,18 +134,25 @@ def order_payload(order: Order, db: Session, include_items: bool = False) -> dic
                                     "unit_price": float(item.unit_price), "line_total": float(item.line_total),
                                     "fulfillment_zone": item.fulfillment_zone or "OTROS"})
         history = db.scalars(select(OrderStatusHistory).where(OrderStatusHistory.order_id == order.id).order_by(OrderStatusHistory.created_at)).all()
-        result["history"] = [{"status": h.status.value, "note": h.note, "created_at": h.created_at} for h in history]
+        result["history"] = [{"status": h.status.value, "source": h.source, "note": h.note, "created_at": h.created_at} for h in history]
         result["documents"] = []
-        stage_dates = {"REGISTRADO": order.created_at, "EN_PREPARACION": None, "PREPARADO": None, "FACTURADO": None}
-        for event in history:
-            if event.status in {OrderStatus.sent, OrderStatus.received}:
-                stage_dates["REGISTRADO"] = stage_dates["REGISTRADO"] or event.created_at
-            elif event.status in {OrderStatus.preparing, OrderStatus.partial}:
-                stage_dates["EN_PREPARACION"] = stage_dates["EN_PREPARACION"] or event.created_at
-            elif event.status in {OrderStatus.ready, OrderStatus.delivered}:
-                stage_dates["PREPARADO"] = stage_dates["PREPARADO"] or event.created_at
+        pending_dates = [event.created_at for event in history if event.status in {OrderStatus.draft, OrderStatus.pending, OrderStatus.sent}]
+        processing_dates = [event.created_at for event in history if event.status in {
+            OrderStatus.registered, OrderStatus.processing, OrderStatus.received,
+            OrderStatus.preparing, OrderStatus.partial,
+        }]
+        pickup_dates = [event.created_at for event in history if event.status in {
+            OrderStatus.attended, OrderStatus.ready, OrderStatus.delivered,
+        }]
+        invoice_dates = [event.created_at for event in history if event.status == OrderStatus.invoiced]
+        stage_dates = {
+            "PENDIENTE": min(pending_dates) if pending_dates else order.created_at,
+            "EN_PROCESAMIENTO": max(processing_dates) if processing_dates else None,
+            "PENDIENTE_RECOJO": max(pickup_dates) if pickup_dates else None,
+            "FACTURADO": max(invoice_dates) if invoice_dates else None,
+        }
         result["workflow"] = [{"status": status, "completed_at": completed_at} for status, completed_at in stage_dates.items()]
-        result["workflow_status"] = next((row["status"] for row in reversed(result["workflow"]) if row["completed_at"]), "REGISTRADO")
+        result["workflow_status"] = next((row["status"] for row in reversed(result["workflow"]) if row["completed_at"]), "PENDIENTE")
     return result
 
 
@@ -357,7 +364,7 @@ def create_order(data: OrderCreate, user: User = Depends(current_user), db: Sess
     rows = db.execute(select(CartItem, Product).join(Product, Product.id == CartItem.product_id).where(CartItem.cart_id == cart.id)).all()
     if not rows: raise HTTPException(400, "El pedido está vacío")
     prices = _erp_unit_prices([product for _, product in rows])
-    initial_status = OrderStatus.draft if data.draft else OrderStatus.sent
+    initial_status = OrderStatus.draft if data.draft else OrderStatus.pending
     order = Order(order_number=f"TMP-{cart.public_id[:20]}", customer_id=legacy_customer_id(user), customer_code=customer_code, user_id=user.id, store_id=store.id,
                   status=initial_status, origen_pedido="B2B", estado_registro_exit="BORRADOR" if data.draft else "PENDIENTE",
                   customer_reference=data.customer_reference, job_name=data.job_name, notes=data.notes,
@@ -372,7 +379,7 @@ def create_order(data: OrderCreate, user: User = Depends(current_user), db: Sess
         db.delete(cart_item)
     order.subtotal = subtotal; order.tax_total = (subtotal * Decimal("0.21")).quantize(Decimal("0.01")); order.total = order.subtotal + order.tax_total
     history_note = "Pedido guardado como borrador" if data.draft else "Pedido enviado desde el portal"
-    db.add(OrderStatusHistory(order_id=order.id, status=order.status, changed_by_user_id=user.id, note=history_note))
+    db.add(OrderStatusHistory(order_id=order.id, status=order.status, changed_by_user_id=user.id, source="WEB", note=history_note))
     if not data.draft:
         db.add(Notification(customer_id=legacy_customer_id(user), customer_code=customer_code, user_id=user.id, title="Pedido recibido", message=f"Hemos recibido el pedido {order.order_number}."))
         db.add(IntegrationOutbox(aggregate_type="ORDER", aggregate_id=order.public_id, event_type="ORDER_CREATED",
@@ -398,11 +405,11 @@ def submit_draft_order(order_id: str, user: User = Depends(current_user), db: Se
     order = customer_order(order_id, user, db)
     if order.status != OrderStatus.draft:
         raise HTTPException(409, "Solo se puede enviar un pedido que esté en borrador")
-    order.status = OrderStatus.sent
+    order.status = OrderStatus.pending
     order.estado_registro_exit = "PENDIENTE"
     order.sync_status = SyncStatus.pending
     store = db.get(Store, order.store_id)
-    db.add(OrderStatusHistory(order_id=order.id, status=order.status, changed_by_user_id=user.id, note="Borrador enviado desde el portal"))
+    db.add(OrderStatusHistory(order_id=order.id, status=order.status, changed_by_user_id=user.id, source="WEB", note="Borrador enviado desde el portal"))
     db.add(Notification(customer_id=legacy_customer_id(user), customer_code=order.customer_code, user_id=user.id,
                         title="Pedido recibido", message=f"Hemos recibido el pedido {order.order_number}."))
     db.add(IntegrationOutbox(aggregate_type="ORDER", aggregate_id=order.public_id, event_type="ORDER_CREATED",
@@ -416,7 +423,7 @@ def submit_draft_order(order_id: str, user: User = Depends(current_user), db: Se
 @app.delete("/api/v1/orders/{order_id}")
 def delete_order(order_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
     order = customer_order(order_id, user, db)
-    deletable = order.status in {OrderStatus.draft, OrderStatus.sent} and not order.nro_pedido_exit
+    deletable = order.status in {OrderStatus.draft, OrderStatus.pending, OrderStatus.sent} and not order.nro_pedido_exit
     if not deletable:
         raise HTTPException(409, "Solo se pueden eliminar pedidos en borrador o pendientes que todavía no estén registrados en EXIT")
     number = order.order_number
@@ -481,6 +488,10 @@ def invoices(user: User = Depends(current_user), db: Session = Depends(get_db)):
 
 
 ALLOWED_TRANSITIONS = {
+    OrderStatus.pending: {OrderStatus.registered, OrderStatus.cancelled},
+    OrderStatus.registered: {OrderStatus.processing, OrderStatus.cancelled},
+    OrderStatus.processing: {OrderStatus.attended, OrderStatus.cancelled},
+    OrderStatus.attended: {OrderStatus.invoiced},
     OrderStatus.sent: {OrderStatus.received, OrderStatus.cancelled},
     OrderStatus.received: {OrderStatus.preparing, OrderStatus.cancelled},
     OrderStatus.preparing: {OrderStatus.partial, OrderStatus.ready, OrderStatus.cancelled},
@@ -524,7 +535,7 @@ def transition(order_id: str, data: StatusChange, user: User = Depends(require_r
     try: new_status = OrderStatus(data.status)
     except ValueError as exc: raise HTTPException(422, "Estado no válido") from exc
     if new_status not in ALLOWED_TRANSITIONS.get(order.status, set()): raise HTTPException(409, f"No se puede pasar de {order.status.value} a {new_status.value}")
-    order.status = new_status; db.add(OrderStatusHistory(order_id=order.id, status=new_status, changed_by_user_id=user.id, note=data.note))
+    order.status = new_status; db.add(OrderStatusHistory(order_id=order.id, status=new_status, changed_by_user_id=user.id, source="WEB", note=data.note))
     db.add(IntegrationOutbox(aggregate_type="ORDER", aggregate_id=order.public_id, event_type="ORDER_STATUS_CHANGED",
                              payload={"order_number": order.order_number, "nro_pedido_exit": order.nro_pedido_exit, "status": new_status.value}, sync_status=SyncStatus.pending))
     db.add(Notification(customer_id=order.customer_id, customer_code=order.customer_code, title=f"Pedido {order.order_number}", message=f"Nuevo estado: {new_status.value.replace('_', ' ')}"))

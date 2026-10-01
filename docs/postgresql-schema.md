@@ -21,7 +21,7 @@ PostgreSQL conserva la seguridad, los carritos, los pedidos B2B y su trazabilida
 | `cart_items` | producto y cantidad | `cart_id → carts`, `product_id → products` |
 | `orders` | número B2B único, cliente, totales, estado y cuatro campos mínimos de integración EXIT | usuario, cliente legado y tienda |
 | `order_items` | SKU, descripción, cantidades pedida/servida/pendiente, precio, zona | `order_id → orders`, `product_id → products` |
-| `order_status_history` | estado, nota y fecha | `order_id → orders`, `changed_by_user_id → users` |
+| `order_status_history` | estado, origen (`WEB`/`EXIT`), nota y fecha/hora | `order_id → orders`, `changed_by_user_id → users` |
 | `notifications` | título, mensaje y lectura | cliente/usuario |
 | `audit_events` | acción, entidad, metadatos JSON y fecha | usuario/cliente |
 | `integration_outbox` | evento, payload, estado, intentos y error | Integración asíncrona por `aggregate_id` |
@@ -60,6 +60,17 @@ La depuración elimina `customer_addresses`, `product_images`, `product_relation
 | `customer_reference`, `job_name`, `notes` | texto | Datos comerciales del pedido |
 | `subtotal`, `tax_total`, `total` | numeric | Importes |
 | `created_at`, `updated_at`, `deleted_at` | timestamptz | Auditoría temporal |
+
+## Seguimiento de estados
+
+Cada cambio genera una fila nueva en `order_status_history`; nunca se reemplaza el historial anterior. Los estados técnicos son `BORRADOR`, `PENDIENTE`, `REGISTRADO`, `EN_PROCESO`, `ATENDIDO` y `FACTURADO`. La web los agrupa así:
+
+| Etapa visible | Estados técnicos | Fecha mostrada |
+|---|---|---|
+| Pendiente | `BORRADOR`, `PENDIENTE` | La fecha más antigua |
+| En procesamiento | `REGISTRADO`, `EN_PROCESO` | La fecha más reciente |
+| Pendiente de recojo | `ATENDIDO` | Fecha de atención |
+| Facturado | `FACTURADO` | Fecha de facturación |
 
 ## Diagrama de relaciones
 

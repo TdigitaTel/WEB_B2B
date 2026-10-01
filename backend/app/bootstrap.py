@@ -11,6 +11,11 @@ def main():
             # create_all does not alter an existing MVP database. These additions are
             # intentionally idempotent so old installations can adopt the real catalogue.
             for statement in (
+                "ALTER TYPE orderstatus ADD VALUE IF NOT EXISTS 'pending'",
+                "ALTER TYPE orderstatus ADD VALUE IF NOT EXISTS 'registered'",
+                "ALTER TYPE orderstatus ADD VALUE IF NOT EXISTS 'processing'",
+                "ALTER TYPE orderstatus ADD VALUE IF NOT EXISTS 'attended'",
+                "ALTER TYPE orderstatus ADD VALUE IF NOT EXISTS 'invoiced'",
                 "ALTER TABLE products ADD COLUMN IF NOT EXISTS original_description TEXT",
                 "ALTER TABLE products ADD COLUMN IF NOT EXISTS material_area_id INTEGER REFERENCES material_areas(id)",
                 "ALTER TABLE products ADD COLUMN IF NOT EXISTS material_family_id INTEGER REFERENCES material_families(id)",
@@ -57,6 +62,8 @@ def main():
                 "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS fulfillment_zone VARCHAR(20)",
                 "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS pending_quantity NUMERIC(14,3)",
                 "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS served_quantity NUMERIC(14,3)",
+                "ALTER TABLE order_status_history ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'WEB' NOT NULL",
+                "CREATE INDEX IF NOT EXISTS ix_order_status_history_order_created ON order_status_history(order_id, created_at)",
                 "CREATE INDEX IF NOT EXISTS ix_order_items_fulfillment_zone ON order_items(fulfillment_zone)",
                 "CREATE UNIQUE INDEX IF NOT EXISTS ux_orders_nro_pedido_exit ON orders(nro_pedido_exit) WHERE nro_pedido_exit IS NOT NULL",
                 "CREATE INDEX IF NOT EXISTS ix_orders_origen_pedido ON orders(origen_pedido)",

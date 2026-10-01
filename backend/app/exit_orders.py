@@ -83,6 +83,7 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
     # las líneas del pedido durante la sincronización.
 
     previous_status = order.status
+    first_exit_registration = is_new or not order.nro_pedido_exit
     order.nro_pedido_exit = incoming.exit_order_id
     order.fecha_registro_exit = incoming.recorded_at or order.fecha_registro_exit
     order.estado_registro_exit = incoming.source_status or incoming.status
@@ -111,9 +112,18 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
                          unit_price=line.unit_price, discount_pct=line.discount_pct, tax_rate=line.tax_rate,
                          line_total=line_total, fulfillment_zone=line.fulfillment_zone,
                          served_quantity=line.served_quantity, pending_quantity=line.pending_quantity))
+    if first_exit_registration:
+        registered_at = incoming.recorded_at or incoming.source_updated_at
+        db.add(OrderStatusHistory(order_id=order.id, status=OrderStatus.registered,
+                                  changed_by_user_id=integration_user.id, source="EXIT",
+                                  note="Pedido registrado en EXIT", created_at=registered_at))
+        if status == OrderStatus.attended:
+            db.add(OrderStatusHistory(order_id=order.id, status=OrderStatus.processing,
+                                      changed_by_user_id=integration_user.id, source="EXIT",
+                                      note="Pedido procesado en EXIT", created_at=registered_at))
     if is_new or previous_status != status:
-        db.add(OrderStatusHistory(order_id=order.id, status=status, changed_by_user_id=integration_user.id,
-                                  note="Estado recibido desde EXIT"))
+        db.add(OrderStatusHistory(order_id=order.id, status=status, changed_by_user_id=integration_user.id, source="EXIT",
+                                  note="Estado recibido desde EXIT", created_at=incoming.source_updated_at))
     return order
 
 
