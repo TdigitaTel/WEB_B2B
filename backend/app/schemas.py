@@ -18,6 +18,7 @@ class CartItemUpdate(BaseModel):
 
 class OrderCreate(BaseModel):
     store_id: str
+    draft: bool = False
     customer_reference: str | None = Field(default=None, max_length=100)
     job_name: str | None = Field(default=None, max_length=160)
     notes: str | None = Field(default=None, max_length=1000)
@@ -26,4 +27,3 @@ class OrderCreate(BaseModel):
 class StatusChange(BaseModel):
     status: str
     note: str | None = Field(default=None, max_length=500)
-

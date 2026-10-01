@@ -357,8 +357,9 @@ def create_order(data: OrderCreate, user: User = Depends(current_user), db: Sess
     rows = db.execute(select(CartItem, Product).join(Product, Product.id == CartItem.product_id).where(CartItem.cart_id == cart.id)).all()
     if not rows: raise HTTPException(400, "El pedido está vacío")
     prices = _erp_unit_prices([product for _, product in rows])
+    initial_status = OrderStatus.draft if data.draft else OrderStatus.sent
     order = Order(order_number=f"TMP-{cart.public_id[:20]}", customer_id=legacy_customer_id(user), customer_code=customer_code, user_id=user.id, store_id=store.id,
-                  status=OrderStatus.sent, origen_pedido="B2B", estado_registro_exit="PENDIENTE",
+                  status=initial_status, origen_pedido="B2B", estado_registro_exit="BORRADOR" if data.draft else "PENDIENTE",
                   customer_reference=data.customer_reference, job_name=data.job_name, notes=data.notes,
                   subtotal=0, tax_total=0, total=0, sync_status=SyncStatus.pending)
     db.add(order); db.flush(); order.order_number = f"WEB-{datetime.now().year}-{order.id:07d}"
@@ -370,13 +371,64 @@ def create_order(data: OrderCreate, user: User = Depends(current_user), db: Sess
                          tax_rate=product.tax_rate, line_total=line))
         db.delete(cart_item)
     order.subtotal = subtotal; order.tax_total = (subtotal * Decimal("0.21")).quantize(Decimal("0.01")); order.total = order.subtotal + order.tax_total
-    db.add(OrderStatusHistory(order_id=order.id, status=order.status, changed_by_user_id=user.id, note="Pedido enviado desde el portal"))
-    db.add(Notification(customer_id=legacy_customer_id(user), customer_code=customer_code, user_id=user.id, title="Pedido recibido", message=f"Hemos recibido el pedido {order.order_number}."))
-    db.add(IntegrationOutbox(aggregate_type="ORDER", aggregate_id=order.public_id, event_type="ORDER_CREATED",
-                             payload={"order_number": order.order_number, "customer_erp_id": customer_code, "store": store.code}, sync_status=SyncStatus.pending))
+    history_note = "Pedido guardado como borrador" if data.draft else "Pedido enviado desde el portal"
+    db.add(OrderStatusHistory(order_id=order.id, status=order.status, changed_by_user_id=user.id, note=history_note))
+    if not data.draft:
+        db.add(Notification(customer_id=legacy_customer_id(user), customer_code=customer_code, user_id=user.id, title="Pedido recibido", message=f"Hemos recibido el pedido {order.order_number}."))
+        db.add(IntegrationOutbox(aggregate_type="ORDER", aggregate_id=order.public_id, event_type="ORDER_CREATED",
+                                 payload={"order_number": order.order_number, "customer_erp_id": customer_code, "store": store.code}, sync_status=SyncStatus.pending))
     cart.status = "CONVERTED"
     audit(db, user, "ORDER_CREATED", "ORDER", order.public_id, {"number": order.order_number, "store": store.code})
     db.commit(); return order_payload(order, db, True)
+
+
+def customer_order(order_id: str, user: User, db: Session) -> Order:
+    customer_for(user, db); customer_code = customer_code_for(user, db)
+    condition = Order.customer_code == customer_code
+    if user.customer_id:
+        condition = condition | (Order.customer_id == user.customer_id)
+    order = db.scalar(select(Order).where(Order.public_id == order_id, condition))
+    if not order:
+        raise HTTPException(404, "Pedido no encontrado")
+    return order
+
+
+@app.post("/api/v1/orders/{order_id}/submit")
+def submit_draft_order(order_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    order = customer_order(order_id, user, db)
+    if order.status != OrderStatus.draft:
+        raise HTTPException(409, "Solo se puede enviar un pedido que esté en borrador")
+    order.status = OrderStatus.sent
+    order.estado_registro_exit = "PENDIENTE"
+    order.sync_status = SyncStatus.pending
+    store = db.get(Store, order.store_id)
+    db.add(OrderStatusHistory(order_id=order.id, status=order.status, changed_by_user_id=user.id, note="Borrador enviado desde el portal"))
+    db.add(Notification(customer_id=legacy_customer_id(user), customer_code=order.customer_code, user_id=user.id,
+                        title="Pedido recibido", message=f"Hemos recibido el pedido {order.order_number}."))
+    db.add(IntegrationOutbox(aggregate_type="ORDER", aggregate_id=order.public_id, event_type="ORDER_CREATED",
+                             payload={"order_number": order.order_number, "customer_erp_id": order.customer_code,
+                                      "store": store.code if store else ""}, sync_status=SyncStatus.pending))
+    audit(db, user, "ORDER_SUBMITTED", "ORDER", order.public_id, {"number": order.order_number})
+    db.commit()
+    return order_payload(order, db, True)
+
+
+@app.delete("/api/v1/orders/{order_id}")
+def delete_order(order_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    order = customer_order(order_id, user, db)
+    deletable = order.status in {OrderStatus.draft, OrderStatus.sent} and not order.nro_pedido_exit
+    if not deletable:
+        raise HTTPException(409, "Solo se pueden eliminar pedidos en borrador o pendientes que todavía no estén registrados en EXIT")
+    number = order.order_number
+    audit(db, user, "ORDER_DELETED", "ORDER", order.public_id, {"number": number, "status": order.status.value})
+    for event in db.scalars(select(IntegrationOutbox).where(
+        IntegrationOutbox.aggregate_type == "ORDER",
+        IntegrationOutbox.aggregate_id == order.public_id,
+    )).all():
+        db.delete(event)
+    db.delete(order)
+    db.commit()
+    return {"ok": True, "number": number}
 
 
 @app.get("/api/v1/orders")
