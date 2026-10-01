@@ -309,6 +309,8 @@ PostgreSQL conserva los pedidos nacidos en la web. `orders.order_number` es su n
 
 La pantalla de comandas no duplica pedidos de EXIT en PostgreSQL: consulta cabecera y líneas directamente en SQL Server.
 
+La sección **Albaranes y facturas** consulta ambos tipos de documentos directamente en EXIT y los separa en pestañas. Cada documento permite descargar una representación PDF, mientras que el listado activo se puede exportar a Excel o imprimir con los filtros de número, fecha y estado aplicados.
+
 ### Pedidos pendientes de EXIT para Operaciones
 
 El lector usa `dbo.PedidoVentaCabecera` y `dbo.PedidoVentaLineas`. Solo proyecta cabeceras que cumplan `IdDelegacion = '00'`, `StatusPedido = 'S'` y `PorcentajePendiente <> 100`. En cada comanda separa las líneas mediante `ex_tipopedvlinkardex`: `KARDEX` aparece como preparación de Kardex y `SGA` como preparación de estantes/SGA.

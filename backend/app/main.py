@@ -1,11 +1,16 @@
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from functools import lru_cache
+from io import BytesIO
 import logging
 import secrets
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from openpyxl import Workbook
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -506,6 +511,82 @@ def delivery_notes(user: User = Depends(current_user), db: Session = Depends(get
 def invoices(user: User = Depends(current_user), db: Session = Depends(get_db)):
     customer_for(user, db)
     return fetch_customer_invoices(customer_code_for(user, db))
+
+
+def customer_documents(kind: str, user: User, db: Session) -> tuple[str, list[dict]]:
+    customer_for(user, db)
+    code = customer_code_for(user, db)
+    normalized = kind.strip().upper()
+    if normalized == "ALBARAN":
+        return normalized, fetch_customer_delivery_notes(code, 1000)
+    if normalized == "FACTURA":
+        return normalized, fetch_customer_invoices(code, 1000)
+    raise HTTPException(404, "Tipo de documento no válido")
+
+
+@app.get("/api/v1/documents/{kind}/{document_id}/file")
+def document_file(kind: str, document_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    normalized, rows = customer_documents(kind, user, db)
+    row = next((item for item in rows if item["id"] == document_id), None)
+    if not row:
+        raise HTTPException(404, "Documento no encontrado")
+    output = BytesIO()
+    pdf = canvas.Canvas(output, pagesize=A4)
+    width, height = A4
+    pdf.setTitle(f'{normalized} {row["number"]}')
+    pdf.setFont("Helvetica-Bold", 18); pdf.drawString(45, height - 55, "Bermúdez Ulloa")
+    pdf.setFont("Helvetica-Bold", 14); pdf.drawString(45, height - 88, f'{normalized} {row["number"]}')
+    labels = [
+        ("Fecha", row.get("created_at")), ("Estado", row.get("status")),
+        ("Delegación", row.get("store_code")), ("Pedido relacionado", row.get("order_number")),
+        ("Factura relacionada", row.get("invoice_number")), ("Vencimiento", row.get("due_date")),
+        ("Base imponible", f'{row.get("subtotal", 0):.2f} EUR'),
+        ("IVA", f'{row.get("tax_total", 0):.2f} EUR'), ("Total", f'{row.get("total", 0):.2f} EUR'),
+    ]
+    y = height - 125
+    for label, value in labels:
+        if value is None or value == "":
+            continue
+        if isinstance(value, (date, datetime)):
+            value = value.strftime("%d/%m/%Y %H:%M")
+        pdf.setFont("Helvetica-Bold", 10); pdf.drawString(45, y, f"{label}:")
+        pdf.setFont("Helvetica", 10); pdf.drawString(175, y, str(value))
+        y -= 22
+    pdf.setFont("Helvetica-Oblique", 8)
+    pdf.drawString(45, 45, "Documento generado a partir de los datos disponibles en EXIT.")
+    pdf.save(); output.seek(0)
+    safe_number = "".join(character for character in str(row["number"]) if character.isalnum() or character in "-_")
+    filename = f'{normalized.lower()}-{safe_number}.pdf'
+    return StreamingResponse(output, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@app.get("/api/v1/documents/export")
+def export_documents(kind: str, q: str = "", date_from: date | None = None, date_to: date | None = None,
+                     user: User = Depends(current_user), db: Session = Depends(get_db)):
+    normalized, rows = customer_documents(kind, user, db)
+    query = q.strip().lower()
+    def included(row: dict) -> bool:
+        raw_date = row.get("created_at")
+        row_date = raw_date.date() if isinstance(raw_date, datetime) else raw_date
+        searchable = " ".join(str(row.get(field) or "") for field in ("number", "order_number", "invoice_number", "status")).lower()
+        return ((not query or query in searchable)
+                and (not date_from or (row_date is not None and row_date >= date_from))
+                and (not date_to or (row_date is not None and row_date <= date_to)))
+    rows = [row for row in rows if included(row)]
+    workbook = Workbook(); sheet = workbook.active; sheet.title = "Albaranes" if normalized == "ALBARAN" else "Facturas"
+    headers = ["Número", "Fecha", "Estado", "Delegación", "Pedido", "Factura", "Vencimiento", "Base imponible", "IVA", "Total"]
+    sheet.append(headers)
+    for row in rows:
+        sheet.append([row.get("number"), row.get("created_at"), row.get("status"), row.get("store_code"),
+                      row.get("order_number"), row.get("invoice_number"), row.get("due_date"),
+                      row.get("subtotal"), row.get("tax_total"), row.get("total")])
+    sheet.freeze_panes = "A2"; sheet.auto_filter.ref = sheet.dimensions
+    for column, width in {"A":24,"B":20,"C":22,"D":14,"E":24,"F":24,"G":20,"H":18,"I":14,"J":16}.items():
+        sheet.column_dimensions[column].width = width
+    output = BytesIO(); workbook.save(output); output.seek(0)
+    filename = "albaranes.xlsx" if normalized == "ALBARAN" else "facturas.xlsx"
+    media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    return StreamingResponse(output, media_type=media, headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 INTEGRATION_STATUS_SEQUENCE = ["PENDIENTE", "REGISTRADO", "EN_PROCESO", "ATENDIDO", "FACTURADO"]
