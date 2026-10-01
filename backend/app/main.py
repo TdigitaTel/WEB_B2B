@@ -136,25 +136,31 @@ def order_payload(order: Order, db: Session, include_items: bool = False) -> dic
         history = db.scalars(select(OrderStatusHistory).where(OrderStatusHistory.order_id == order.id).order_by(OrderStatusHistory.created_at)).all()
         result["history"] = [{"estado_registro_exit": h.estado_registro_exit, "source": h.source, "note": h.note, "created_at": h.created_at} for h in history]
         result["documents"] = []
+        current_state = order.estado_registro_exit.strip().upper()
+        visible_stage = {
+            "BORRADOR": "PENDIENTE", "PENDIENTE": "PENDIENTE",
+            "REGISTRADO": "EN_PROCESAMIENTO", "EN_PROCESO": "EN_PROCESAMIENTO",
+            "ATENDIDO": "PENDIENTE_RECOJO", "FACTURADO": "FACTURADO",
+        }.get(current_state, "PENDIENTE")
+        stage_position = {"PENDIENTE": 0, "EN_PROCESAMIENTO": 1, "PENDIENTE_RECOJO": 2, "FACTURADO": 3}
         pending_dates = [event.created_at for event in history if event.estado_registro_exit in {"BORRADOR", "PENDIENTE"}]
         processing_dates = [event.created_at for event in history if event.estado_registro_exit in {"REGISTRADO", "EN_PROCESO"}]
         pickup_dates = [event.created_at for event in history if event.estado_registro_exit == "ATENDIDO"]
         invoice_dates = [event.created_at for event in history if event.estado_registro_exit == "FACTURADO"]
         fallback_date = order.fecha_registro_exit or order.updated_at or order.created_at
-        if not processing_dates and order.estado_registro_exit in {"REGISTRADO", "EN_PROCESO"}:
+        if not processing_dates and stage_position[visible_stage] >= 1:
             processing_dates = [fallback_date]
-        if not pickup_dates and order.estado_registro_exit == "ATENDIDO":
+        if not pickup_dates and stage_position[visible_stage] >= 2:
             pickup_dates = [fallback_date]
-        if not invoice_dates and order.estado_registro_exit == "FACTURADO":
+        if not invoice_dates and stage_position[visible_stage] >= 3:
             invoice_dates = [fallback_date]
         stage_dates = {
             "PENDIENTE": max(pending_dates) if pending_dates else order.created_at,
-            "EN_PROCESAMIENTO": max(processing_dates) if processing_dates else None,
-            "PENDIENTE_RECOJO": max(pickup_dates) if pickup_dates else None,
-            "FACTURADO": max(invoice_dates) if invoice_dates else None,
+            "EN_PROCESAMIENTO": max(processing_dates) if processing_dates and stage_position[visible_stage] >= 1 else None,
+            "PENDIENTE_RECOJO": max(pickup_dates) if pickup_dates and stage_position[visible_stage] >= 2 else None,
+            "FACTURADO": max(invoice_dates) if invoice_dates and stage_position[visible_stage] >= 3 else None,
         }
         result["workflow"] = [{"etapa": etapa, "completed_at": completed_at} for etapa, completed_at in stage_dates.items()]
-        result["etapa_visible"] = next((row["etapa"] for row in reversed(result["workflow"]) if row["completed_at"]), "PENDIENTE")
     return result
 
 
