@@ -165,8 +165,10 @@ INTEGRATION_API_KEY=una_clave_larga_y_aleatoria
 
 Las aplicaciones externas pueden actualizar un pedido por su número B2B o por su número EXIT. El endpoint guarda una fila en `order_status_history` por cada cambio y completa estados intermedios cuando recibe un salto hacia adelante.
 
+`orders.estado_registro_exit` es el único campo de estado del pedido. El histórico usa el campo del mismo nombre en `order_status_history`. La escritura se realiza mediante el código de la API, en la misma transacción; PostgreSQL no utiliza triggers para este flujo. Una actualización SQL directa no genera histórico.
+
 ```http
-PATCH /api/v1/integrations/orders/status
+PATCH /api/v1/integrations/orders/estado
 Content-Type: application/json
 X-Integration-Key: una_clave_larga_y_aleatoria
 ```
@@ -174,7 +176,7 @@ X-Integration-Key: una_clave_larga_y_aleatoria
 ```json
 {
   "order_number": "WEB-2026-0000001",
-  "status": "REGISTRADO",
+  "estado_registro_exit": "REGISTRADO",
   "source": "TRIGGER_EXIT",
   "note": "Pedido creado en EXIT",
   "nro_pedido_exit": "2026/AL/6006200",

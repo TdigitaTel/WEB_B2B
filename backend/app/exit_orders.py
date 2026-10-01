@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from .models import Order, OrderItem, OrderStatus, OrderStatusHistory, Product, Store, SyncStatus, User
+from .models import Order, OrderItem, OrderStatusHistory, Product, Store, SyncStatus, User
 
 
 class ExitOrderLineInput(BaseModel):
@@ -34,7 +34,7 @@ class ExitOrderInput(BaseModel):
     order_number: str
     customer_code: str
     store_code: str
-    status: str
+    estado_registro_exit: str
     source_status: str | None = None
     source_created_by: str | None = None
     source_updated_at: datetime
@@ -53,10 +53,9 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
     store = db.scalar(select(Store).where(Store.code == incoming.store_code, Store.active.is_(True)))
     if not store:
         raise ValueError(f"Almacén interno desconocido: {incoming.store_code}")
-    try:
-        status = OrderStatus(incoming.status)
-    except ValueError as exc:
-        raise ValueError(f"Estado EXIT no mapeado: {incoming.status}") from exc
+    estado_registro_exit = incoming.estado_registro_exit.strip().upper()
+    if estado_registro_exit not in {"PENDIENTE", "REGISTRADO", "EN_PROCESO", "ATENDIDO", "FACTURADO"}:
+        raise ValueError(f"Estado EXIT no mapeado: {incoming.estado_registro_exit}")
 
     order = db.scalar(select(Order).where(Order.nro_pedido_exit == incoming.exit_order_id))
     if not order and incoming.web_order_number:
@@ -69,11 +68,10 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
             customer_code=incoming.customer_code,
             user_id=integration_user.id,
             store_id=store.id,
-            status=status,
             nro_pedido_exit=incoming.exit_order_id,
             fecha_registro_exit=incoming.recorded_at,
             origen_pedido="EXIT",
-            estado_registro_exit=incoming.source_status or incoming.status,
+            estado_registro_exit=estado_registro_exit,
             sync_status=SyncStatus.synced,
         )
         db.add(order)
@@ -82,18 +80,17 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
     # la fecha de modificación de la cabecera avance. Por eso se refrescan siempre
     # las líneas del pedido durante la sincronización.
 
-    previous_status = order.status
+    previous_status = order.estado_registro_exit
     first_exit_registration = is_new or not order.nro_pedido_exit
     order.nro_pedido_exit = incoming.exit_order_id
     order.fecha_registro_exit = incoming.recorded_at or order.fecha_registro_exit
-    order.estado_registro_exit = incoming.source_status or incoming.status
+    order.estado_registro_exit = estado_registro_exit
     if is_new:
         order.origen_pedido = "EXIT"
     if incoming.recorded_at:
         order.created_at = incoming.recorded_at
     order.customer_code = incoming.customer_code
     order.store_id = store.id
-    order.status = status
     order.customer_reference = incoming.customer_reference
     order.job_name = incoming.job_name
     order.notes = incoming.notes
@@ -114,15 +111,15 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
                          served_quantity=line.served_quantity, pending_quantity=line.pending_quantity))
     if first_exit_registration:
         registered_at = incoming.recorded_at or incoming.source_updated_at
-        db.add(OrderStatusHistory(order_id=order.id, status=OrderStatus.registered,
-                                  changed_by_user_id=integration_user.id, source="EXIT",
-                                  note="Pedido registrado en EXIT", created_at=registered_at))
-        if status == OrderStatus.attended:
-            db.add(OrderStatusHistory(order_id=order.id, status=OrderStatus.processing,
+        exit_steps = ["REGISTRADO", "EN_PROCESO", "ATENDIDO", "FACTURADO"]
+        steps_to_record = (exit_steps[:exit_steps.index(estado_registro_exit) + 1]
+                           if estado_registro_exit in exit_steps else [estado_registro_exit])
+        for step in steps_to_record:
+            db.add(OrderStatusHistory(order_id=order.id, estado_registro_exit=step,
                                       changed_by_user_id=integration_user.id, source="EXIT",
-                                      note="Pedido procesado en EXIT", created_at=registered_at))
-    if is_new or previous_status != status:
-        db.add(OrderStatusHistory(order_id=order.id, status=status, changed_by_user_id=integration_user.id, source="EXIT",
+                                      note="Estado recibido desde EXIT", created_at=registered_at))
+    elif previous_status != estado_registro_exit:
+        db.add(OrderStatusHistory(order_id=order.id, estado_registro_exit=estado_registro_exit, changed_by_user_id=integration_user.id, source="EXIT",
                                   note="Estado recibido desde EXIT", created_at=incoming.source_updated_at))
     return order
 

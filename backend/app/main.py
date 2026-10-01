@@ -21,14 +21,13 @@ from .exit_db import fetch_exit_orders_live
 from .models import (
     Cart, CartItem, Customer, IntegrationOutbox, Notification,
     MaterialArea, MaterialFamily, MaterialProductType, MaterialSubfamily, Order, OrderItem,
-    OrderStatus, OrderStatusHistory, Product, ProfessionalRegistrationRequest, Store, SyncStatus, User,
+    OrderStatusHistory, Product, ProfessionalRegistrationRequest, Store, SyncStatus, User,
 )
 from .schemas import CartItemIn, CartItemUpdate, ExternalStatusChange, LoginIn, OrderCreate, StatusChange
 from .services import PostgresCatalogService, product_view
 
 app = FastAPI(title="Bermúdez B2B API", version="1.0.0", openapi_url="/api/v1/openapi.json", docs_url="/docs")
 logger = logging.getLogger(__name__)
-
 
 @lru_cache(maxsize=2000)
 def exit_customer_name(code: str) -> str:
@@ -114,7 +113,7 @@ def order_payload(order: Order, db: Session, include_items: bool = False) -> dic
         except Exception:
             logger.exception("No se pudo enriquecer el pedido con el cliente EXITERP %s", order.customer_code)
     creator = db.get(User, order.user_id)
-    result = {"id": order.public_id, "number": order.order_number, "status": order.status.value,
+    result = {"id": order.public_id, "number": order.order_number,
               "store": store.name, "store_code": store.code, "customer_code": order.customer_code, "customer_reference": order.customer_reference,
               "job_name": order.job_name, "notes": order.notes, "subtotal": float(order.subtotal),
               "tax_total": float(order.tax_total), "total": float(order.total), "created_at": order.created_at,
@@ -135,26 +134,18 @@ def order_payload(order: Order, db: Session, include_items: bool = False) -> dic
                                     "unit_price": float(item.unit_price), "line_total": float(item.line_total),
                                     "fulfillment_zone": item.fulfillment_zone or "OTROS"})
         history = db.scalars(select(OrderStatusHistory).where(OrderStatusHistory.order_id == order.id).order_by(OrderStatusHistory.created_at)).all()
-        result["history"] = [{"status": h.status.value, "source": h.source, "note": h.note, "created_at": h.created_at} for h in history]
+        result["history"] = [{"estado_registro_exit": h.estado_registro_exit, "source": h.source, "note": h.note, "created_at": h.created_at} for h in history]
         result["documents"] = []
-        pending_dates = [event.created_at for event in history if event.status in {OrderStatus.draft, OrderStatus.pending, OrderStatus.sent}]
-        processing_dates = [event.created_at for event in history if event.status in {
-            OrderStatus.registered, OrderStatus.processing, OrderStatus.received,
-            OrderStatus.preparing, OrderStatus.partial,
-        }]
-        pickup_dates = [event.created_at for event in history if event.status in {
-            OrderStatus.attended, OrderStatus.ready, OrderStatus.delivered,
-        }]
-        invoice_dates = [event.created_at for event in history if event.status == OrderStatus.invoiced]
+        pending_dates = [event.created_at for event in history if event.estado_registro_exit in {"BORRADOR", "PENDIENTE"}]
+        processing_dates = [event.created_at for event in history if event.estado_registro_exit in {"REGISTRADO", "EN_PROCESO"}]
+        pickup_dates = [event.created_at for event in history if event.estado_registro_exit == "ATENDIDO"]
+        invoice_dates = [event.created_at for event in history if event.estado_registro_exit == "FACTURADO"]
         fallback_date = order.fecha_registro_exit or order.updated_at or order.created_at
-        if not processing_dates and order.status in {
-            OrderStatus.registered, OrderStatus.processing, OrderStatus.received,
-            OrderStatus.preparing, OrderStatus.partial,
-        }:
+        if not processing_dates and order.estado_registro_exit in {"REGISTRADO", "EN_PROCESO"}:
             processing_dates = [fallback_date]
-        if not pickup_dates and order.status in {OrderStatus.attended, OrderStatus.ready, OrderStatus.delivered}:
+        if not pickup_dates and order.estado_registro_exit == "ATENDIDO":
             pickup_dates = [fallback_date]
-        if not invoice_dates and order.status == OrderStatus.invoiced:
+        if not invoice_dates and order.estado_registro_exit == "FACTURADO":
             invoice_dates = [fallback_date]
         stage_dates = {
             "PENDIENTE": max(pending_dates) if pending_dates else order.created_at,
@@ -162,8 +153,8 @@ def order_payload(order: Order, db: Session, include_items: bool = False) -> dic
             "PENDIENTE_RECOJO": max(pickup_dates) if pickup_dates else None,
             "FACTURADO": max(invoice_dates) if invoice_dates else None,
         }
-        result["workflow"] = [{"status": status, "completed_at": completed_at} for status, completed_at in stage_dates.items()]
-        result["workflow_status"] = next((row["status"] for row in reversed(result["workflow"]) if row["completed_at"]), "PENDIENTE")
+        result["workflow"] = [{"etapa": etapa, "completed_at": completed_at} for etapa, completed_at in stage_dates.items()]
+        result["etapa_visible"] = next((row["etapa"] for row in reversed(result["workflow"]) if row["completed_at"]), "PENDIENTE")
     return result
 
 
@@ -375,9 +366,9 @@ def create_order(data: OrderCreate, user: User = Depends(current_user), db: Sess
     rows = db.execute(select(CartItem, Product).join(Product, Product.id == CartItem.product_id).where(CartItem.cart_id == cart.id)).all()
     if not rows: raise HTTPException(400, "El pedido está vacío")
     prices = _erp_unit_prices([product for _, product in rows])
-    initial_status = OrderStatus.draft if data.draft else OrderStatus.pending
+    initial_status = "BORRADOR" if data.draft else "PENDIENTE"
     order = Order(order_number=f"TMP-{cart.public_id[:20]}", customer_id=legacy_customer_id(user), customer_code=customer_code, user_id=user.id, store_id=store.id,
-                  status=initial_status, origen_pedido="B2B", estado_registro_exit="BORRADOR" if data.draft else "PENDIENTE",
+                  origen_pedido="B2B", estado_registro_exit=initial_status,
                   customer_reference=data.customer_reference, job_name=data.job_name, notes=data.notes,
                   subtotal=0, tax_total=0, total=0, sync_status=SyncStatus.pending)
     db.add(order); db.flush(); order.order_number = f"WEB-{datetime.now().year}-{order.id:07d}"
@@ -390,7 +381,7 @@ def create_order(data: OrderCreate, user: User = Depends(current_user), db: Sess
         db.delete(cart_item)
     order.subtotal = subtotal; order.tax_total = (subtotal * Decimal("0.21")).quantize(Decimal("0.01")); order.total = order.subtotal + order.tax_total
     history_note = "Pedido guardado como borrador" if data.draft else "Pedido enviado desde el portal"
-    db.add(OrderStatusHistory(order_id=order.id, status=order.status, changed_by_user_id=user.id, source="WEB", note=history_note))
+    db.add(OrderStatusHistory(order_id=order.id, estado_registro_exit=initial_status, changed_by_user_id=user.id, source="WEB", note=history_note))
     if not data.draft:
         db.add(Notification(customer_id=legacy_customer_id(user), customer_code=customer_code, user_id=user.id, title="Pedido recibido", message=f"Hemos recibido el pedido {order.order_number}."))
         db.add(IntegrationOutbox(aggregate_type="ORDER", aggregate_id=order.public_id, event_type="ORDER_CREATED",
@@ -414,13 +405,12 @@ def customer_order(order_id: str, user: User, db: Session) -> Order:
 @app.post("/api/v1/orders/{order_id}/submit")
 def submit_draft_order(order_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
     order = customer_order(order_id, user, db)
-    if order.status != OrderStatus.draft:
+    if order.estado_registro_exit != "BORRADOR":
         raise HTTPException(409, "Solo se puede enviar un pedido que esté en borrador")
-    order.status = OrderStatus.pending
     order.estado_registro_exit = "PENDIENTE"
     order.sync_status = SyncStatus.pending
     store = db.get(Store, order.store_id)
-    db.add(OrderStatusHistory(order_id=order.id, status=order.status, changed_by_user_id=user.id, source="WEB", note="Borrador enviado desde el portal"))
+    db.add(OrderStatusHistory(order_id=order.id, estado_registro_exit="PENDIENTE", changed_by_user_id=user.id, source="WEB", note="Borrador enviado desde el portal"))
     db.add(Notification(customer_id=legacy_customer_id(user), customer_code=order.customer_code, user_id=user.id,
                         title="Pedido recibido", message=f"Hemos recibido el pedido {order.order_number}."))
     db.add(IntegrationOutbox(aggregate_type="ORDER", aggregate_id=order.public_id, event_type="ORDER_CREATED",
@@ -434,11 +424,11 @@ def submit_draft_order(order_id: str, user: User = Depends(current_user), db: Se
 @app.delete("/api/v1/orders/{order_id}")
 def delete_order(order_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
     order = customer_order(order_id, user, db)
-    deletable = order.status in {OrderStatus.draft, OrderStatus.pending, OrderStatus.sent} and not order.nro_pedido_exit
+    deletable = order.estado_registro_exit in {"BORRADOR", "PENDIENTE"} and not order.nro_pedido_exit
     if not deletable:
         raise HTTPException(409, "Solo se pueden eliminar pedidos en borrador o pendientes que todavía no estén registrados en EXIT")
     number = order.order_number
-    audit(db, user, "ORDER_DELETED", "ORDER", order.public_id, {"number": number, "status": order.status.value})
+    audit(db, user, "ORDER_DELETED", "ORDER", order.public_id, {"number": number, "estado_registro_exit": order.estado_registro_exit})
     for event in db.scalars(select(IntegrationOutbox).where(
         IntegrationOutbox.aggregate_type == "ORDER",
         IntegrationOutbox.aggregate_id == order.public_id,
@@ -498,22 +488,7 @@ def invoices(user: User = Depends(current_user), db: Session = Depends(get_db)):
     return fetch_customer_invoices(customer_code_for(user, db))
 
 
-INTEGRATION_STATUS_SEQUENCE = [
-    OrderStatus.pending,
-    OrderStatus.registered,
-    OrderStatus.processing,
-    OrderStatus.attended,
-    OrderStatus.invoiced,
-]
-INTEGRATION_LEGACY_STATUS = {
-    OrderStatus.draft: OrderStatus.pending,
-    OrderStatus.sent: OrderStatus.pending,
-    OrderStatus.received: OrderStatus.registered,
-    OrderStatus.preparing: OrderStatus.processing,
-    OrderStatus.partial: OrderStatus.processing,
-    OrderStatus.ready: OrderStatus.attended,
-    OrderStatus.delivered: OrderStatus.attended,
-}
+INTEGRATION_STATUS_SEQUENCE = ["PENDIENTE", "REGISTRADO", "EN_PROCESO", "ATENDIDO", "FACTURADO"]
 
 
 def require_integration_key(x_integration_key: str | None = Header(default=None)):
@@ -524,7 +499,7 @@ def require_integration_key(x_integration_key: str | None = Header(default=None)
         raise HTTPException(401, "Clave de integración incorrecta")
 
 
-@app.patch("/api/v1/integrations/orders/status")
+@app.patch("/api/v1/integrations/orders/estado")
 def update_order_status_from_integration(
     data: ExternalStatusChange,
     _: None = Depends(require_integration_key),
@@ -536,24 +511,24 @@ def update_order_status_from_integration(
     ))
     if not order:
         raise HTTPException(404, "Pedido no encontrado")
-    try:
-        requested = OrderStatus(data.status.strip().upper())
-    except ValueError as exc:
-        allowed = ", ".join(status.value for status in INTEGRATION_STATUS_SEQUENCE)
-        raise HTTPException(422, f"Estado no válido. Valores admitidos: {allowed}") from exc
+    requested = data.estado_registro_exit.strip().upper()
     if requested not in INTEGRATION_STATUS_SEQUENCE:
-        raise HTTPException(422, "La API externa solo admite estados del flujo operativo")
+        allowed = ", ".join(INTEGRATION_STATUS_SEQUENCE)
+        raise HTTPException(422, f"Estado no válido. Valores admitidos: {allowed}")
     source = data.source.strip().upper()
     if not source:
         raise HTTPException(422, "El origen de la actualización es obligatorio")
 
-    current = INTEGRATION_LEGACY_STATUS.get(order.status, order.status)
-    if order.status != OrderStatus.draft and current not in INTEGRATION_STATUS_SEQUENCE:
-        raise HTTPException(409, f"El pedido está en un estado no actualizable: {order.status.value}")
-    current_index = -1 if order.status == OrderStatus.draft else INTEGRATION_STATUS_SEQUENCE.index(current)
+    current = order.estado_registro_exit
+    if current == "BORRADOR":
+        current_index = -1
+    elif current in INTEGRATION_STATUS_SEQUENCE:
+        current_index = INTEGRATION_STATUS_SEQUENCE.index(current)
+    else:
+        raise HTTPException(409, f"El pedido está en un estado no actualizable: {current}")
     requested_index = INTEGRATION_STATUS_SEQUENCE.index(requested)
     if requested_index < current_index:
-        raise HTTPException(409, f"No se puede retroceder de {current.value} a {requested.value}")
+        raise HTTPException(409, f"No se puede retroceder de {current} a {requested}")
     if requested_index == current_index:
         return {"changed": False, "order": order_payload(order, db, True)}
 
@@ -561,35 +536,29 @@ def update_order_status_from_integration(
     for status in INTEGRATION_STATUS_SEQUENCE[current_index + 1:requested_index + 1]:
         db.add(OrderStatusHistory(
             order_id=order.id,
-            status=status,
+            estado_registro_exit=status,
             changed_by_user_id=None,
             source=source,
             note=data.note or f"Estado actualizado por {source}",
             created_at=data.occurred_at or datetime.now(timezone.utc),
         ))
-        recorded.append(status.value)
-    order.status = requested
+        recorded.append(status)
+    order.estado_registro_exit = requested
     if data.nro_pedido_exit:
         order.nro_pedido_exit = data.nro_pedido_exit.strip()
         order.fecha_registro_exit = data.occurred_at or order.fecha_registro_exit or datetime.now(timezone.utc)
-    if requested in {OrderStatus.registered, OrderStatus.processing, OrderStatus.attended, OrderStatus.invoiced}:
-        order.estado_registro_exit = requested.value
     audit(db, None, "ORDER_STATUS_CHANGED_BY_INTEGRATION", "ORDER", order.public_id,
-          {"status": requested.value, "source": data.source, "recorded": recorded})
+          {"estado_registro_exit": requested, "source": data.source, "recorded": recorded})
     db.commit()
     return {"changed": True, "recorded_statuses": recorded, "order": order_payload(order, db, True)}
 
 
 ALLOWED_TRANSITIONS = {
-    OrderStatus.pending: {OrderStatus.registered, OrderStatus.cancelled},
-    OrderStatus.registered: {OrderStatus.processing, OrderStatus.cancelled},
-    OrderStatus.processing: {OrderStatus.attended, OrderStatus.cancelled},
-    OrderStatus.attended: {OrderStatus.invoiced},
-    OrderStatus.sent: {OrderStatus.received, OrderStatus.cancelled},
-    OrderStatus.received: {OrderStatus.preparing, OrderStatus.cancelled},
-    OrderStatus.preparing: {OrderStatus.partial, OrderStatus.ready, OrderStatus.cancelled},
-    OrderStatus.partial: {OrderStatus.preparing, OrderStatus.ready},
-    OrderStatus.ready: {OrderStatus.delivered},
+    "BORRADOR": {"PENDIENTE"},
+    "PENDIENTE": {"REGISTRADO"},
+    "REGISTRADO": {"EN_PROCESO"},
+    "EN_PROCESO": {"ATENDIDO"},
+    "ATENDIDO": {"FACTURADO"},
 }
 
 
@@ -605,14 +574,14 @@ def store_orders(view: str = Query("active_kardex", pattern="^(active_kardex|act
         except Exception:
             customer_names[code] = code
     return [{
-        "id": record.exit_order_id, "number": record.order_number, "status": record.status,
+        "id": record.exit_order_id, "number": record.order_number,
         "store": "Almeiras", "store_code": "00", "customer_code": record.customer_code,
         "customer": customer_names.get(record.customer_code, record.customer_code),
         "created_by": record.source_created_by or "EXIT", "created_at": record.recorded_at,
         "customer_reference": record.customer_reference, "notes": record.notes,
         "subtotal": float(record.subtotal), "tax_total": float(record.tax_total), "total": float(record.total),
         "nro_pedido_exit": record.exit_order_id, "fecha_registro_exit": record.recorded_at,
-        "origen_pedido": "EXIT", "estado_registro_exit": record.source_status,
+        "origen_pedido": "EXIT", "estado_registro_exit": record.estado_registro_exit,
         "items": [{"sku": line.sku, "description": line.description, "quantity": float(line.quantity),
                    "served_quantity": float(line.served_quantity or 0),
                    "pending_quantity": float(line.pending_quantity or 0), "unit": line.unit,
@@ -625,12 +594,13 @@ def store_orders(view: str = Query("active_kardex", pattern="^(active_kardex|act
 def transition(order_id: str, data: StatusChange, user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
     order = db.scalar(select(Order).where(Order.public_id == order_id))
     if not order or (user.role == "OPERADOR_TIENDA" and order.store_id != user.store_id): raise HTTPException(404, "Pedido no encontrado")
-    try: new_status = OrderStatus(data.status)
-    except ValueError as exc: raise HTTPException(422, "Estado no válido") from exc
-    if new_status not in ALLOWED_TRANSITIONS.get(order.status, set()): raise HTTPException(409, f"No se puede pasar de {order.status.value} a {new_status.value}")
-    order.status = new_status; db.add(OrderStatusHistory(order_id=order.id, status=new_status, changed_by_user_id=user.id, source="WEB", note=data.note))
+    new_status = data.estado_registro_exit.strip().upper()
+    if new_status not in ALLOWED_TRANSITIONS.get(order.estado_registro_exit, set()):
+        raise HTTPException(409, f"No se puede pasar de {order.estado_registro_exit} a {new_status}")
+    order.estado_registro_exit = new_status
+    db.add(OrderStatusHistory(order_id=order.id, estado_registro_exit=new_status, changed_by_user_id=user.id, source="WEB", note=data.note))
     db.add(IntegrationOutbox(aggregate_type="ORDER", aggregate_id=order.public_id, event_type="ORDER_STATUS_CHANGED",
-                             payload={"order_number": order.order_number, "nro_pedido_exit": order.nro_pedido_exit, "status": new_status.value}, sync_status=SyncStatus.pending))
-    db.add(Notification(customer_id=order.customer_id, customer_code=order.customer_code, title=f"Pedido {order.order_number}", message=f"Nuevo estado: {new_status.value.replace('_', ' ')}"))
-    audit(db, user, "ORDER_STATUS_CHANGED", "ORDER", order.public_id, {"status": new_status.value}); db.commit()
+                             payload={"order_number": order.order_number, "nro_pedido_exit": order.nro_pedido_exit, "estado_registro_exit": new_status}, sync_status=SyncStatus.pending))
+    db.add(Notification(customer_id=order.customer_id, customer_code=order.customer_code, title=f"Pedido {order.order_number}", message=f"Nuevo estado: {new_status.replace('_', ' ')}"))
+    audit(db, user, "ORDER_STATUS_CHANGED", "ORDER", order.public_id, {"estado_registro_exit": new_status}); db.commit()
     return order_payload(order, db, True)

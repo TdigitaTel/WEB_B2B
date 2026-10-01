@@ -19,22 +19,6 @@ class SyncStatus(str, enum.Enum):
     error = "ERROR"
 
 
-class OrderStatus(str, enum.Enum):
-    draft = "BORRADOR"
-    pending = "PENDIENTE"
-    registered = "REGISTRADO"
-    processing = "EN_PROCESO"
-    attended = "ATENDIDO"
-    invoiced = "FACTURADO"
-    sent = "ENVIADO"
-    received = "RECIBIDO_POR_TIENDA"
-    preparing = "EN_PREPARACION"
-    partial = "PARCIALMENTE_PREPARADO"
-    ready = "LISTO_PARA_RECOGER"
-    delivered = "ENTREGADO"
-    cancelled = "CANCELADO"
-
-
 class TimestampMixin:
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -234,8 +218,7 @@ class Order(Base, TimestampMixin):
     nro_pedido_exit: Mapped[str | None] = mapped_column(String(80), index=True)
     fecha_registro_exit: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     origen_pedido: Mapped[str] = mapped_column(String(20), default="B2B", index=True)
-    estado_registro_exit: Mapped[str | None] = mapped_column(String(80))
-    status: Mapped[OrderStatus] = mapped_column(Enum(OrderStatus), index=True)
+    estado_registro_exit: Mapped[str] = mapped_column(String(80), default="PENDIENTE", index=True)
     customer_reference: Mapped[str | None] = mapped_column(String(100))
     job_name: Mapped[str | None] = mapped_column(String(160), index=True)
     notes: Mapped[str | None] = mapped_column(Text)
@@ -244,7 +227,7 @@ class Order(Base, TimestampMixin):
     total: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
     sync_status: Mapped[SyncStatus] = mapped_column(Enum(SyncStatus), default=SyncStatus.pending)
     __table_args__ = (
-        Index("ix_orders_store_status_created", "store_id", "status", "created_at"),
+        Index("ix_orders_store_created", "store_id", "created_at"),
         Index("ux_orders_nro_pedido_exit", "nro_pedido_exit", unique=True),
     )
 
@@ -271,7 +254,7 @@ class OrderStatusHistory(Base):
     __tablename__ = "order_status_history"
     id: Mapped[int] = mapped_column(primary_key=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"), index=True)
-    status: Mapped[OrderStatus] = mapped_column(Enum(OrderStatus))
+    estado_registro_exit: Mapped[str] = mapped_column(String(80), index=True)
     changed_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     source: Mapped[str] = mapped_column(String(20), default="WEB")
     note: Mapped[str | None] = mapped_column(Text)

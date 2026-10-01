@@ -238,7 +238,7 @@ def fetch_exit_orders_live(view: str = "active_kardex", date_from: date | None =
         result.append(ExitOrderInput(
             exit_order_id=external_id, order_number=f"EXIT-{year}-{series}-{number}"[:40],
             customer_code=str(row.get("customer") or "").strip(), store_code="ALM",
-            status=local_status, source_status=source_status, source_created_by=str(row.get("created_by") or "").strip() or None,
+            estado_registro_exit=local_status, source_status=source_status, source_created_by=str(row.get("created_by") or "").strip() or None,
             source_updated_at=updated_at, recorded_at=recorded_at, customer_reference=str(row.get("reference") or "").strip() or None,
             notes=str(row.get("notes") or "").strip() or None, subtotal=_decimal(row.get("subtotal")),
             tax_total=max(Decimal("0"), _decimal(row.get("total"))-_decimal(row.get("subtotal"))), total=_decimal(row.get("total")),

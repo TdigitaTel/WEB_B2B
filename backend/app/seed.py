@@ -8,7 +8,7 @@ from .config import settings
 from .db import SessionLocal
 from .models import (
     Brand, Category, Customer,
-    Order, OrderItem, OrderStatus, OrderStatusHistory, Product, Store, SyncStatus, User,
+    Order, OrderItem, OrderStatusHistory, Product, Store, SyncStatus, User,
 )
 
 
@@ -151,13 +151,13 @@ def seed():
         customers = db.scalars(select(Customer).order_by(Customer.id)).all()
         users_by_customer = {u.customer_id: u for u in db.scalars(select(User).where(User.customer_id.is_not(None))).all()}
         sample_products = db.scalars(select(Product).order_by(Product.id).limit(500)).all()
-        statuses = [OrderStatus.received, OrderStatus.preparing, OrderStatus.ready, OrderStatus.delivered]
+        statuses = ["REGISTRADO", "EN_PROCESO", "ATENDIDO", "FACTURADO"]
         sequence = 1
         for customer in customers:
             user = users_by_customer[customer.id]
             for n in range(2):
                 order = Order(order_number=f"WEB-2026-{sequence:06d}", customer_id=customer.id, user_id=user.id,
-                              store_id=customer.usual_store_id, status=statuses[(customer.id + n) % len(statuses)],
+                              store_id=customer.usual_store_id, estado_registro_exit=statuses[(customer.id + n) % len(statuses)],
                               customer_reference=f"OBRA-{customer.id:03d}-{n+1}", job_name=f"Obra cliente {customer.id}",
                               notes="Pedido sintético de demostración", subtotal=0, tax_total=0, total=0,
                               sync_status=SyncStatus.pending)
@@ -173,7 +173,7 @@ def seed():
                                      unit_price=price, discount_pct=customer.discount_pct, tax_rate=product.tax_rate,
                                      line_total=line))
                 order.subtotal = subtotal; order.tax_total = (subtotal * Decimal("0.21")).quantize(Decimal("0.01")); order.total = order.subtotal + order.tax_total
-                db.add(OrderStatusHistory(order_id=order.id, status=order.status, changed_by_user_id=user.id, note="Estado sintético inicial"))
+                db.add(OrderStatusHistory(order_id=order.id, estado_registro_exit=order.estado_registro_exit, changed_by_user_id=user.id, note="Estado sintético inicial"))
                 sequence += 1
         db.commit()
     finally:

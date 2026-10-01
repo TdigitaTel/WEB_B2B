@@ -22,7 +22,7 @@ def test_customer_can_search_add_and_order():
     assert response.status_code == 201
     order = client.post("/api/v1/orders", json={"store_id": stores[0]["id"], "job_name": "Prueba automática"})
     assert order.status_code == 201
-    assert order.json()["status"] == "ENVIADO"
+    assert order.json()["estado_registro_exit"] == "PENDIENTE"
 
 
 def test_customer_cannot_open_another_customer_order():
@@ -54,7 +54,7 @@ def test_search_matches_separate_words():
 def test_store_operator_can_move_valid_status():
     login("operador@bermudez.test")
     orders = client.get("/api/v1/store/orders").json()
-    sent = next((order for order in orders if order["status"] == "ENVIADO"), None)
+    sent = next((order for order in orders if order["estado_registro_exit"] == "PENDIENTE"), None)
     if sent:
-        response = client.post(f"/api/v1/store/orders/{sent['id']}/transitions", json={"status": "RECIBIDO_POR_TIENDA"})
+        response = client.post(f"/api/v1/store/orders/{sent['id']}/transitions", json={"estado_registro_exit": "REGISTRADO"})
         assert response.status_code == 200

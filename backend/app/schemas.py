@@ -26,13 +26,13 @@ class OrderCreate(BaseModel):
 
 
 class StatusChange(BaseModel):
-    status: str
+    estado_registro_exit: str
     note: str | None = Field(default=None, max_length=500)
 
 
 class ExternalStatusChange(BaseModel):
     order_number: str = Field(min_length=1, max_length=80)
-    status: str
+    estado_registro_exit: str
     source: str = Field(default="EXTERNA", min_length=1, max_length=20)
     note: str | None = Field(default=None, max_length=500)
     nro_pedido_exit: str | None = Field(default=None, max_length=80)

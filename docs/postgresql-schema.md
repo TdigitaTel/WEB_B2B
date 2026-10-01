@@ -21,7 +21,7 @@ PostgreSQL conserva la seguridad, los carritos, los pedidos B2B y su trazabilida
 | `cart_items` | producto y cantidad | `cart_id → carts`, `product_id → products` |
 | `orders` | número B2B único, cliente, totales, estado y cuatro campos mínimos de integración EXIT | usuario, cliente legado y tienda |
 | `order_items` | SKU, descripción, cantidades pedida/servida/pendiente, precio, zona | `order_id → orders`, `product_id → products` |
-| `order_status_history` | estado, origen (`WEB`/`EXIT`), nota y fecha/hora | `order_id → orders`, `changed_by_user_id → users` |
+| `order_status_history` | `estado_registro_exit`, origen (`WEB`/`EXIT`), nota y fecha/hora | `order_id → orders`, `changed_by_user_id → users` |
 | `notifications` | título, mensaje y lectura | cliente/usuario |
 | `audit_events` | acción, entidad, metadatos JSON y fecha | usuario/cliente |
 | `integration_outbox` | evento, payload, estado, intentos y error | Integración asíncrona por `aggregate_id` |
@@ -51,19 +51,18 @@ La depuración elimina `customer_addresses`, `product_images`, `product_relation
 | `nro_pedido_exit` | varchar(80), único si existe | Número asignado por EXIT |
 | `fecha_registro_exit` | timestamptz | Fecha y hora de registro en EXIT |
 | `origen_pedido` | varchar(20) | `B2B` cuando nace en la web; `EXIT` cuando nace en EXIT |
-| `estado_registro_exit` | varchar(80) | Estado original comunicado por EXIT |
+| `estado_registro_exit` | varchar(80), no nulo | Único estado vigente del pedido, tanto para B2B como para EXIT |
 | `customer_code` | varchar(40) | Código del cliente en EXITERP |
 | `customer_id` | FK nullable | Compatibilidad con clientes PostgreSQL antiguos |
 | `user_id` | FK nullable | Usuario que originó o importó el registro |
 | `store_id` | FK | Delegación |
-| `status` | enum | Estado de trabajo B2B |
 | `customer_reference`, `job_name`, `notes` | texto | Datos comerciales del pedido |
 | `subtotal`, `tax_total`, `total` | numeric | Importes |
 | `created_at`, `updated_at`, `deleted_at` | timestamptz | Auditoría temporal |
 
 ## Seguimiento de estados
 
-Cada cambio genera una fila nueva en `order_status_history`; nunca se reemplaza el historial anterior. Los estados técnicos son `BORRADOR`, `PENDIENTE`, `REGISTRADO`, `EN_PROCESO`, `ATENDIDO` y `FACTURADO`. La web los agrupa así:
+Cada cambio genera una fila nueva en `order_status_history.estado_registro_exit`; nunca se reemplaza el historial anterior. `orders.estado_registro_exit` es el único estado vigente. Los valores son `BORRADOR`, `PENDIENTE`, `REGISTRADO`, `EN_PROCESO`, `ATENDIDO` y `FACTURADO`. La web los agrupa así:
 
 | Etapa visible | Estados técnicos | Fecha mostrada |
 |---|---|---|
@@ -71,6 +70,8 @@ Cada cambio genera una fila nueva en `order_status_history`; nunca se reemplaza 
 | En procesamiento | `REGISTRADO`, `EN_PROCESO` | La fecha más reciente |
 | Pendiente de recojo | `ATENDIDO` | Fecha de atención |
 | Facturado | `FACTURADO` | Fecha de facturación |
+
+El histórico se genera desde el código de la API, dentro de la misma transacción que actualiza `orders.estado_registro_exit`. No existe un trigger de PostgreSQL. Los puntos que escriben el histórico son la creación y envío de borradores, la API de integración, las transiciones internas y la incorporación de un cambio recibido desde EXIT. Por tanto, una aplicación externa debe usar la API de integración; una modificación SQL directa del campo vigente no crea automáticamente una fila histórica.
 
 ## Diagrama de relaciones
 

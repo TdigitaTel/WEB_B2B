@@ -11,11 +11,6 @@ def main():
             # create_all does not alter an existing MVP database. These additions are
             # intentionally idempotent so old installations can adopt the real catalogue.
             for statement in (
-                "ALTER TYPE orderstatus ADD VALUE IF NOT EXISTS 'pending'",
-                "ALTER TYPE orderstatus ADD VALUE IF NOT EXISTS 'registered'",
-                "ALTER TYPE orderstatus ADD VALUE IF NOT EXISTS 'processing'",
-                "ALTER TYPE orderstatus ADD VALUE IF NOT EXISTS 'attended'",
-                "ALTER TYPE orderstatus ADD VALUE IF NOT EXISTS 'invoiced'",
                 "ALTER TABLE products ADD COLUMN IF NOT EXISTS original_description TEXT",
                 "ALTER TABLE products ADD COLUMN IF NOT EXISTS material_area_id INTEGER REFERENCES material_areas(id)",
                 "ALTER TABLE products ADD COLUMN IF NOT EXISTS material_family_id INTEGER REFERENCES material_families(id)",
@@ -62,12 +57,50 @@ def main():
                 "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS fulfillment_zone VARCHAR(20)",
                 "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS pending_quantity NUMERIC(14,3)",
                 "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS served_quantity NUMERIC(14,3)",
+                "ALTER TABLE order_status_history ADD COLUMN IF NOT EXISTS estado_registro_exit VARCHAR(80)",
                 "ALTER TABLE order_status_history ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'WEB' NOT NULL",
                 "ALTER TABLE order_status_history ALTER COLUMN changed_by_user_id DROP NOT NULL",
+                """DO $$ BEGIN
+                    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='orders' AND column_name='status') THEN
+                        EXECUTE $sql$UPDATE orders SET estado_registro_exit = CASE status::text
+                            WHEN 'draft' THEN 'BORRADOR' WHEN 'pending' THEN 'PENDIENTE'
+                            WHEN 'sent' THEN 'PENDIENTE' WHEN 'registered' THEN 'REGISTRADO'
+                            WHEN 'received' THEN 'REGISTRADO' WHEN 'processing' THEN 'EN_PROCESO'
+                            WHEN 'preparing' THEN 'EN_PROCESO' WHEN 'partial' THEN 'EN_PROCESO'
+                            WHEN 'attended' THEN 'ATENDIDO' WHEN 'ready' THEN 'ATENDIDO'
+                            WHEN 'delivered' THEN 'ATENDIDO' WHEN 'invoiced' THEN 'FACTURADO'
+                            ELSE COALESCE(estado_registro_exit, 'PENDIENTE') END
+                            WHERE estado_registro_exit IS NULL OR estado_registro_exit = ''$sql$;
+                    END IF;
+                    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='order_status_history' AND column_name='status') THEN
+                        EXECUTE $sql$UPDATE order_status_history SET estado_registro_exit = CASE status::text
+                            WHEN 'draft' THEN 'BORRADOR' WHEN 'pending' THEN 'PENDIENTE'
+                            WHEN 'sent' THEN 'PENDIENTE' WHEN 'registered' THEN 'REGISTRADO'
+                            WHEN 'received' THEN 'REGISTRADO' WHEN 'processing' THEN 'EN_PROCESO'
+                            WHEN 'preparing' THEN 'EN_PROCESO' WHEN 'partial' THEN 'EN_PROCESO'
+                            WHEN 'attended' THEN 'ATENDIDO' WHEN 'ready' THEN 'ATENDIDO'
+                            WHEN 'delivered' THEN 'ATENDIDO' WHEN 'invoiced' THEN 'FACTURADO'
+                            ELSE 'PENDIENTE' END WHERE estado_registro_exit IS NULL$sql$;
+                    END IF;
+                END $$""",
+                "UPDATE orders SET estado_registro_exit='PENDIENTE' WHERE estado_registro_exit IS NULL OR estado_registro_exit=''",
+                "ALTER TABLE orders ALTER COLUMN estado_registro_exit SET DEFAULT 'PENDIENTE'",
+                "ALTER TABLE orders ALTER COLUMN estado_registro_exit SET NOT NULL",
+                "UPDATE order_status_history SET estado_registro_exit='PENDIENTE' WHERE estado_registro_exit IS NULL OR estado_registro_exit=''",
+                "ALTER TABLE order_status_history ALTER COLUMN estado_registro_exit SET NOT NULL",
+                "DROP INDEX IF EXISTS ix_orders_store_status_created",
+                "DROP INDEX IF EXISTS ix_orders_status",
+                "DROP INDEX IF EXISTS ix_order_status_history_status",
+                "ALTER TABLE orders DROP COLUMN IF EXISTS status",
+                "ALTER TABLE order_status_history DROP COLUMN IF EXISTS status",
+                "DROP TYPE IF EXISTS orderstatus",
                 "CREATE INDEX IF NOT EXISTS ix_order_status_history_order_created ON order_status_history(order_id, created_at)",
+                "CREATE INDEX IF NOT EXISTS ix_order_status_history_estado_registro_exit ON order_status_history(estado_registro_exit)",
                 "CREATE INDEX IF NOT EXISTS ix_order_items_fulfillment_zone ON order_items(fulfillment_zone)",
                 "CREATE UNIQUE INDEX IF NOT EXISTS ux_orders_nro_pedido_exit ON orders(nro_pedido_exit) WHERE nro_pedido_exit IS NOT NULL",
                 "CREATE INDEX IF NOT EXISTS ix_orders_origen_pedido ON orders(origen_pedido)",
+                "CREATE INDEX IF NOT EXISTS ix_orders_estado_registro_exit ON orders(estado_registro_exit)",
+                "CREATE INDEX IF NOT EXISTS ix_orders_store_created ON orders(store_id, created_at)",
                 "UPDATE orders SET origen_pedido = 'B2B' WHERE origen_pedido IS NULL OR origen_pedido NOT IN ('B2B', 'EXIT')",
                 "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS customer_code VARCHAR(40)",
                 "ALTER TABLE notifications ALTER COLUMN customer_id DROP NOT NULL",
@@ -107,65 +140,6 @@ def main():
             conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
             conn.execute(text("CREATE EXTENSION IF NOT EXISTS unaccent"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_products_search_trgm ON products USING gin (normalized_search gin_trgm_ops)"))
-        # Los valores nuevos del enum solo se pueden utilizar después de confirmar
-        # la transacción que ejecutó ALTER TYPE.
-        with engine.begin() as conn:
-            conn.execute(text("""
-                WITH migrated AS (
-                    UPDATE orders
-                    SET status = 'pending', estado_registro_exit = 'PENDIENTE', updated_at = NOW()
-                    WHERE nro_pedido_exit IS NULL AND status = 'sent'
-                    RETURNING id, user_id
-                )
-                INSERT INTO order_status_history
-                    (order_id, status, changed_by_user_id, source, note, created_at)
-                SELECT id, 'pending', user_id, 'WEB',
-                       'Estado anterior migrado a PENDIENTE', NOW()
-                FROM migrated
-                WHERE user_id IS NOT NULL
-            """))
-            conn.execute(text("""
-                WITH candidates AS (
-                    SELECT id, user_id,
-                           CASE UPPER(estado_registro_exit)
-                               WHEN 'REGISTRADO' THEN 'registered'::orderstatus
-                               WHEN 'EN_PROCESO' THEN 'processing'::orderstatus
-                               WHEN 'ATENDIDO' THEN 'attended'::orderstatus
-                               WHEN 'FACTURADO' THEN 'invoiced'::orderstatus
-                           END AS target_status
-                    FROM orders
-                    WHERE UPPER(COALESCE(estado_registro_exit, '')) IN
-                          ('REGISTRADO', 'EN_PROCESO', 'ATENDIDO', 'FACTURADO')
-                ), migrated AS (
-                    UPDATE orders o
-                    SET status = c.target_status, updated_at = NOW()
-                    FROM candidates c
-                    WHERE o.id = c.id AND o.status IS DISTINCT FROM c.target_status
-                    RETURNING o.id, o.user_id, o.status
-                )
-                INSERT INTO order_status_history
-                    (order_id, status, changed_by_user_id, source, note, created_at)
-                SELECT m.id, steps.status, m.user_id, 'EXIT',
-                       'Estado reparado desde estado_registro_exit', NOW()
-                FROM migrated m
-                CROSS JOIN LATERAL (
-                    VALUES
-                        ('registered'::orderstatus, 1),
-                        ('processing'::orderstatus, 2),
-                        ('attended'::orderstatus, 3),
-                        ('invoiced'::orderstatus, 4)
-                ) AS steps(status, position)
-                WHERE steps.position <= CASE m.status
-                    WHEN 'registered'::orderstatus THEN 1
-                    WHEN 'processing'::orderstatus THEN 2
-                    WHEN 'attended'::orderstatus THEN 3
-                    WHEN 'invoiced'::orderstatus THEN 4
-                END
-                AND NOT EXISTS (
-                    SELECT 1 FROM order_status_history h
-                    WHERE h.order_id = m.id AND h.status = steps.status
-                )
-            """))
     from .seed import seed
     seed()
 
