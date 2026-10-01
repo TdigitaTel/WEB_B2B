@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.bootstrap import main as bootstrap
+from app.config import settings
 from app.main import app
 
 
@@ -58,3 +59,23 @@ def test_store_operator_can_move_valid_status():
     if sent:
         response = client.post(f"/api/v1/store/orders/{sent['id']}/transitions", json={"estado_registro_exit": "REGISTRADO"})
         assert response.status_code == 200
+
+
+def test_integration_can_list_and_identify_order_by_id():
+    settings.integration_api_key = "test-integration-key"
+    headers = {"X-Integration-Key": "test-integration-key"}
+    response = client.get(
+        "/api/v1/integrations/orders?estado_registro_exit=PENDIENTE&include_items=true",
+        headers=headers,
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] >= 1
+    order = payload["items"][0]
+    update = client.patch(
+        "/api/v1/integrations/orders/estado",
+        headers=headers,
+        json={"order_id": order["id"], "estado_registro_exit": "PENDIENTE", "source": "TEST"},
+    )
+    assert update.status_code == 200
+    assert update.json()["changed"] is False

@@ -163,7 +163,7 @@ Configura una clave larga en `.env`:
 INTEGRATION_API_KEY=una_clave_larga_y_aleatoria
 ```
 
-Las aplicaciones externas pueden actualizar un pedido por su número B2B o por su número EXIT. El endpoint guarda una fila en `order_status_history` por cada cambio y completa estados intermedios cuando recibe un salto hacia adelante.
+Las aplicaciones externas pueden actualizar un pedido mediante `order_id` (UUID público), número B2B o número EXIT. El endpoint guarda una fila en `order_status_history` por cada cambio y completa estados intermedios cuando recibe un salto hacia adelante.
 
 `orders.estado_registro_exit` es el único campo de estado del pedido. El histórico usa el campo del mismo nombre en `order_status_history`. La escritura se realiza mediante el código de la API, en la misma transacción; PostgreSQL no utiliza triggers para este flujo. Una actualización SQL directa no genera histórico.
 
@@ -175,7 +175,7 @@ X-Integration-Key: una_clave_larga_y_aleatoria
 
 ```json
 {
-  "order_number": "WEB-2026-0000001",
+  "order_id": "ebc4d2ee-5180-4799-bc4c-80d1e7c6b4a5",
   "estado_registro_exit": "REGISTRADO",
   "source": "TRIGGER_EXIT",
   "note": "Pedido creado en EXIT",
@@ -185,6 +185,24 @@ X-Integration-Key: una_clave_larga_y_aleatoria
 ```
 
 Estados válidos, en orden: `PENDIENTE`, `REGISTRADO`, `EN_PROCESO`, `ATENDIDO`, `FACTURADO`.
+
+También se puede enviar `order_number` en lugar de `order_id`. Este valor acepta tanto `WEB-2026-0000001` como el número almacenado en `nro_pedido_exit`.
+
+Para consultar los pedidos pendientes:
+
+```http
+GET /api/v1/integrations/orders?estado_registro_exit=PENDIENTE
+X-Integration-Key: una_clave_larga_y_aleatoria
+```
+
+Se pueden consultar varios estados y solicitar el detalle de líneas:
+
+```http
+GET /api/v1/integrations/orders?estado_registro_exit=REGISTRADO,EN_PROCESO&include_items=true&limit=100&offset=0
+X-Integration-Key: una_clave_larga_y_aleatoria
+```
+
+Usa `estado_registro_exit=TODOS` para consultar todos los estados. La respuesta incluye `total`, `limit`, `offset`, `estados` e `items`, ordenados desde el pedido más reciente.
 
 ### Integración del catálogo con SQL Server
 

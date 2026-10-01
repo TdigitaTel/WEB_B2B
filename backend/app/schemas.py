@@ -1,6 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class LoginIn(BaseModel):
@@ -31,9 +31,16 @@ class StatusChange(BaseModel):
 
 
 class ExternalStatusChange(BaseModel):
-    order_number: str = Field(min_length=1, max_length=80)
+    order_id: str | None = Field(default=None, min_length=1, max_length=80)
+    order_number: str | None = Field(default=None, min_length=1, max_length=80)
     estado_registro_exit: str
     source: str = Field(default="EXTERNA", min_length=1, max_length=20)
     note: str | None = Field(default=None, max_length=500)
     nro_pedido_exit: str | None = Field(default=None, max_length=80)
     occurred_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def require_order_identifier(self):
+        if not self.order_id and not self.order_number:
+            raise ValueError("Debes indicar order_id u order_number")
+        return self

@@ -499,16 +499,62 @@ def require_integration_key(x_integration_key: str | None = Header(default=None)
         raise HTTPException(401, "Clave de integración incorrecta")
 
 
+def integration_order(db: Session, order_id: str | None = None, order_number: str | None = None) -> Order | None:
+    """Localiza un pedido por UUID público, número B2B o número EXIT."""
+    if order_id:
+        identifier = order_id.strip()
+        order = db.scalar(select(Order).where(Order.public_id == identifier))
+        if not order and identifier.isdigit():
+            order = db.get(Order, int(identifier))
+        if order:
+            return order
+    if order_number:
+        identifier = order_number.strip()
+        return db.scalar(select(Order).where(
+            (Order.order_number == identifier) | (Order.nro_pedido_exit == identifier)
+        ))
+    return None
+
+
+@app.get("/api/v1/integrations/orders")
+def integration_orders(
+    estado_registro_exit: str = Query("PENDIENTE", description="Estado o estados separados por coma; usa TODOS para no filtrar"),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    include_items: bool = Query(False),
+    _: None = Depends(require_integration_key),
+    db: Session = Depends(get_db),
+):
+    requested = {value.strip().upper() for value in estado_registro_exit.split(",") if value.strip()}
+    valid = {"BORRADOR", *INTEGRATION_STATUS_SEQUENCE}
+    if "TODOS" in requested:
+        requested = set()
+    invalid = requested - valid
+    if invalid:
+        raise HTTPException(422, f"Estado no válido: {', '.join(sorted(invalid))}")
+    query = select(Order)
+    count_query = select(func.count()).select_from(Order)
+    if requested:
+        query = query.where(Order.estado_registro_exit.in_(requested))
+        count_query = count_query.where(Order.estado_registro_exit.in_(requested))
+    total = db.scalar(count_query) or 0
+    orders = db.scalars(query.order_by(Order.created_at.desc(), Order.id.desc()).offset(offset).limit(limit)).all()
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "estados": sorted(requested) if requested else ["TODOS"],
+        "items": [order_payload(order, db, include_items) for order in orders],
+    }
+
+
 @app.patch("/api/v1/integrations/orders/estado")
 def update_order_status_from_integration(
     data: ExternalStatusChange,
     _: None = Depends(require_integration_key),
     db: Session = Depends(get_db),
 ):
-    order_number = data.order_number.strip()
-    order = db.scalar(select(Order).where(
-        (Order.order_number == order_number) | (Order.nro_pedido_exit == order_number)
-    ))
+    order = integration_order(db, data.order_id, data.order_number)
     if not order:
         raise HTTPException(404, "Pedido no encontrado")
     requested = data.estado_registro_exit.strip().upper()
