@@ -1,7 +1,12 @@
 services:
+  db:
+    ports:
+      - "${POSTGRES_BIND:-127.0.0.1}:${POSTGRES_PORT:-5433}:5432"
+
   api:
     environment:
       APP_ENV: production
+
   web:
     environment:
       APP_ENV: production
