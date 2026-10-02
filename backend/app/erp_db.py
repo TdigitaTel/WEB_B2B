@@ -166,7 +166,7 @@ def fetch_customer_delivery_notes(customer_code: str, limit: int = 200) -> list[
         "tax_total": float(row.get("TaxTotal") or 0),
         "total": float(row.get("ImporteFactura") or 0),
         "status": ("FACTURADO" if int(row.get("StatusFacturado") or 0) else
-                   "ENTREGADO" if int(row.get("StatusImpresion") or 0) > 0 else "PENDIENTE_DE_ENTREGA"),
+                   "ENTREGADO" if int(row.get("StatusImpresion") or 0) == -1 else "PENDIENTE_DE_ENTREGA"),
         "store_code": str(row.get("IdDelegacion") or "").strip(),
         "order_number": _document_id(row.get("EjercicioPedido"), row.get("SeriePedido"), row.get("NumeroPedido")),
         "invoice_number": (_document_id(row.get("EjercicioFactura"), row.get("SerieFactura"), row.get("NumeroFactura"))
@@ -197,11 +197,11 @@ def fetch_customer_delivery_statuses(customer_code: str, limit: int = 1000) -> l
         "delivery_number": _document_id(row.get("EjercicioAlbaran"), row.get("SerieAlbaran"), row.get("NumeroAlbaran")),
         "attended_at": row.get("FechaAlbaran"),
         # EXIT no expone FechaImpresion. FechaEntrega es la preferida y las fechas
-        # de firma/modificación son la aproximación auditable cuando StatusImpresion > 0.
+        # de firma/modificación son la aproximación auditable cuando StatusImpresion = -1.
         "delivered_at": (row.get("FechaEntrega") or row.get("FechaFirma") or row.get("FechaModificacion")
                          or row.get("FechaUltimaModificacion") or row.get("FechaGrabacion") or row.get("FechaAlbaran")),
         "invoiced_at": row.get("FechaFactura"),
-        "is_printed": int(row.get("StatusImpresion") or 0) > 0,
+        "is_printed": int(row.get("StatusImpresion") or 0) == -1,
         "is_invoiced": int(row.get("StatusFacturado") or 0) > 0,
     } for row in rows]
 
@@ -238,7 +238,7 @@ def fetch_delivery_statuses_for_orders(order_numbers: list[str]) -> list[dict]:
         "delivered_at": (row.get("FechaEntrega") or row.get("FechaFirma") or row.get("FechaModificacion")
                          or row.get("FechaUltimaModificacion") or row.get("FechaGrabacion") or row.get("FechaAlbaran")),
         "invoiced_at": row.get("FechaFactura"),
-        "is_printed": int(row.get("StatusImpresion") or 0) > 0,
+        "is_printed": int(row.get("StatusImpresion") or 0) == -1,
         "is_invoiced": int(row.get("StatusFacturado") or 0) > 0,
     } for row in rows]
 

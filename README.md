@@ -197,7 +197,7 @@ Estados válidos, en orden: `PENDIENTE`, `REGISTRADO`, `EN_PROCESO`, `ATENDIDO`,
 Las fechas visibles del flujo proceden de los sistemas que originan cada evento. En pedidos B2B,
 `PENDIENTE` usa la creación web; `EN_PROCESAMIENTO` usa el registro o modificación del pedido en EXIT;
 `PENDIENTE_RECOJO` usa `AlbaranVentaCabecera.FechaAlbaran`; `ENTREGADO` se activa cuando
-`StatusImpresion > 0` y usa `FechaEntrega`, con fecha de firma o modificación como respaldo; y
+`StatusImpresion = -1` y usa `FechaEntrega`, con fecha de firma o modificación como respaldo; y
 `FACTURADO` usa `FechaFactura`. Los pedidos nacidos directamente en EXIT usan
 `FechaGrabacion + HoraGrabacion` para su alta y `FechaUltimaModificacion` para el procesamiento;
 las tres etapas documentales usan las mismas fechas del albarán. EXIT no expone una
