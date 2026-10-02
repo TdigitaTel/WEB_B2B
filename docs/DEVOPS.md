@@ -111,11 +111,11 @@ En **Settings → Environments → production**, añadir un revisor obligatorio.
 Antes de activar GitHub Actions se pueden probar los dos ambientes desde el repositorio:
 
 ```bash
-./ops/deploy.sh dev prueba-inicial
+./ops/setup-development.sh
 ./ops/deploy.sh prod prueba-inicial
 ```
 
-El script valida la configuración, construye imágenes con la versión del commit, levanta los servicios y comprueba la API y la web. En producción crea primero una copia comprimida de PostgreSQL en `/opt/webb2b/backups`. Si la comprobación falla, vuelve a levantar la versión anterior registrada.
+`setup-development.sh` genera secretos exclusivos, copia la conexión EXIT desde `/opt/proyectos/WEB_B2B/.env`, crea los servicios, importa el catálogo y habilita el cliente de prueba `00004`. El script de despliegue valida la configuración, construye imágenes con la versión del commit, levanta los servicios y comprueba la API y la web. En producción crea primero una copia comprimida de PostgreSQL en `/opt/webb2b/backups`. Si la comprobación falla, vuelve a levantar la versión anterior registrada.
 
 ## Operación
 
