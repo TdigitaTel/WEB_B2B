@@ -68,7 +68,7 @@ def main():
                             WHEN 'received' THEN 'REGISTRADO' WHEN 'processing' THEN 'EN_PROCESO'
                             WHEN 'preparing' THEN 'EN_PROCESO' WHEN 'partial' THEN 'EN_PROCESO'
                             WHEN 'attended' THEN 'ATENDIDO' WHEN 'ready' THEN 'ATENDIDO'
-                            WHEN 'delivered' THEN 'ATENDIDO' WHEN 'invoiced' THEN 'FACTURADO'
+                            WHEN 'delivered' THEN 'ENTREGADO' WHEN 'invoiced' THEN 'FACTURADO'
                             ELSE COALESCE(estado_registro_exit, 'PENDIENTE') END
                             WHERE estado_registro_exit IS NULL OR estado_registro_exit = ''$sql$;
                     END IF;
@@ -79,7 +79,7 @@ def main():
                             WHEN 'received' THEN 'REGISTRADO' WHEN 'processing' THEN 'EN_PROCESO'
                             WHEN 'preparing' THEN 'EN_PROCESO' WHEN 'partial' THEN 'EN_PROCESO'
                             WHEN 'attended' THEN 'ATENDIDO' WHEN 'ready' THEN 'ATENDIDO'
-                            WHEN 'delivered' THEN 'ATENDIDO' WHEN 'invoiced' THEN 'FACTURADO'
+                            WHEN 'delivered' THEN 'ENTREGADO' WHEN 'invoiced' THEN 'FACTURADO'
                             ELSE 'PENDIENTE' END WHERE estado_registro_exit IS NULL$sql$;
                     END IF;
                 END $$""",

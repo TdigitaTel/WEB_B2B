@@ -147,25 +147,29 @@ def order_payload(order: Order, db: Session, include_items: bool = False) -> dic
         visible_stage = {
             "BORRADOR": "PENDIENTE", "PENDIENTE": "PENDIENTE",
             "REGISTRADO": "EN_PROCESAMIENTO", "EN_PROCESO": "EN_PROCESAMIENTO",
-            "ATENDIDO": "PENDIENTE_RECOJO", "FACTURADO": "FACTURADO",
+            "ATENDIDO": "PENDIENTE_RECOJO", "ENTREGADO": "ENTREGADO", "FACTURADO": "FACTURADO",
         }.get(current_state, "PENDIENTE")
-        stage_position = {"PENDIENTE": 0, "EN_PROCESAMIENTO": 1, "PENDIENTE_RECOJO": 2, "FACTURADO": 3}
+        stage_position = {"PENDIENTE": 0, "EN_PROCESAMIENTO": 1, "PENDIENTE_RECOJO": 2, "ENTREGADO": 3, "FACTURADO": 4}
         pending_dates = [event.created_at for event in history if event.estado_registro_exit in {"BORRADOR", "PENDIENTE"}]
         processing_dates = [event.created_at for event in history if event.estado_registro_exit in {"REGISTRADO", "EN_PROCESO"}]
         pickup_dates = [event.created_at for event in history if event.estado_registro_exit == "ATENDIDO"]
+        delivered_dates = [event.created_at for event in history if event.estado_registro_exit == "ENTREGADO"]
         invoice_dates = [event.created_at for event in history if event.estado_registro_exit == "FACTURADO"]
         fallback_date = order.fecha_registro_exit or order.updated_at or order.created_at
         if not processing_dates and stage_position[visible_stage] >= 1:
             processing_dates = [fallback_date]
         if not pickup_dates and stage_position[visible_stage] >= 2:
             pickup_dates = [fallback_date]
-        if not invoice_dates and stage_position[visible_stage] >= 3:
+        if not delivered_dates and stage_position[visible_stage] >= 3:
+            delivered_dates = [fallback_date]
+        if not invoice_dates and stage_position[visible_stage] >= 4:
             invoice_dates = [fallback_date]
         stage_dates = {
             "PENDIENTE": max(pending_dates) if pending_dates else order.created_at,
             "EN_PROCESAMIENTO": max(processing_dates) if processing_dates and stage_position[visible_stage] >= 1 else None,
             "PENDIENTE_RECOJO": max(pickup_dates) if pickup_dates and stage_position[visible_stage] >= 2 else None,
-            "FACTURADO": max(invoice_dates) if invoice_dates and stage_position[visible_stage] >= 3 else None,
+            "ENTREGADO": max(delivered_dates) if delivered_dates and stage_position[visible_stage] >= 3 else None,
+            "FACTURADO": max(invoice_dates) if invoice_dates and stage_position[visible_stage] >= 4 else None,
         }
         result["workflow"] = [{"etapa": etapa, "completed_at": completed_at} for etapa, completed_at in stage_dates.items()]
     return result
@@ -520,19 +524,31 @@ def orders(date_from: date | None = None, date_to: date | None = None,
             by_exit[raw.split("/")[-1]] = row
     linked: set[int] = set()
     result: list[dict] = []
-    def exit_workflow(record, current: str | None = None, moment_override=None) -> list[dict]:
+    def exit_workflow(record, current: str | None = None, delivery: dict | None = None) -> list[dict]:
         current = current or record.estado_registro_exit
-        positions = {"PENDIENTE": 0, "REGISTRADO": 1, "EN_PROCESO": 1, "ATENDIDO": 2, "FACTURADO": 3}
+        positions = {"PENDIENTE": 0, "REGISTRADO": 1, "EN_PROCESO": 1, "ATENDIDO": 2, "ENTREGADO": 3, "FACTURADO": 4}
         position = positions.get(current, 0)
-        moment = moment_override or record.source_updated_at or record.recorded_at
-        return [{"etapa": stage, "completed_at": (record.recorded_at or moment) if index == 0 else moment if index <= position else None}
-                for index, stage in enumerate(("PENDIENTE", "EN_PROCESAMIENTO", "PENDIENTE_RECOJO", "FACTURADO"))]
+        process_at = record.source_updated_at or record.recorded_at
+        fallback = ((delivery or {}).get("invoiced_at") or (delivery or {}).get("delivered_at")
+                    or (delivery or {}).get("attended_at") or process_at)
+        dates = (record.recorded_at or process_at, process_at,
+                 (delivery or {}).get("attended_at") or fallback,
+                 (delivery or {}).get("delivered_at") or fallback,
+                 (delivery or {}).get("invoiced_at") or fallback)
+        return [{"etapa": stage, "completed_at": dates[index] if index <= position else None}
+                for index, stage in enumerate(("PENDIENTE", "EN_PROCESAMIENTO", "PENDIENTE_RECOJO", "ENTREGADO", "FACTURADO"))]
     for record in exit_rows:
         external = record.exit_order_id.strip().upper()
         external_key = document_key(external)
         delivery = deliveries.get(external_key) or deliveries.get(external_key.split("/")[-1])
-        effective_state = "ATENDIDO" if delivery and record.estado_registro_exit != "FACTURADO" else record.estado_registro_exit
-        effective_moment = delivery.get("delivery_date") if delivery else None
+        effective_state = record.estado_registro_exit
+        if delivery:
+            if delivery["is_invoiced"]:
+                effective_state = "FACTURADO"
+            elif delivery["is_printed"]:
+                effective_state = "ENTREGADO"
+            else:
+                effective_state = "ATENDIDO"
         local = by_exit.get(external) or by_exit.get(external.split("/")[-1])
         if not local and record.customer_reference:
             local = by_web.get(record.customer_reference.strip().upper())
@@ -541,11 +557,22 @@ def orders(date_from: date | None = None, date_to: date | None = None,
                 local.fecha_registro_exit = record.recorded_at
         if local:
             linked.add(local.id)
-            if delivery and local.estado_registro_exit not in {"ATENDIDO", "FACTURADO"}:
-                local.estado_registro_exit = "ATENDIDO"
-                db.add(OrderStatusHistory(order_id=local.id, estado_registro_exit="ATENDIDO", source="EXIT",
-                                          note=f"Albarán {delivery['delivery_number']} generado",
-                                          created_at=delivery["delivery_date"]))
+            if delivery:
+                document_events = [("ATENDIDO", delivery["attended_at"], f"Albarán {delivery['delivery_number']} generado")]
+                if delivery["is_printed"]:
+                    document_events.append(("ENTREGADO", delivery["delivered_at"], f"Albarán {delivery['delivery_number']} impreso"))
+                if delivery["is_invoiced"]:
+                    document_events.append(("FACTURADO", delivery["invoiced_at"] or delivery["delivered_at"], f"Albarán {delivery['delivery_number']} facturado"))
+                sequence = ["PENDIENTE", "REGISTRADO", "EN_PROCESO", "ATENDIDO", "ENTREGADO", "FACTURADO"]
+                current_index = sequence.index(local.estado_registro_exit) if local.estado_registro_exit in sequence else 0
+                if effective_state in sequence and current_index > sequence.index(effective_state):
+                    effective_state = local.estado_registro_exit
+                for status, occurred_at, note in document_events:
+                    if sequence.index(status) > current_index:
+                        db.add(OrderStatusHistory(order_id=local.id, estado_registro_exit=status, source="EXIT",
+                                                  note=note, created_at=occurred_at))
+                if sequence.index(effective_state) > current_index:
+                    local.estado_registro_exit = effective_state
             payload = order_payload(local, db, True)
             payload.update({"nro_pedido_exit": record.exit_order_id, "exit_number": record.exit_order_id,
                             "web_number": local.order_number, "number": record.exit_order_id,
@@ -555,7 +582,7 @@ def orders(date_from: date | None = None, date_to: date | None = None,
                             "tax_total": float(record.tax_total), "total": float(record.total),
                             "created_at": record.recorded_at or local.created_at,
                             "created_by": record.source_created_by or payload["created_by"], "local_order": True,
-                            "workflow": exit_workflow(record, effective_state, effective_moment),
+                            "workflow": exit_workflow(record, effective_state, delivery),
                             "items": [{"sku": line.sku, "description": line.description, "quantity": float(line.quantity),
                                        "served_quantity": float(line.served_quantity or 0),
                                        "pending_quantity": float(line.pending_quantity or 0), "unit": line.unit,
@@ -579,7 +606,7 @@ def orders(date_from: date | None = None, date_to: date | None = None,
                             "unit_price": float(line.unit_price),
                             "line_total": float(line.line_total or line.quantity * line.unit_price),
                             "fulfillment_zone": line.fulfillment_zone} for line in record.lines],
-                       "documents": [], "history_enabled": False, "workflow": exit_workflow(record, effective_state, effective_moment)}
+                       "documents": [], "history_enabled": False, "workflow": exit_workflow(record, effective_state, delivery)}
         result.append(payload)
     for row in local_rows:
         if row.id in linked:
@@ -588,11 +615,20 @@ def orders(date_from: date | None = None, date_to: date | None = None,
         if row.nro_pedido_exit:
             key = document_key(row.nro_pedido_exit)
             delivery = deliveries.get(key) or deliveries.get(key.split("/")[-1])
-        if delivery and row.estado_registro_exit not in {"ATENDIDO", "FACTURADO"}:
-            row.estado_registro_exit = "ATENDIDO"
-            db.add(OrderStatusHistory(order_id=row.id, estado_registro_exit="ATENDIDO", source="EXIT",
-                                      note=f"Albarán {delivery['delivery_number']} generado",
-                                      created_at=delivery["delivery_date"]))
+        if delivery:
+            sequence = ["PENDIENTE", "REGISTRADO", "EN_PROCESO", "ATENDIDO", "ENTREGADO", "FACTURADO"]
+            target = "FACTURADO" if delivery["is_invoiced"] else "ENTREGADO" if delivery["is_printed"] else "ATENDIDO"
+            current_index = sequence.index(row.estado_registro_exit) if row.estado_registro_exit in sequence else 0
+            events = [("ATENDIDO", delivery["attended_at"], f"Albarán {delivery['delivery_number']} generado")]
+            if delivery["is_printed"]:
+                events.append(("ENTREGADO", delivery["delivered_at"], f"Albarán {delivery['delivery_number']} impreso"))
+            if delivery["is_invoiced"]:
+                events.append(("FACTURADO", delivery["invoiced_at"] or delivery["delivered_at"], f"Albarán {delivery['delivery_number']} facturado"))
+            for status, occurred_at, note in events:
+                if sequence.index(status) > current_index:
+                    db.add(OrderStatusHistory(order_id=row.id, estado_registro_exit=status, source="EXIT", note=note, created_at=occurred_at))
+            if sequence.index(target) > current_index:
+                row.estado_registro_exit = target
         payload = order_payload(row, db, True)
         payload.update({"web_number": row.order_number, "exit_number": row.nro_pedido_exit,
                         "local_order": True})
@@ -601,7 +637,7 @@ def orders(date_from: date | None = None, date_to: date | None = None,
     requested = state.strip().upper()
     groups = {"BORRADOR": {"BORRADOR"}, "PENDIENTE": {"BORRADOR", "PENDIENTE"},
               "EN_PROCESAMIENTO": {"REGISTRADO", "EN_PROCESO"},
-              "PENDIENTE_RECOJO": {"ATENDIDO"}, "FACTURADO": {"FACTURADO"}}
+              "PENDIENTE_RECOJO": {"ATENDIDO"}, "ENTREGADO": {"ENTREGADO"}, "FACTURADO": {"FACTURADO"}}
     if requested not in {"", "TODOS"}:
         accepted = groups.get(requested, {requested})
         result = [item for item in result if str(item.get("estado_registro_exit") or "").upper() in accepted]
@@ -738,7 +774,7 @@ def export_documents(kind: str, q: str = "", date_from: date | None = None, date
     return StreamingResponse(output, media_type=media, headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
-INTEGRATION_STATUS_SEQUENCE = ["PENDIENTE", "REGISTRADO", "EN_PROCESO", "ATENDIDO", "FACTURADO"]
+INTEGRATION_STATUS_SEQUENCE = ["PENDIENTE", "REGISTRADO", "EN_PROCESO", "ATENDIDO", "ENTREGADO", "FACTURADO"]
 
 
 def require_integration_key(x_integration_key: str | None = Header(default=None)):
@@ -882,7 +918,8 @@ ALLOWED_TRANSITIONS = {
     "PENDIENTE": {"REGISTRADO"},
     "REGISTRADO": {"EN_PROCESO"},
     "EN_PROCESO": {"ATENDIDO"},
-    "ATENDIDO": {"FACTURADO"},
+    "ATENDIDO": {"ENTREGADO"},
+    "ENTREGADO": {"FACTURADO"},
 }
 
 

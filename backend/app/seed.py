@@ -151,7 +151,7 @@ def seed():
         customers = db.scalars(select(Customer).order_by(Customer.id)).all()
         users_by_customer = {u.customer_id: u for u in db.scalars(select(User).where(User.customer_id.is_not(None))).all()}
         sample_products = db.scalars(select(Product).order_by(Product.id).limit(500)).all()
-        statuses = ["REGISTRADO", "EN_PROCESO", "ATENDIDO", "FACTURADO"]
+        statuses = ["REGISTRADO", "EN_PROCESO", "ATENDIDO", "ENTREGADO", "FACTURADO"]
         sequence = 1
         for customer in customers:
             user = users_by_customer[customer.id]

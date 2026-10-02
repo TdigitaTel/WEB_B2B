@@ -54,7 +54,7 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
     if not store:
         raise ValueError(f"Almacén interno desconocido: {incoming.store_code}")
     estado_registro_exit = incoming.estado_registro_exit.strip().upper()
-    if estado_registro_exit not in {"PENDIENTE", "REGISTRADO", "EN_PROCESO", "ATENDIDO", "FACTURADO"}:
+    if estado_registro_exit not in {"PENDIENTE", "REGISTRADO", "EN_PROCESO", "ATENDIDO", "ENTREGADO", "FACTURADO"}:
         raise ValueError(f"Estado EXIT no mapeado: {incoming.estado_registro_exit}")
 
     order = db.scalar(select(Order).where(Order.nro_pedido_exit == incoming.exit_order_id))
@@ -111,7 +111,7 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
                          served_quantity=line.served_quantity, pending_quantity=line.pending_quantity))
     if first_exit_registration:
         registered_at = incoming.recorded_at or incoming.source_updated_at
-        exit_steps = ["REGISTRADO", "EN_PROCESO", "ATENDIDO", "FACTURADO"]
+        exit_steps = ["REGISTRADO", "EN_PROCESO", "ATENDIDO", "ENTREGADO", "FACTURADO"]
         steps_to_record = (exit_steps[:exit_steps.index(estado_registro_exit) + 1]
                            if estado_registro_exit in exit_steps else [estado_registro_exit])
         for step in steps_to_record:

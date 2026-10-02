@@ -121,7 +121,7 @@ def fetch_customer_delivery_notes(customer_code: str, limit: int = 200) -> list[
     sql = (
         f"SELECT TOP {max(1, min(limit, 1000))} EjercicioAlbaran, SerieAlbaran, NumeroAlbaran, "
         "FechaAlbaran, CodigoCliente, IdDelegacion, BaseImponible, TotalCuotaIva AS TaxTotal, ImporteFactura, "
-        "StatusFacturado, EjercicioPedido, SeriePedido, NumeroPedido, "
+        "StatusFacturado, StatusImpresion, EjercicioPedido, SeriePedido, NumeroPedido, "
         f"EjercicioFactura, SerieFactura, NumeroFactura FROM {schema}.{table} "
         "WHERE LTRIM(RTRIM(CONVERT(varchar(100), CodigoCliente)))=%s "
         "ORDER BY FechaAlbaran DESC, EjercicioAlbaran DESC, SerieAlbaran DESC, NumeroAlbaran DESC"
@@ -165,7 +165,8 @@ def fetch_customer_delivery_notes(customer_code: str, limit: int = 200) -> list[
         "subtotal": float(row.get("BaseImponible") or 0),
         "tax_total": float(row.get("TaxTotal") or 0),
         "total": float(row.get("ImporteFactura") or 0),
-        "status": "FACTURADO" if int(row.get("StatusFacturado") or 0) else "PENDIENTE_DE_FACTURAR",
+        "status": ("FACTURADO" if int(row.get("StatusFacturado") or 0) else
+                   "ENTREGADO" if int(row.get("StatusImpresion") or 0) > 0 else "PENDIENTE_DE_ENTREGA"),
         "store_code": str(row.get("IdDelegacion") or "").strip(),
         "order_number": _document_id(row.get("EjercicioPedido"), row.get("SeriePedido"), row.get("NumeroPedido")),
         "invoice_number": (_document_id(row.get("EjercicioFactura"), row.get("SerieFactura"), row.get("NumeroFactura"))
@@ -181,7 +182,8 @@ def fetch_customer_delivery_statuses(customer_code: str, limit: int = 1000) -> l
     table = _identifier(SALES_DOCUMENTS["delivery_header"])
     sql = (
         f"SELECT TOP {max(1, min(limit, 5000))} EjercicioAlbaran, SerieAlbaran, NumeroAlbaran, "
-        "FechaAlbaran, EjercicioPedido, SeriePedido, NumeroPedido "
+        "FechaAlbaran, FechaEntrega, FechaFirma, FechaModificacion, FechaUltimaModificacion, FechaGrabacion, "
+        "StatusImpresion, StatusFacturado, FechaFactura, EjercicioPedido, SeriePedido, NumeroPedido "
         f"FROM {schema}.{table} "
         "WHERE LTRIM(RTRIM(CONVERT(varchar(100), CodigoCliente)))=%s "
         "AND COALESCE(NumeroPedido, 0) <> 0 "
@@ -193,7 +195,14 @@ def fetch_customer_delivery_statuses(customer_code: str, limit: int = 1000) -> l
     return [{
         "order_number": _document_id(row.get("EjercicioPedido"), row.get("SeriePedido"), row.get("NumeroPedido")),
         "delivery_number": _document_id(row.get("EjercicioAlbaran"), row.get("SerieAlbaran"), row.get("NumeroAlbaran")),
-        "delivery_date": row.get("FechaAlbaran"),
+        "attended_at": row.get("FechaAlbaran"),
+        # EXIT no expone FechaImpresion. FechaEntrega es la preferida y las fechas
+        # de firma/modificación son la aproximación auditable cuando StatusImpresion > 0.
+        "delivered_at": (row.get("FechaEntrega") or row.get("FechaFirma") or row.get("FechaModificacion")
+                         or row.get("FechaUltimaModificacion") or row.get("FechaGrabacion") or row.get("FechaAlbaran")),
+        "invoiced_at": row.get("FechaFactura"),
+        "is_printed": int(row.get("StatusImpresion") or 0) > 0,
+        "is_invoiced": int(row.get("StatusFacturado") or 0) > 0,
     } for row in rows]
 
 
