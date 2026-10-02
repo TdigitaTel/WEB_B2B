@@ -9,6 +9,8 @@ La aplicación utiliza dos proyectos Docker completamente independientes:
 
 Los puertos se pueden cambiar en los archivos privados del servidor. No se comparte la base PostgreSQL entre ambientes. Ambos pueden consultar EXIT con credenciales de solo lectura.
 
+Si producción ya existía antes de implantar este flujo, `COMPOSE_PROJECT_NAME` en `prod.env` debe conservar el nombre del proyecto Compose anterior. Esto permite reutilizar sus contenedores y su volumen PostgreSQL. Se obtiene con `docker inspect NOMBRE_CONTENEDOR_DB --format '{{ index .Config.Labels "com.docker.compose.project" }}'`. No se debe cambiar este valor después de poner producción en servicio.
+
 ## Preparación única del servidor
 
 Crear las carpetas que usa el despliegue y dar acceso al usuario del runner:

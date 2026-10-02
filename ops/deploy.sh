@@ -6,11 +6,11 @@ release="${2:-$(git rev-parse HEAD)}"
 
 case "$target" in
   dev)
-    project="webb2b-dev"
+    default_project="webb2b-dev"
     override="docker-compose.dev.yml"
     ;;
   prod)
-    project="webb2b-prod"
+    default_project="webb2b-prod"
     override="docker-compose.prod.yml"
     ;;
   *)
@@ -41,6 +41,7 @@ env_value() {
 
 API_PORT="$(env_value API_PORT 8000)"
 WEB_PORT="$(env_value WEB_PORT 3000)"
+project="$(env_value COMPOSE_PROJECT_NAME "$default_project")"
 
 export IMAGE_TAG="${release//[^a-zA-Z0-9_.-]/-}"
 compose=(docker compose --project-name "$project" --env-file "$env_file" -f "$root_dir/docker-compose.yml" -f "$root_dir/$override")
