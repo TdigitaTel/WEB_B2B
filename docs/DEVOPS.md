@@ -9,6 +9,8 @@ La aplicación utiliza dos proyectos Docker completamente independientes:
 
 Los puertos se pueden cambiar en los archivos privados del servidor. No se comparte la base PostgreSQL entre ambientes. Ambos pueden consultar EXIT con credenciales de solo lectura.
 
+Si producción ya existía antes de implantar este flujo, `COMPOSE_PROJECT_NAME` en `prod.env` debe conservar el nombre del proyecto Compose anterior. Esto permite reutilizar sus contenedores y su volumen PostgreSQL. Se obtiene con `docker inspect NOMBRE_CONTENEDOR_DB --format '{{ index .Config.Labels "com.docker.compose.project" }}'`. No se debe cambiar este valor después de poner producción en servicio.
+
 ## Preparación única del servidor
 
 Crear las carpetas que usa el despliegue y dar acceso al usuario del runner:
@@ -109,11 +111,11 @@ En **Settings → Environments → production**, añadir un revisor obligatorio.
 Antes de activar GitHub Actions se pueden probar los dos ambientes desde el repositorio:
 
 ```bash
-./ops/deploy.sh dev prueba-inicial
+./ops/setup-development.sh
 ./ops/deploy.sh prod prueba-inicial
 ```
 
-El script valida la configuración, construye imágenes con la versión del commit, levanta los servicios y comprueba la API y la web. En producción crea primero una copia comprimida de PostgreSQL en `/opt/webb2b/backups`. Si la comprobación falla, vuelve a levantar la versión anterior registrada.
+`setup-development.sh` genera secretos exclusivos, copia la conexión EXIT desde `/opt/proyectos/WEB_B2B/.env`, crea los servicios, importa el catálogo y habilita el cliente de prueba `00004`. El script de despliegue valida la configuración, construye imágenes con la versión del commit, levanta los servicios y comprueba la API y la web. En producción crea primero una copia comprimida de PostgreSQL en `/opt/webb2b/backups`. Si la comprobación falla, vuelve a levantar la versión anterior registrada.
 
 ## Operación
 
