@@ -19,6 +19,7 @@ from .config import settings
 from .db import get_db
 from .erp_db import (
     fetch_customer, fetch_customer_delivery_notes, fetch_customer_delivery_statuses, fetch_customer_invoices,
+    fetch_delivery_statuses_for_orders,
     fetch_product_image, fetch_product_price, fetch_product_prices,
     fetch_product_stock, fetch_product_stocks, image_media_type,
 )
@@ -924,10 +925,33 @@ ALLOWED_TRANSITIONS = {
 
 
 @app.get("/api/v1/store/orders")
-def store_orders(view: str = Query("active_kardex", pattern="^(active_kardex|active_sga|attended)$"),
+def store_orders(view: str = Query("active_kardex", pattern="^(active_kardex|active_sga|attended|web)$"),
                  date_from: date | None = None, date_to: date | None = None,
+                 state: str = Query("PENDIENTE"),
                  user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN"))):
     records = fetch_exit_orders_live(view, date_from, date_to)
+    delivery_by_order: dict[str, dict] = {}
+    if view == "web" and records:
+        for delivery in fetch_delivery_statuses_for_orders([record.exit_order_id for record in records]):
+            key = str(delivery["order_number"]).replace("~", "/").upper()
+            delivery_by_order.setdefault(key, delivery)
+    def operational_state(record) -> str:
+        delivery = delivery_by_order.get(record.exit_order_id.upper())
+        if delivery and delivery["is_invoiced"]:
+            return "FACTURADO"
+        if delivery and delivery["is_printed"]:
+            return "ENTREGADO"
+        if delivery:
+            return "ATENDIDO"
+        if record.estado_registro_exit == "ATENDIDO":
+            return "ATENDIDO"
+        served = [line.served_quantity or Decimal("0") for line in record.lines]
+        return "EN_PROCESO" if any(quantity > 0 for quantity in served) else "PENDIENTE"
+    if view == "web" and state.strip().upper() not in {"", "TODOS"}:
+        requested = state.strip().upper()
+        groups = {"EN_PROCESAMIENTO": {"EN_PROCESO"}, "PENDIENTE_RECOJO": {"ATENDIDO"}}
+        accepted = groups.get(requested, {requested})
+        records = [record for record in records if operational_state(record) in accepted]
     customer_names: dict[str, str] = {}
     for code in dict.fromkeys(record.customer_code for record in records):
         try:
@@ -939,10 +963,12 @@ def store_orders(view: str = Query("active_kardex", pattern="^(active_kardex|act
         "store": "Almeiras", "store_code": "00", "customer_code": record.customer_code,
         "customer": customer_names.get(record.customer_code, record.customer_code),
         "created_by": record.source_created_by or "EXIT", "created_at": record.recorded_at,
-        "customer_reference": record.customer_reference, "notes": record.notes,
+        "customer_reference": record.customer_reference, "auxiliary_reference": record.auxiliary_reference,
+        "is_web_order": "PEDIDOGENERADOWEBB2B" in "".join(str(record.auxiliary_reference or "").upper().split()),
+        "notes": record.notes,
         "subtotal": float(record.subtotal), "tax_total": float(record.tax_total), "total": float(record.total),
         "nro_pedido_exit": record.exit_order_id, "fecha_registro_exit": record.recorded_at,
-        "origen_pedido": "EXIT", "estado_registro_exit": record.estado_registro_exit,
+        "origen_pedido": "EXIT", "estado_registro_exit": operational_state(record),
         "items": [{"sku": line.sku, "description": line.description, "quantity": float(line.quantity),
                    "served_quantity": float(line.served_quantity or 0),
                    "pending_quantity": float(line.pending_quantity or 0), "unit": line.unit,

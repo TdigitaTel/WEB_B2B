@@ -21,6 +21,7 @@ HEADER_CANDIDATES = {
     "created_by": ("NombreCorto", "WebUsuario", "CodigoUsuario"),
     "updated_at": ("FechaUltimaModificacion", "FechaModificacion"),
     "reference": ("SuPedidoNumero", "SuPedido", "ReferenciaInterna", "ReferenciaCliente", "Referencia"),
+    "auxiliary_reference": ("ReferenciaAuxiliar", "Referencia_Auxiliar", "RefAuxiliar"),
     "notes": ("Observaciones", "Comentario", "Comentarios"),
     "subtotal": ("BaseImponible", "ImporteNetoLineas", "ImporteNeto"),
     "total": ("ImporteLiquido", "ImporteFactura", "ImporteTotal", "TotalPedido", "Total"),
@@ -139,7 +140,7 @@ def fetch_exit_orders_live(view: str = "active_kardex", date_from: date | None =
         _required(detail, ("year", "series", "number", "sku", "quantity", "zone"), detail_table)
         hs = {key: _discovered_column(value) for key, value in header.items() if value}
         ds = {key: _discovered_column(value) for key, value in detail.items() if value}
-        header_fields = ("year", "series", "number", "customer", "delegation", "status", "date", "recorded_date", "recorded_time", "created_by", "updated_at", "reference", "notes", "subtotal", "total")
+        header_fields = ("year", "series", "number", "customer", "delegation", "status", "date", "recorded_date", "recorded_time", "created_by", "updated_at", "reference", "auxiliary_reference", "notes", "subtotal", "total")
         header_where: list[str] = []
         header_parameters: list = []
         if customer_code:
@@ -151,17 +152,17 @@ def fetch_exit_orders_live(view: str = "active_kardex", date_from: date | None =
                 f"CONVERT(date,h.{hs['recorded_date']}) BETWEEN %s AND %s",
             ))
             header_parameters.extend((str(customer_code).strip(), start, end))
-        elif view == "attended":
+        elif view in {"attended", "web"}:
             header_where.append(f"LTRIM(RTRIM(CONVERT(varchar(20),h.{hs['delegation']})))=%s")
             header_parameters.append("00")
             _required(header, ("recorded_date",), header_table)
             start = date_from or datetime.now(ZoneInfo("Europe/Madrid")).date()
             end = date_to or start
-            header_where.extend((
-                f"UPPER(LTRIM(RTRIM(CONVERT(varchar(20),h.{hs['status']}))))=%s",
-                f"CONVERT(date,h.{hs['recorded_date']}) BETWEEN %s AND %s",
-            ))
-            header_parameters.extend(("S", start, end))
+            if view == "attended":
+                header_where.append(f"UPPER(LTRIM(RTRIM(CONVERT(varchar(20),h.{hs['status']}))))=%s")
+                header_parameters.append("S")
+            header_where.append(f"CONVERT(date,h.{hs['recorded_date']}) BETWEEN %s AND %s")
+            header_parameters.extend((start, end))
         else:
             header_where.append(f"LTRIM(RTRIM(CONVERT(varchar(20),h.{hs['delegation']})))=%s")
             header_parameters.append("00")
@@ -184,10 +185,13 @@ def fetch_exit_orders_live(view: str = "active_kardex", date_from: date | None =
             headers = [row for row in headers if start <= _exit_datetime(
                 row.get("recorded_date") or row.get("date"), row.get("recorded_time")
             ).date() <= end and str(row.get("customer") or "").strip() == str(customer_code).strip()]
-        elif view == "attended":
+        elif view in {"attended", "web"}:
             headers = [row for row in headers if start <= _exit_datetime(
                 row.get("recorded_date") or row.get("date"), row.get("recorded_time")
             ).date() <= end]
+            if view == "web":
+                headers = [row for row in headers if "PEDIDOGENERADOWEBB2B" in
+                           "".join(str(row.get("auxiliary_reference") or "").upper().split())]
         else:
             today = datetime.now(ZoneInfo("Europe/Madrid")).date()
             headers = [row for row in headers if
@@ -258,6 +262,7 @@ def fetch_exit_orders_live(view: str = "active_kardex", date_from: date | None =
             customer_code=str(row.get("customer") or "").strip(), store_code="ALM",
             estado_registro_exit=local_status, source_status=source_status, source_created_by=str(row.get("created_by") or "").strip() or None,
             source_updated_at=updated_at, recorded_at=recorded_at, customer_reference=str(row.get("reference") or "").strip() or None,
+            auxiliary_reference=str(row.get("auxiliary_reference") or "").strip() or None,
             notes=str(row.get("notes") or "").strip() or None, subtotal=_decimal(row.get("subtotal")),
             tax_total=max(Decimal("0"), _decimal(row.get("total"))-_decimal(row.get("subtotal"))), total=_decimal(row.get("total")),
             lines=lines_by_key.get((year, series, number), []),

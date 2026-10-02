@@ -40,6 +40,7 @@ class ExitOrderInput(BaseModel):
     source_updated_at: datetime
     recorded_at: datetime | None = None
     customer_reference: str | None = None
+    auxiliary_reference: str | None = None
     job_name: str | None = None
     notes: str | None = None
     subtotal: Decimal = Decimal("0")

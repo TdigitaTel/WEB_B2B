@@ -206,6 +206,43 @@ def fetch_customer_delivery_statuses(customer_code: str, limit: int = 1000) -> l
     } for row in rows]
 
 
+def fetch_delivery_statuses_for_orders(order_numbers: list[str]) -> list[dict]:
+    """Consulta en bloque los albaranes asociados a una lista de pedidos EXIT."""
+    keys = []
+    for value in order_numbers[:1000]:
+        parts = str(value).replace("~", "/").split("/")
+        if len(parts) == 3:
+            keys.append(tuple(part.strip() for part in parts))
+    if not keys:
+        return []
+    schema = _identifier(SALES_DOCUMENTS["schema"])
+    table = _identifier(SALES_DOCUMENTS["delivery_header"])
+    conditions, parameters = [], []
+    for year, series, number in keys:
+        conditions.append("(CONVERT(varchar(20),EjercicioPedido)=%s AND LTRIM(RTRIM(SeriePedido))=%s AND CONVERT(varchar(30),NumeroPedido)=%s)")
+        parameters.extend((year, series, number))
+    sql = (
+        "SELECT EjercicioAlbaran, SerieAlbaran, NumeroAlbaran, FechaAlbaran, FechaEntrega, FechaFirma, "
+        "FechaModificacion, FechaUltimaModificacion, FechaGrabacion, StatusImpresion, StatusFacturado, "
+        f"FechaFactura, EjercicioPedido, SeriePedido, NumeroPedido FROM {schema}.{table} WHERE "
+        + " OR ".join(conditions) +
+        " ORDER BY FechaAlbaran DESC, EjercicioAlbaran DESC, SerieAlbaran DESC, NumeroAlbaran DESC"
+    )
+    with connect_sqlserver() as connection, connection.cursor() as cursor:
+        cursor.execute(sql, tuple(parameters))
+        rows = cursor.fetchall()
+    return [{
+        "order_number": _document_id(row.get("EjercicioPedido"), row.get("SeriePedido"), row.get("NumeroPedido")),
+        "delivery_number": _document_id(row.get("EjercicioAlbaran"), row.get("SerieAlbaran"), row.get("NumeroAlbaran")),
+        "attended_at": row.get("FechaAlbaran"),
+        "delivered_at": (row.get("FechaEntrega") or row.get("FechaFirma") or row.get("FechaModificacion")
+                         or row.get("FechaUltimaModificacion") or row.get("FechaGrabacion") or row.get("FechaAlbaran")),
+        "invoiced_at": row.get("FechaFactura"),
+        "is_printed": int(row.get("StatusImpresion") or 0) > 0,
+        "is_invoiced": int(row.get("StatusFacturado") or 0) > 0,
+    } for row in rows]
+
+
 def fetch_customer_invoices(customer_code: str, limit: int = 200) -> list[dict]:
     """Consulta facturas de venta directamente en EXITERP."""
     schema = _identifier(SALES_DOCUMENTS["schema"])
