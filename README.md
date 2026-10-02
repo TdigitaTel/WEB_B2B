@@ -133,6 +133,10 @@ git pull --ff-only
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
 
+### Desarrollo y producción en el mismo servidor
+
+El proyecto incluye dos ambientes Docker aislados y un flujo de despliegue automático con GitHub Actions. `develop` publica desarrollo y `main` publica producción mediante un runner instalado en el servidor. La preparación completa, los puertos, las copias de seguridad y el procedimiento de promoción están en [docs/DEVOPS.md](docs/DEVOPS.md).
+
 ## Conexión de solo lectura al ERP SQL Server
 
 La conexión al ERP es independiente de PostgreSQL. Configura estas variables únicamente en el `.env` privado del servidor:

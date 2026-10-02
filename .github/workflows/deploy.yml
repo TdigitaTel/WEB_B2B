@@ -1,0 +1,32 @@
+name: Desplegar Web B2B
+
+on:
+  push:
+    branches: [develop, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: webb2b-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  development:
+    if: github.ref_name == 'develop'
+    runs-on: [self-hosted, linux, webb2b]
+    environment: development
+    steps:
+      - uses: actions/checkout@v4
+      - name: Desplegar desarrollo
+        run: ./ops/deploy.sh dev "$GITHUB_SHA"
+
+  production:
+    if: github.ref_name == 'main'
+    runs-on: [self-hosted, linux, webb2b]
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Desplegar producción
+        run: ./ops/deploy.sh prod "$GITHUB_SHA"

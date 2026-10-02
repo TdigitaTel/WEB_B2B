@@ -1,7 +1,7 @@
 services:
   api:
     environment:
-      APP_ENV: production
+      APP_ENV: development
   web:
     environment:
-      APP_ENV: production
+      APP_ENV: development

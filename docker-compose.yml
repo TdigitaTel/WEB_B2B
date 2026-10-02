@@ -15,6 +15,7 @@ services:
     restart: unless-stopped
 
   api:
+    image: webb2b-api:${IMAGE_TAG:-local}
     build: ./backend
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-bermudez}:${POSTGRES_PASSWORD:-cambia_esta_clave}@db:5432/${POSTGRES_DB:-bermudez_b2b}
@@ -23,7 +24,7 @@ services:
       SHOW_ORDER_STATUS_HISTORY: ${SHOW_ORDER_STATUS_HISTORY:-true}
       SEED_PRODUCTS: ${SEED_PRODUCTS:-15000}
       SEED_CUSTOMERS: ${SEED_CUSTOMERS:-100}
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       SQLSERVER_HOST: ${SQLSERVER_HOST:-}
       SQLSERVER_PORT: ${SQLSERVER_PORT:-1433}
       SQLSERVER_DATABASE: ${SQLSERVER_DATABASE:-}
@@ -35,10 +36,17 @@ services:
       db:
         condition: service_healthy
     ports:
-      - "127.0.0.1:${API_PORT:-8000}:8000"
+      - "${API_BIND:-127.0.0.1}:${API_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
     restart: unless-stopped
 
   customer-sync:
+    image: webb2b-api:${IMAGE_TAG:-local}
     build: ./backend
     command: ["python", "-m", "scripts.sync_exit_customer_accounts", "--watch", "--interval", "${CUSTOMER_SYNC_INTERVAL_SECONDS:-10}", "--batch-size", "${CUSTOMER_SYNC_BATCH_SIZE:-30}"]
     environment:
@@ -54,13 +62,21 @@ services:
     restart: unless-stopped
 
   web:
+    image: webb2b-web:${IMAGE_TAG:-local}
     build: ./frontend
     environment:
       API_INTERNAL_URL: http://api:8000
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     ports:
-      - "127.0.0.1:3000:3000"
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
     restart: unless-stopped
 
 volumes:

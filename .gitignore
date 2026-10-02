@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 node_modules/
 .next/
+*.tsbuildinfo
 postgres_data/
 .DS_Store
 *.sql
