@@ -161,10 +161,6 @@ def order_payload(order: Order, db: Session, include_items: bool = False) -> dic
             processing_dates = [fallback_date]
         if not pickup_dates and stage_position[visible_stage] >= 2:
             pickup_dates = [fallback_date]
-        if not delivered_dates and stage_position[visible_stage] >= 3:
-            delivered_dates = [fallback_date]
-        if not invoice_dates and stage_position[visible_stage] >= 4:
-            invoice_dates = [fallback_date]
         stage_dates = {
             "PENDIENTE": max(pending_dates) if pending_dates else order.created_at,
             "EN_PROCESAMIENTO": max(processing_dates) if processing_dates and stage_position[visible_stage] >= 1 else None,
@@ -529,13 +525,13 @@ def orders(date_from: date | None = None, date_to: date | None = None,
         current = current or record.estado_registro_exit
         positions = {"PENDIENTE": 0, "REGISTRADO": 1, "EN_PROCESO": 1, "ATENDIDO": 2, "ENTREGADO": 3, "FACTURADO": 4}
         position = positions.get(current, 0)
-        process_at = record.source_updated_at or record.recorded_at
+        process_at = record.prepared_at or record.source_updated_at or record.recorded_at
         fallback = ((delivery or {}).get("invoiced_at") or (delivery or {}).get("delivered_at")
                     or (delivery or {}).get("attended_at") or process_at)
         dates = (record.recorded_at or process_at, process_at,
                  (delivery or {}).get("attended_at") or fallback,
-                 (delivery or {}).get("delivered_at") or fallback,
-                 (delivery or {}).get("invoiced_at") or fallback)
+                 (delivery or {}).get("delivered_at"),
+                 (delivery or {}).get("invoiced_at"))
         return [{"etapa": stage, "completed_at": dates[index] if index <= position else None}
                 for index, stage in enumerate(("PENDIENTE", "EN_PROCESAMIENTO", "PENDIENTE_RECOJO", "ENTREGADO", "FACTURADO"))]
     for record in exit_rows:
@@ -558,12 +554,18 @@ def orders(date_from: date | None = None, date_to: date | None = None,
                 local.fecha_registro_exit = record.recorded_at
         if local:
             linked.add(local.id)
+            existing_history = set(db.scalars(select(OrderStatusHistory.estado_registro_exit).where(
+                OrderStatusHistory.order_id == local.id
+            )).all())
+            if record.prepared_at and "EN_PROCESO" not in existing_history:
+                db.add(OrderStatusHistory(order_id=local.id, estado_registro_exit="EN_PROCESO", source="EXIT",
+                                          note="Pedido preparado en EXIT", created_at=record.prepared_at))
             if delivery:
                 document_events = [("ATENDIDO", delivery["attended_at"], f"Albarán {delivery['delivery_number']} generado")]
-                if delivery["is_printed"]:
+                if delivery["is_printed"] and delivery["delivered_at"]:
                     document_events.append(("ENTREGADO", delivery["delivered_at"], f"Albarán {delivery['delivery_number']} impreso"))
-                if delivery["is_invoiced"]:
-                    document_events.append(("FACTURADO", delivery["invoiced_at"] or delivery["delivered_at"], f"Albarán {delivery['delivery_number']} facturado"))
+                if delivery["is_invoiced"] and delivery["invoiced_at"]:
+                    document_events.append(("FACTURADO", delivery["invoiced_at"], f"Albarán {delivery['delivery_number']} facturado"))
                 sequence = ["PENDIENTE", "REGISTRADO", "EN_PROCESO", "ATENDIDO", "ENTREGADO", "FACTURADO"]
                 current_index = sequence.index(local.estado_registro_exit) if local.estado_registro_exit in sequence else 0
                 if effective_state in sequence and current_index > sequence.index(effective_state):
@@ -621,10 +623,10 @@ def orders(date_from: date | None = None, date_to: date | None = None,
             target = "FACTURADO" if delivery["is_invoiced"] else "ENTREGADO" if delivery["is_printed"] else "ATENDIDO"
             current_index = sequence.index(row.estado_registro_exit) if row.estado_registro_exit in sequence else 0
             events = [("ATENDIDO", delivery["attended_at"], f"Albarán {delivery['delivery_number']} generado")]
-            if delivery["is_printed"]:
+            if delivery["is_printed"] and delivery["delivered_at"]:
                 events.append(("ENTREGADO", delivery["delivered_at"], f"Albarán {delivery['delivery_number']} impreso"))
-            if delivery["is_invoiced"]:
-                events.append(("FACTURADO", delivery["invoiced_at"] or delivery["delivered_at"], f"Albarán {delivery['delivery_number']} facturado"))
+            if delivery["is_invoiced"] and delivery["invoiced_at"]:
+                events.append(("FACTURADO", delivery["invoiced_at"], f"Albarán {delivery['delivery_number']} facturado"))
             for status, occurred_at, note in events:
                 if sequence.index(status) > current_index:
                     db.add(OrderStatusHistory(order_id=row.id, estado_registro_exit=status, source="EXIT", note=note, created_at=occurred_at))
@@ -760,12 +762,17 @@ def export_documents(kind: str, q: str = "", date_from: date | None = None, date
                 and (not date_to or (row_date is not None and row_date <= date_to)))
     rows = [row for row in rows if included(row)]
     workbook = Workbook(); sheet = workbook.active; sheet.title = "Albaranes" if normalized == "ALBARAN" else "Facturas"
-    headers = ["Número", "Fecha", "Estado", "Delegación", "Pedido", "Factura", "Vencimiento", "Base imponible", "IVA", "Total"]
+    headers = (["Número", "Fecha", "Estado", "Delegación", "Pedido", "Factura", "Vencimiento", "Base imponible", "IVA", "Total"]
+               if normalized == "ALBARAN" else
+               ["Número", "Fecha", "Delegación", "Vencimiento", "Base imponible", "IVA", "Total"])
     sheet.append(headers)
     for row in rows:
-        sheet.append([row.get("number"), row.get("created_at"), row.get("status"), row.get("store_code"),
-                      row.get("order_number"), row.get("invoice_number"), row.get("due_date"),
-                      row.get("subtotal"), row.get("tax_total"), row.get("total")])
+        sheet.append(([row.get("number"), row.get("created_at"), row.get("status"), row.get("store_code"),
+                       row.get("order_number"), row.get("invoice_number"), row.get("due_date"),
+                       row.get("subtotal"), row.get("tax_total"), row.get("total")]
+                      if normalized == "ALBARAN" else
+                      [row.get("number"), row.get("created_at"), row.get("store_code"), row.get("due_date"),
+                       row.get("subtotal"), row.get("tax_total"), row.get("total")]))
     sheet.freeze_panes = "A2"; sheet.auto_filter.ref = sheet.dimensions
     for column, width in {"A":24,"B":20,"C":22,"D":14,"E":24,"F":24,"G":20,"H":18,"I":14,"J":16}.items():
         sheet.column_dimensions[column].width = width

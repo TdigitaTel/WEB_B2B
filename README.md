@@ -195,11 +195,11 @@ X-Integration-Key: una_clave_larga_y_aleatoria
 Estados válidos, en orden: `PENDIENTE`, `REGISTRADO`, `EN_PROCESO`, `ATENDIDO`, `ENTREGADO`, `FACTURADO`.
 
 Las fechas visibles del flujo proceden de los sistemas que originan cada evento. En pedidos B2B,
-`PENDIENTE` usa la creación web; `EN_PROCESAMIENTO` usa el registro o modificación del pedido en EXIT;
+`PENDIENTE` usa la creación web; `EN_PROCESAMIENTO` usa `PedidoVentaCabecera.FechaPreparacionPedido`;
 `PENDIENTE_RECOJO` usa `AlbaranVentaCabecera.FechaAlbaran`; `ENTREGADO` se activa cuando
-`StatusImpresion = -1` y usa `FechaEntrega`, con fecha de firma o modificación como respaldo; y
-`FACTURADO` usa `FechaFactura`. Los pedidos nacidos directamente en EXIT usan
-`FechaGrabacion + HoraGrabacion` para su alta y `FechaUltimaModificacion` para el procesamiento;
+`StatusImpresion = -1` y usa exclusivamente `FechaEntrega`; y `FACTURADO` requiere una factura
+asociada y `StatusFacturado = -1`, usando `FechaFactura`. Los pedidos nacidos directamente en EXIT usan
+`FechaGrabacion + HoraGrabacion` para su alta y `FechaPreparacionPedido` para el procesamiento;
 las tres etapas documentales usan las mismas fechas del albarán. EXIT no expone una
 `FechaImpresion` específica en esta tabla.
 

@@ -162,3 +162,4 @@ body{background:linear-gradient(180deg,#f6f9fb 0,#f1f5f7 420px,#f5f6f7 100%)}.se
 .dispatch-origin-badge{top:auto;right:auto;bottom:8px;left:12px;max-width:calc(100% - 90px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;box-shadow:0 1px 4px #0d2f4d1f}
 .dispatch-order.is-normal-order .dispatch-origin-badge{background:#dfe8ed;color:#3f596b}
 .dispatch-order.is-web-order .dispatch-origin-badge{background:#b42318;color:#fff}
+.document-card.invoice-card>summary{grid-template-columns:1.4fr .9fr .5fr 85px}

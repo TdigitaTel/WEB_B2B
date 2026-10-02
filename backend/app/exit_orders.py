@@ -39,6 +39,7 @@ class ExitOrderInput(BaseModel):
     source_created_by: str | None = None
     source_updated_at: datetime
     recorded_at: datetime | None = None
+    prepared_at: datetime | None = None
     customer_reference: str | None = None
     auxiliary_reference: str | None = None
     job_name: str | None = None

@@ -20,6 +20,7 @@ HEADER_CANDIDATES = {
     "recorded_time": ("HoraGrabacion",),
     "created_by": ("NombreCorto", "WebUsuario", "CodigoUsuario"),
     "updated_at": ("FechaUltimaModificacion", "FechaModificacion"),
+    "prepared_at": ("FechaPreparacionPedido",),
     "reference": ("SuPedidoNumero", "SuPedido", "ReferenciaInterna", "ReferenciaCliente", "Referencia"),
     "auxiliary_reference": ("ReferenciaAuxiliar", "Referencia_Auxiliar", "RefAuxiliar"),
     "notes": ("Observaciones", "Comentario", "Comentarios"),
@@ -140,7 +141,7 @@ def fetch_exit_orders_live(view: str = "active_kardex", date_from: date | None =
         _required(detail, ("year", "series", "number", "sku", "quantity", "zone"), detail_table)
         hs = {key: _discovered_column(value) for key, value in header.items() if value}
         ds = {key: _discovered_column(value) for key, value in detail.items() if value}
-        header_fields = ("year", "series", "number", "customer", "delegation", "status", "date", "recorded_date", "recorded_time", "created_by", "updated_at", "reference", "auxiliary_reference", "notes", "subtotal", "total")
+        header_fields = ("year", "series", "number", "customer", "delegation", "status", "date", "recorded_date", "recorded_time", "created_by", "updated_at", "prepared_at", "reference", "auxiliary_reference", "notes", "subtotal", "total")
         header_where: list[str] = []
         header_parameters: list = []
         if customer_code:
@@ -261,7 +262,10 @@ def fetch_exit_orders_live(view: str = "active_kardex", date_from: date | None =
             exit_order_id=external_id, order_number=f"EXIT-{year}-{series}-{number}"[:40],
             customer_code=str(row.get("customer") or "").strip(), store_code="ALM",
             estado_registro_exit=local_status, source_status=source_status, source_created_by=str(row.get("created_by") or "").strip() or None,
-            source_updated_at=updated_at, recorded_at=recorded_at, customer_reference=str(row.get("reference") or "").strip() or None,
+            source_updated_at=updated_at, recorded_at=recorded_at,
+            prepared_at=(row.get("prepared_at").replace(tzinfo=ZoneInfo("Europe/Madrid"))
+                         if isinstance(row.get("prepared_at"), datetime) else None),
+            customer_reference=str(row.get("reference") or "").strip() or None,
             auxiliary_reference=str(row.get("auxiliary_reference") or "").strip() or None,
             notes=str(row.get("notes") or "").strip() or None, subtotal=_decimal(row.get("subtotal")),
             tax_total=max(Decimal("0"), _decimal(row.get("total"))-_decimal(row.get("subtotal"))), total=_decimal(row.get("total")),

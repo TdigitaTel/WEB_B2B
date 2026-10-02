@@ -165,7 +165,7 @@ def fetch_customer_delivery_notes(customer_code: str, limit: int = 200) -> list[
         "subtotal": float(row.get("BaseImponible") or 0),
         "tax_total": float(row.get("TaxTotal") or 0),
         "total": float(row.get("ImporteFactura") or 0),
-        "status": ("FACTURADO" if int(row.get("StatusFacturado") or 0) else
+        "status": ("FACTURADO" if int(row.get("StatusFacturado") or 0) == -1 and int(row.get("NumeroFactura") or 0) > 0 else
                    "ENTREGADO" if int(row.get("StatusImpresion") or 0) == -1 else "PENDIENTE_DE_ENTREGA"),
         "store_code": str(row.get("IdDelegacion") or "").strip(),
         "order_number": _document_id(row.get("EjercicioPedido"), row.get("SeriePedido"), row.get("NumeroPedido")),
@@ -183,7 +183,8 @@ def fetch_customer_delivery_statuses(customer_code: str, limit: int = 1000) -> l
     sql = (
         f"SELECT TOP {max(1, min(limit, 5000))} EjercicioAlbaran, SerieAlbaran, NumeroAlbaran, "
         "FechaAlbaran, FechaEntrega, FechaFirma, FechaModificacion, FechaUltimaModificacion, FechaGrabacion, "
-        "StatusImpresion, StatusFacturado, FechaFactura, EjercicioPedido, SeriePedido, NumeroPedido "
+        "StatusImpresion, StatusFacturado, FechaFactura, EjercicioFactura, SerieFactura, NumeroFactura, "
+        "EjercicioPedido, SeriePedido, NumeroPedido "
         f"FROM {schema}.{table} "
         "WHERE LTRIM(RTRIM(CONVERT(varchar(100), CodigoCliente)))=%s "
         "AND COALESCE(NumeroPedido, 0) <> 0 "
@@ -196,13 +197,10 @@ def fetch_customer_delivery_statuses(customer_code: str, limit: int = 1000) -> l
         "order_number": _document_id(row.get("EjercicioPedido"), row.get("SeriePedido"), row.get("NumeroPedido")),
         "delivery_number": _document_id(row.get("EjercicioAlbaran"), row.get("SerieAlbaran"), row.get("NumeroAlbaran")),
         "attended_at": row.get("FechaAlbaran"),
-        # EXIT no expone FechaImpresion. FechaEntrega es la preferida y las fechas
-        # de firma/modificación son la aproximación auditable cuando StatusImpresion = -1.
-        "delivered_at": (row.get("FechaEntrega") or row.get("FechaFirma") or row.get("FechaModificacion")
-                         or row.get("FechaUltimaModificacion") or row.get("FechaGrabacion") or row.get("FechaAlbaran")),
+        "delivered_at": row.get("FechaEntrega"),
         "invoiced_at": row.get("FechaFactura"),
         "is_printed": int(row.get("StatusImpresion") or 0) == -1,
-        "is_invoiced": int(row.get("StatusFacturado") or 0) > 0,
+        "is_invoiced": int(row.get("StatusFacturado") or 0) == -1 and int(row.get("NumeroFactura") or 0) > 0,
     } for row in rows]
 
 
@@ -224,7 +222,7 @@ def fetch_delivery_statuses_for_orders(order_numbers: list[str]) -> list[dict]:
     sql = (
         "SELECT EjercicioAlbaran, SerieAlbaran, NumeroAlbaran, FechaAlbaran, FechaEntrega, FechaFirma, "
         "FechaModificacion, FechaUltimaModificacion, FechaGrabacion, StatusImpresion, StatusFacturado, "
-        f"FechaFactura, EjercicioPedido, SeriePedido, NumeroPedido FROM {schema}.{table} WHERE "
+        f"FechaFactura, EjercicioFactura, SerieFactura, NumeroFactura, EjercicioPedido, SeriePedido, NumeroPedido FROM {schema}.{table} WHERE "
         + " OR ".join(conditions) +
         " ORDER BY FechaAlbaran DESC, EjercicioAlbaran DESC, SerieAlbaran DESC, NumeroAlbaran DESC"
     )
@@ -235,11 +233,10 @@ def fetch_delivery_statuses_for_orders(order_numbers: list[str]) -> list[dict]:
         "order_number": _document_id(row.get("EjercicioPedido"), row.get("SeriePedido"), row.get("NumeroPedido")),
         "delivery_number": _document_id(row.get("EjercicioAlbaran"), row.get("SerieAlbaran"), row.get("NumeroAlbaran")),
         "attended_at": row.get("FechaAlbaran"),
-        "delivered_at": (row.get("FechaEntrega") or row.get("FechaFirma") or row.get("FechaModificacion")
-                         or row.get("FechaUltimaModificacion") or row.get("FechaGrabacion") or row.get("FechaAlbaran")),
+        "delivered_at": row.get("FechaEntrega"),
         "invoiced_at": row.get("FechaFactura"),
         "is_printed": int(row.get("StatusImpresion") or 0) == -1,
-        "is_invoiced": int(row.get("StatusFacturado") or 0) > 0,
+        "is_invoiced": int(row.get("StatusFacturado") or 0) == -1 and int(row.get("NumeroFactura") or 0) > 0,
     } for row in rows]
 
 
@@ -271,7 +268,6 @@ def fetch_customer_invoices(customer_code: str, limit: int = 200) -> list[dict]:
         "subtotal": float(row.get("BaseImponible") or 0),
         "tax_total": float(row.get("TaxTotal") or 0),
         "total": float(row.get("ImporteFactura") or 0),
-        "status": str(row.get("StatusCartera") or "REGISTRADA"),
         "store_code": str(row.get("IdDelegacion") or "").strip(),
         "document": str(row.get("Documento") or "").strip() or None,
         "source": "EXIT",
