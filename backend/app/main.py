@@ -18,7 +18,7 @@ from .auth import audit, create_access_token, current_user, hash_password, requi
 from .config import settings
 from .db import get_db
 from .erp_db import (
-    fetch_customer, fetch_customer_delivery_notes, fetch_customer_invoices,
+    fetch_customer, fetch_customer_delivery_notes, fetch_customer_delivery_statuses, fetch_customer_invoices,
     fetch_product_image, fetch_product_price, fetch_product_prices,
     fetch_product_stock, fetch_product_stocks, image_media_type,
 )
@@ -391,6 +391,22 @@ def create_order(data: OrderCreate, user: User = Depends(current_user), db: Sess
     rows = db.execute(select(CartItem, Product).join(Product, Product.id == CartItem.product_id).where(CartItem.cart_id == cart.id)).all()
     if not rows: raise HTTPException(400, "El pedido está vacío")
     prices = _erp_unit_prices([product for _, product in rows])
+    warehouse_by_store = {"ALM": "00", "COR": "01", "FER": "02", "STG": "04", "SAN": "05"}
+    warehouse_code = warehouse_by_store.get(store.code.strip().upper(), store.code.strip())
+    stock_warning = None
+    try:
+        stocks = fetch_product_stocks([product.sku for _, product in rows])
+        shortages = []
+        for cart_item, product in rows:
+            available = next((Decimal(str(item["available"])) for item in stocks.get(product.sku, [])
+                              if str(item["store_code"]).strip() == warehouse_code), Decimal("0"))
+            if available < cart_item.quantity:
+                shortages.append({"sku": product.sku, "name": product.short_description,
+                                  "requested": float(cart_item.quantity), "available": float(max(available, Decimal("0")))})
+        if shortages:
+            stock_warning = {"store": store.name, "items": shortages}
+    except Exception:
+        logger.exception("No se pudo comprobar el stock de recogida del pedido")
     initial_status = "BORRADOR" if data.draft else "PENDIENTE"
     order = Order(order_number=f"TMP-{cart.public_id[:20]}", customer_id=legacy_customer_id(user), customer_code=customer_code, user_id=user.id, store_id=store.id,
                   origen_pedido="B2B", estado_registro_exit=initial_status,
@@ -413,7 +429,10 @@ def create_order(data: OrderCreate, user: User = Depends(current_user), db: Sess
                                  payload={"order_number": order.order_number, "customer_erp_id": customer_code, "store": store.code}, sync_status=SyncStatus.pending))
     cart.status = "CONVERTED"
     audit(db, user, "ORDER_CREATED", "ORDER", order.public_id, {"number": order.order_number, "store": store.code})
-    db.commit(); return order_payload(order, db, True)
+    db.commit()
+    payload = order_payload(order, db, True)
+    payload["stock_warning"] = stock_warning
+    return payload
 
 
 def customer_order(order_id: str, user: User, db: Session) -> Order:
@@ -478,6 +497,20 @@ def orders(date_from: date | None = None, date_to: date | None = None,
     all_local_rows = db.scalars(select(Order).where(condition).order_by(Order.created_at.desc()).limit(5000)).all()
     local_rows = [row for row in all_local_rows if start <= row.created_at.date() <= end]
     exit_rows = fetch_customer_exit_orders(customer_code, start, end)
+    try:
+        delivery_rows = fetch_customer_delivery_statuses(customer_code)
+    except Exception:
+        logger.exception("No se pudieron consultar los albaranes para actualizar el historial")
+        delivery_rows = []
+    def document_key(value: str | None) -> str:
+        normalized = str(value or "").replace("~", "/").replace("-", "/")
+        return "/".join(part.strip().upper() for part in normalized.split("/") if part.strip())
+    deliveries: dict[str, dict] = {}
+    for delivery in delivery_rows:
+        key = document_key(delivery.get("order_number"))
+        if key and key not in deliveries:
+            deliveries[key] = delivery
+            deliveries.setdefault(key.split("/")[-1], delivery)
     by_exit: dict[str, Order] = {}
     by_web = {row.order_number.strip().upper(): row for row in all_local_rows}
     for row in all_local_rows:
@@ -487,15 +520,19 @@ def orders(date_from: date | None = None, date_to: date | None = None,
             by_exit[raw.split("/")[-1]] = row
     linked: set[int] = set()
     result: list[dict] = []
-    def exit_workflow(record) -> list[dict]:
-        current = record.estado_registro_exit
+    def exit_workflow(record, current: str | None = None, moment_override=None) -> list[dict]:
+        current = current or record.estado_registro_exit
         positions = {"PENDIENTE": 0, "REGISTRADO": 1, "EN_PROCESO": 1, "ATENDIDO": 2, "FACTURADO": 3}
         position = positions.get(current, 0)
-        moment = record.source_updated_at or record.recorded_at
+        moment = moment_override or record.source_updated_at or record.recorded_at
         return [{"etapa": stage, "completed_at": (record.recorded_at or moment) if index == 0 else moment if index <= position else None}
                 for index, stage in enumerate(("PENDIENTE", "EN_PROCESAMIENTO", "PENDIENTE_RECOJO", "FACTURADO"))]
     for record in exit_rows:
         external = record.exit_order_id.strip().upper()
+        external_key = document_key(external)
+        delivery = deliveries.get(external_key) or deliveries.get(external_key.split("/")[-1])
+        effective_state = "ATENDIDO" if delivery and record.estado_registro_exit != "FACTURADO" else record.estado_registro_exit
+        effective_moment = delivery.get("delivery_date") if delivery else None
         local = by_exit.get(external) or by_exit.get(external.split("/")[-1])
         if not local and record.customer_reference:
             local = by_web.get(record.customer_reference.strip().upper())
@@ -504,16 +541,21 @@ def orders(date_from: date | None = None, date_to: date | None = None,
                 local.fecha_registro_exit = record.recorded_at
         if local:
             linked.add(local.id)
+            if delivery and local.estado_registro_exit not in {"ATENDIDO", "FACTURADO"}:
+                local.estado_registro_exit = "ATENDIDO"
+                db.add(OrderStatusHistory(order_id=local.id, estado_registro_exit="ATENDIDO", source="EXIT",
+                                          note=f"Albarán {delivery['delivery_number']} generado",
+                                          created_at=delivery["delivery_date"]))
             payload = order_payload(local, db, True)
             payload.update({"nro_pedido_exit": record.exit_order_id, "exit_number": record.exit_order_id,
                             "web_number": local.order_number, "number": record.exit_order_id,
-                            "fecha_registro_exit": record.recorded_at, "estado_registro_exit": record.estado_registro_exit,
+                            "fecha_registro_exit": record.recorded_at, "estado_registro_exit": effective_state,
                             "customer_reference": record.customer_reference or local.customer_reference,
                             "notes": record.notes or local.notes, "subtotal": float(record.subtotal),
                             "tax_total": float(record.tax_total), "total": float(record.total),
                             "created_at": record.recorded_at or local.created_at,
                             "created_by": record.source_created_by or payload["created_by"], "local_order": True,
-                            "workflow": exit_workflow(record),
+                            "workflow": exit_workflow(record, effective_state, effective_moment),
                             "items": [{"sku": line.sku, "description": line.description, "quantity": float(line.quantity),
                                        "served_quantity": float(line.served_quantity or 0),
                                        "pending_quantity": float(line.pending_quantity or 0), "unit": line.unit,
@@ -529,7 +571,7 @@ def orders(date_from: date | None = None, date_to: date | None = None,
                        "notes": record.notes, "subtotal": float(record.subtotal), "tax_total": float(record.tax_total),
                        "total": float(record.total), "created_at": record.recorded_at or record.source_updated_at,
                        "fecha_registro_exit": record.recorded_at, "origen_pedido": "EXIT",
-                       "estado_registro_exit": record.estado_registro_exit,
+                       "estado_registro_exit": effective_state,
                        "created_by": record.source_created_by or "EXIT", "items": [
                            {"sku": line.sku, "description": line.description, "quantity": float(line.quantity),
                             "served_quantity": float(line.served_quantity or 0),
@@ -537,17 +579,25 @@ def orders(date_from: date | None = None, date_to: date | None = None,
                             "unit_price": float(line.unit_price),
                             "line_total": float(line.line_total or line.quantity * line.unit_price),
                             "fulfillment_zone": line.fulfillment_zone} for line in record.lines],
-                       "documents": [], "history_enabled": False, "workflow": exit_workflow(record)}
+                       "documents": [], "history_enabled": False, "workflow": exit_workflow(record, effective_state, effective_moment)}
         result.append(payload)
     for row in local_rows:
         if row.id in linked:
             continue
+        delivery = None
+        if row.nro_pedido_exit:
+            key = document_key(row.nro_pedido_exit)
+            delivery = deliveries.get(key) or deliveries.get(key.split("/")[-1])
+        if delivery and row.estado_registro_exit not in {"ATENDIDO", "FACTURADO"}:
+            row.estado_registro_exit = "ATENDIDO"
+            db.add(OrderStatusHistory(order_id=row.id, estado_registro_exit="ATENDIDO", source="EXIT",
+                                      note=f"Albarán {delivery['delivery_number']} generado",
+                                      created_at=delivery["delivery_date"]))
         payload = order_payload(row, db, True)
         payload.update({"web_number": row.order_number, "exit_number": row.nro_pedido_exit,
                         "local_order": True})
         result.append(payload)
-    if local_rows:
-        db.commit()
+    db.commit()
     requested = state.strip().upper()
     groups = {"BORRADOR": {"BORRADOR"}, "PENDIENTE": {"BORRADOR", "PENDIENTE"},
               "EN_PROCESAMIENTO": {"REGISTRADO", "EN_PROCESO"},

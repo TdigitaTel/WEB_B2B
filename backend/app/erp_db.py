@@ -175,6 +175,28 @@ def fetch_customer_delivery_notes(customer_code: str, limit: int = 200) -> list[
     } for row in rows]
 
 
+def fetch_customer_delivery_statuses(customer_code: str, limit: int = 1000) -> list[dict]:
+    """Devuelve el vínculo pedido-albarán sin cargar las líneas del documento."""
+    schema = _identifier(SALES_DOCUMENTS["schema"])
+    table = _identifier(SALES_DOCUMENTS["delivery_header"])
+    sql = (
+        f"SELECT TOP {max(1, min(limit, 5000))} EjercicioAlbaran, SerieAlbaran, NumeroAlbaran, "
+        "FechaAlbaran, EjercicioPedido, SeriePedido, NumeroPedido "
+        f"FROM {schema}.{table} "
+        "WHERE LTRIM(RTRIM(CONVERT(varchar(100), CodigoCliente)))=%s "
+        "AND COALESCE(NumeroPedido, 0) <> 0 "
+        "ORDER BY FechaAlbaran DESC, EjercicioAlbaran DESC, SerieAlbaran DESC, NumeroAlbaran DESC"
+    )
+    with connect_sqlserver() as connection, connection.cursor() as cursor:
+        cursor.execute(sql, (str(customer_code).strip(),))
+        rows = cursor.fetchall()
+    return [{
+        "order_number": _document_id(row.get("EjercicioPedido"), row.get("SeriePedido"), row.get("NumeroPedido")),
+        "delivery_number": _document_id(row.get("EjercicioAlbaran"), row.get("SerieAlbaran"), row.get("NumeroAlbaran")),
+        "delivery_date": row.get("FechaAlbaran"),
+    } for row in rows]
+
+
 def fetch_customer_invoices(customer_code: str, limit: int = 200) -> list[dict]:
     """Consulta facturas de venta directamente en EXITERP."""
     schema = _identifier(SALES_DOCUMENTS["schema"])
