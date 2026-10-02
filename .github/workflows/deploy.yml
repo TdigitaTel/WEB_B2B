@@ -12,6 +12,11 @@ concurrency:
   group: webb2b-${{ github.ref_name }}
   cancel-in-progress: false
 
+env:
+  WEBB2B_CONFIG_DIR: /opt/proyectos/WEB_B2B_INFRA/config
+  WEBB2B_BACKUP_DIR: /opt/proyectos/WEB_B2B_INFRA/backups
+  WEBB2B_STATE_DIR: /opt/proyectos/WEB_B2B_INFRA/releases
+
 jobs:
   development:
     if: github.ref_name == 'develop'
