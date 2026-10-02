@@ -675,15 +675,17 @@ def repeat_order(order_id: str, user: User = Depends(current_user), db: Session 
 
 
 @app.get("/api/v1/delivery-notes")
-def delivery_notes(user: User = Depends(current_user), db: Session = Depends(get_db)):
+def delivery_notes(document_number: str = "", date_from: date | None = None, date_to: date | None = None,
+                   user: User = Depends(current_user), db: Session = Depends(get_db)):
     customer_for(user, db)
-    return fetch_customer_delivery_notes(customer_code_for(user, db))
+    return fetch_customer_delivery_notes(customer_code_for(user, db), 1000, document_number, date_from, date_to)
 
 
 @app.get("/api/v1/invoices")
-def invoices(user: User = Depends(current_user), db: Session = Depends(get_db)):
+def invoices(document_number: str = "", date_from: date | None = None, date_to: date | None = None,
+             user: User = Depends(current_user), db: Session = Depends(get_db)):
     customer_for(user, db)
-    return fetch_customer_invoices(customer_code_for(user, db))
+    return fetch_customer_invoices(customer_code_for(user, db), 1000, document_number, date_from, date_to)
 
 
 def customer_documents(kind: str, user: User, db: Session) -> tuple[str, list[dict]]:

@@ -1,5 +1,6 @@
 import pymssql
 import re
+from datetime import date
 
 from .config import settings
 from .erp_schema import ARTICLE, CUSTOMER, IMAGE, SALES_DOCUMENTS, STOCK, WAREHOUSE
@@ -114,26 +115,54 @@ def _document_id(year, series, number) -> str:
     return f"{str(year).strip()}~{str(series).strip()}~{str(number).strip()}"
 
 
-def fetch_customer_delivery_notes(customer_code: str, limit: int = 200) -> list[dict]:
+def _document_filters(alias: str, prefix: str, document_number: str = "", date_from: date | None = None,
+                      date_to: date | None = None) -> tuple[str, list]:
+    clauses, parameters = [], []
+    if date_from:
+        clauses.append(f"{alias}.Fecha{prefix} >= %s")
+        parameters.append(date_from)
+    if date_to:
+        clauses.append(f"{alias}.Fecha{prefix} < DATEADD(day, 1, %s)")
+        parameters.append(date_to)
+    raw = str(document_number or "").strip()
+    if raw:
+        parts = [part.strip() for part in re.split(r"[~/\\-]+", raw) if part.strip()]
+        if len(parts) >= 3:
+            clauses.extend((
+                f"CONVERT(varchar(20), {alias}.Ejercicio{prefix}) = %s",
+                f"LTRIM(RTRIM(CONVERT(varchar(30), {alias}.Serie{prefix}))) = %s",
+                f"CONVERT(varchar(30), {alias}.Numero{prefix}) = %s",
+            ))
+            parameters.extend((parts[-3], parts[-2], parts[-1]))
+        else:
+            clauses.append(f"CONVERT(varchar(30), {alias}.Numero{prefix}) = %s")
+            parameters.append(raw)
+    return ("".join(f" AND {clause}" for clause in clauses), parameters)
+
+
+def fetch_customer_delivery_notes(customer_code: str, limit: int = 200, document_number: str = "",
+                                  date_from: date | None = None, date_to: date | None = None) -> list[dict]:
     """Consulta albaranes de venta directamente en EXITERP."""
     schema = _identifier(SALES_DOCUMENTS["schema"])
     table = _identifier(SALES_DOCUMENTS["delivery_header"])
+    filters_sql, filter_parameters = _document_filters("a", "Albaran", document_number, date_from, date_to)
     sql = (
         f"SELECT TOP {max(1, min(limit, 1000))} EjercicioAlbaran, SerieAlbaran, NumeroAlbaran, "
         "FechaAlbaran, CodigoCliente, IdDelegacion, BaseImponible, TotalCuotaIva AS TaxTotal, ImporteFactura, "
         "StatusFacturado, StatusImpresion, EjercicioPedido, SeriePedido, NumeroPedido, "
-        f"EjercicioFactura, SerieFactura, NumeroFactura FROM {schema}.{table} "
-        "WHERE LTRIM(RTRIM(CONVERT(varchar(100), CodigoCliente)))=%s "
+        f"EjercicioFactura, SerieFactura, NumeroFactura FROM {schema}.{table} a "
+        "WHERE LTRIM(RTRIM(CONVERT(varchar(100), a.CodigoCliente)))=%s " + filters_sql + " "
         "ORDER BY FechaAlbaran DESC, EjercicioAlbaran DESC, SerieAlbaran DESC, NumeroAlbaran DESC"
     )
     with connect_sqlserver() as connection, connection.cursor() as cursor:
-        cursor.execute(sql, (str(customer_code).strip(),))
+        parameters = [str(customer_code).strip(), *filter_parameters]
+        cursor.execute(sql, tuple(parameters))
         rows = cursor.fetchall()
         lines_table = _identifier(SALES_DOCUMENTS["delivery_lines"])
         line_sql = (
             f"WITH selected AS (SELECT TOP {max(1, min(limit, 1000))} CodigoEmpresa, EjercicioAlbaran, "
-            f"SerieAlbaran, NumeroAlbaran, FechaAlbaran FROM {schema}.{table} "
-            "WHERE LTRIM(RTRIM(CONVERT(varchar(100), CodigoCliente)))=%s "
+            f"SerieAlbaran, NumeroAlbaran, FechaAlbaran FROM {schema}.{table} a "
+            "WHERE LTRIM(RTRIM(CONVERT(varchar(100), a.CodigoCliente)))=%s " + filters_sql + " "
             "ORDER BY FechaAlbaran DESC, EjercicioAlbaran DESC, SerieAlbaran DESC, NumeroAlbaran DESC) "
             "SELECT l.EjercicioAlbaran, l.SerieAlbaran, l.NumeroAlbaran, l.Orden, l.CodigoArticulo, "
             "l.DescripcionArticulo, l.Descripcion2Articulo, l.UnidadMedida1_, l.Unidades, l.Precio, "
@@ -144,7 +173,7 @@ def fetch_customer_delivery_notes(customer_code: str, limit: int = 200) -> list[
             "AND s.NumeroAlbaran=l.NumeroAlbaran ORDER BY l.EjercicioAlbaran DESC, l.SerieAlbaran, "
             "l.NumeroAlbaran DESC, l.Orden"
         )
-        cursor.execute(line_sql, (str(customer_code).strip(),))
+        cursor.execute(line_sql, tuple(parameters))
         line_rows = cursor.fetchall()
     lines_by_document: dict[str, list[dict]] = {}
     for line in line_rows:
@@ -169,7 +198,7 @@ def fetch_customer_delivery_notes(customer_code: str, limit: int = 200) -> list[
                    "ENTREGADO" if int(row.get("StatusImpresion") or 0) == -1 else "PENDIENTE_DE_ENTREGA"),
         "store_code": str(row.get("IdDelegacion") or "").strip(),
         "order_number": _document_id(row.get("EjercicioPedido"), row.get("SeriePedido"), row.get("NumeroPedido")),
-        "invoice_number": (_document_id(row.get("EjercicioFactura"), row.get("SerieFactura"), row.get("NumeroFactura"))
+        "invoice_number": (f'{row.get("EjercicioFactura")}-{str(row.get("SerieFactura") or "").strip()}-{row.get("NumeroFactura")}'
                            if int(row.get("NumeroFactura") or 0) else None),
         "source": "EXIT",
         "items": lines_by_document.get(_document_id(row["EjercicioAlbaran"], row["SerieAlbaran"], row["NumeroAlbaran"]), []),
@@ -240,12 +269,14 @@ def fetch_delivery_statuses_for_orders(order_numbers: list[str]) -> list[dict]:
     } for row in rows]
 
 
-def fetch_customer_invoices(customer_code: str, limit: int = 200) -> list[dict]:
+def fetch_customer_invoices(customer_code: str, limit: int = 200, document_number: str = "",
+                            date_from: date | None = None, date_to: date | None = None) -> list[dict]:
     """Consulta facturas de venta directamente en EXITERP."""
     schema = _identifier(SALES_DOCUMENTS["schema"])
     table = _identifier(SALES_DOCUMENTS["invoice_header"])
     tax_table = _identifier(SALES_DOCUMENTS["invoice_tax"])
     due_dates = ", ".join(f"i.FechaVencimiento{index}" for index in range(1, 13))
+    filters_sql, filter_parameters = _document_filters("f", "Factura", document_number, date_from, date_to)
     sql = (
         f"SELECT TOP {max(1, min(limit, 1000))} f.EjercicioFactura, f.SerieFactura, f.NumeroFactura, "
         "f.FechaFactura, f.FechaRegistro, f.CodigoCliente, f.IdDelegacion, f.BaseImponible, "
@@ -254,11 +285,11 @@ def fetch_customer_invoices(customer_code: str, limit: int = 200) -> list[dict]:
         f"LEFT JOIN {schema}.{tax_table} i ON i.CodigoEmpresa=f.CodigoEmpresa "
         "AND i.EjercicioFactura=f.EjercicioFactura AND i.SerieFactura=f.SerieFactura "
         "AND i.NumeroFactura=f.NumeroFactura "
-        "WHERE LTRIM(RTRIM(CONVERT(varchar(100), f.CodigoCliente)))=%s "
+        "WHERE LTRIM(RTRIM(CONVERT(varchar(100), f.CodigoCliente)))=%s " + filters_sql + " "
         "ORDER BY f.FechaFactura DESC, f.EjercicioFactura DESC, f.SerieFactura DESC, f.NumeroFactura DESC"
     )
     with connect_sqlserver() as connection, connection.cursor() as cursor:
-        cursor.execute(sql, (str(customer_code).strip(),))
+        cursor.execute(sql, tuple([str(customer_code).strip(), *filter_parameters]))
         rows = cursor.fetchall()
     return [{
         "id": _document_id(row["EjercicioFactura"], row["SerieFactura"], row["NumeroFactura"]),
