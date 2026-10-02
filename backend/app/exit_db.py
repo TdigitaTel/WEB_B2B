@@ -122,7 +122,8 @@ def _exit_datetime(date_value, time_value=None) -> datetime:
     return base.replace(hour=hour, minute=minute, second=second, microsecond=0, tzinfo=ZoneInfo("Europe/Madrid"))
 
 def fetch_exit_orders_live(view: str = "active_kardex", date_from: date | None = None,
-                           date_to: date | None = None, limit: int = 500) -> list[ExitOrderInput]:
+                           date_to: date | None = None, limit: int = 500,
+                           customer_code: str | None = None) -> list[ExitOrderInput]:
     """Obtiene pedidos de la delegación 00 con todas sus líneas.
 
     Los activos se limitan al día actual de SQL Server. Los atendidos usan el rango
@@ -139,9 +140,20 @@ def fetch_exit_orders_live(view: str = "active_kardex", date_from: date | None =
         hs = {key: _discovered_column(value) for key, value in header.items() if value}
         ds = {key: _discovered_column(value) for key, value in detail.items() if value}
         header_fields = ("year", "series", "number", "customer", "delegation", "status", "date", "recorded_date", "recorded_time", "created_by", "updated_at", "reference", "notes", "subtotal", "total")
-        header_where = [f"LTRIM(RTRIM(CONVERT(varchar(20),h.{hs['delegation']})))=%s"]
-        header_parameters: list = ["00"]
-        if view == "attended":
+        header_where: list[str] = []
+        header_parameters: list = []
+        if customer_code:
+            _required(header, ("recorded_date", "customer"), header_table)
+            start = date_from or datetime.now(ZoneInfo("Europe/Madrid")).date()
+            end = date_to or start
+            header_where.extend((
+                f"LTRIM(RTRIM(CONVERT(varchar(100),h.{hs['customer']})))=%s",
+                f"CONVERT(date,h.{hs['recorded_date']}) BETWEEN %s AND %s",
+            ))
+            header_parameters.extend((str(customer_code).strip(), start, end))
+        elif view == "attended":
+            header_where.append(f"LTRIM(RTRIM(CONVERT(varchar(20),h.{hs['delegation']})))=%s")
+            header_parameters.append("00")
             _required(header, ("recorded_date",), header_table)
             start = date_from or datetime.now(ZoneInfo("Europe/Madrid")).date()
             end = date_to or start
@@ -151,6 +163,8 @@ def fetch_exit_orders_live(view: str = "active_kardex", date_from: date | None =
             ))
             header_parameters.extend(("S", start, end))
         else:
+            header_where.append(f"LTRIM(RTRIM(CONVERT(varchar(20),h.{hs['delegation']})))=%s")
+            header_parameters.append("00")
             _required(header, ("recorded_date",), header_table)
             header_where.extend((
                 f"COALESCE(UPPER(LTRIM(RTRIM(CONVERT(varchar(20),h.{hs['status']})))),'')<>%s",
@@ -166,7 +180,11 @@ def fetch_exit_orders_live(view: str = "active_kardex", date_from: date | None =
         with connection.cursor() as cursor:
             cursor.execute(header_sql, tuple(header_parameters))
             headers = cursor.fetchall()
-        if view == "attended":
+        if customer_code:
+            headers = [row for row in headers if start <= _exit_datetime(
+                row.get("recorded_date") or row.get("date"), row.get("recorded_time")
+            ).date() <= end and str(row.get("customer") or "").strip() == str(customer_code).strip()]
+        elif view == "attended":
             headers = [row for row in headers if start <= _exit_datetime(
                 row.get("recorded_date") or row.get("date"), row.get("recorded_time")
             ).date() <= end]
@@ -244,7 +262,7 @@ def fetch_exit_orders_live(view: str = "active_kardex", date_from: date | None =
             tax_total=max(Decimal("0"), _decimal(row.get("total"))-_decimal(row.get("subtotal"))), total=_decimal(row.get("total")),
             lines=lines_by_key.get((year, series, number), []),
         ))
-    if view in {"active_kardex", "active_sga"}:
+    if not customer_code and view in {"active_kardex", "active_sga"}:
         zone = "KARDEX" if view == "active_kardex" else "SGA"
         result = [order for order in result if any(
             line.fulfillment_zone == zone and
@@ -253,6 +271,12 @@ def fetch_exit_orders_live(view: str = "active_kardex", date_from: date | None =
             for line in order.lines
         )]
     return result
+
+
+def fetch_customer_exit_orders(customer_code: str, date_from: date, date_to: date,
+                               limit: int = 1000) -> list[ExitOrderInput]:
+    """Consulta directamente los pedidos EXIT de un cliente y rango de fechas."""
+    return fetch_exit_orders_live("customer", date_from, date_to, limit, customer_code=customer_code)
 
 
 def fetch_pending_exit_orders(limit: int = 200) -> list[ExitOrderInput]:

@@ -307,6 +307,8 @@ Consulta la cobertura obtenida con `python -m scripts.check_postgres_images`.
 
 PostgreSQL conserva los pedidos nacidos en la web. `orders.order_number` es su número B2B único y la integración se resume en cuatro campos: `nro_pedido_exit`, `fecha_registro_exit`, `origen_pedido` y `estado_registro_exit`. Los cambios que deben enviarse a EXIT se registran en `integration_outbox`.
 
+La pantalla **Mis pedidos** combina los pedidos locales con los pedidos del mismo cliente consultados en línea en EXIT. La relación prioritaria es `orders.nro_pedido_exit`; cuando aún está vacío también puede enlazarse mediante la referencia EXIT que contenga el número `WEB-...`. Una vez relacionado, EXIT aporta el estado, importes y líneas vigentes, y la cabecera muestra primero el número EXIT y debajo el número B2B. Por defecto se consulta el día actual y el estado Pendiente.
+
 La pantalla de comandas no duplica pedidos de EXIT en PostgreSQL: consulta cabecera y líneas directamente en SQL Server.
 
 La sección **Albaranes y facturas** consulta ambos tipos de documentos directamente en EXIT y los separa en pestañas. Cada documento permite descargar una representación PDF, mientras que el listado activo se puede exportar a Excel o imprimir con los filtros de número, fecha y estado aplicados.

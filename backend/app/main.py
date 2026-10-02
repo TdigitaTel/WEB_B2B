@@ -22,7 +22,7 @@ from .erp_db import (
     fetch_product_image, fetch_product_price, fetch_product_prices,
     fetch_product_stock, fetch_product_stocks, image_media_type,
 )
-from .exit_db import fetch_exit_orders_live
+from .exit_db import fetch_customer_exit_orders, fetch_exit_orders_live
 from .models import (
     Cart, CartItem, Customer, IntegrationOutbox, Notification,
     MaterialArea, MaterialFamily, MaterialProductType, MaterialSubfamily, Order, OrderItem,
@@ -465,13 +465,97 @@ def delete_order(order_id: str, user: User = Depends(current_user), db: Session 
 
 
 @app.get("/api/v1/orders")
-def orders(user: User = Depends(current_user), db: Session = Depends(get_db)):
+def orders(date_from: date | None = None, date_to: date | None = None,
+           state: str = "PENDIENTE", user: User = Depends(current_user), db: Session = Depends(get_db)):
     customer_for(user, db); customer_code = customer_code_for(user, db)
+    today = datetime.now().astimezone().date()
+    start, end = date_from or today, date_to or date_from or today
+    if start > end:
+        raise HTTPException(422, "La fecha desde no puede ser posterior a la fecha hasta")
     condition = Order.customer_code == customer_code
     if user.customer_id:
         condition = condition | (Order.customer_id == user.customer_id)
-    rows = db.scalars(select(Order).where(condition).order_by(Order.created_at.desc()).limit(100)).all()
-    return [order_payload(o, db, True) for o in rows]
+    all_local_rows = db.scalars(select(Order).where(condition).order_by(Order.created_at.desc()).limit(5000)).all()
+    local_rows = [row for row in all_local_rows if start <= row.created_at.date() <= end]
+    exit_rows = fetch_customer_exit_orders(customer_code, start, end)
+    by_exit: dict[str, Order] = {}
+    by_web = {row.order_number.strip().upper(): row for row in all_local_rows}
+    for row in all_local_rows:
+        if row.nro_pedido_exit:
+            raw = row.nro_pedido_exit.strip().upper()
+            by_exit[raw] = row
+            by_exit[raw.split("/")[-1]] = row
+    linked: set[int] = set()
+    result: list[dict] = []
+    def exit_workflow(record) -> list[dict]:
+        current = record.estado_registro_exit
+        positions = {"PENDIENTE": 0, "REGISTRADO": 1, "EN_PROCESO": 1, "ATENDIDO": 2, "FACTURADO": 3}
+        position = positions.get(current, 0)
+        moment = record.source_updated_at or record.recorded_at
+        return [{"etapa": stage, "completed_at": (record.recorded_at or moment) if index == 0 else moment if index <= position else None}
+                for index, stage in enumerate(("PENDIENTE", "EN_PROCESAMIENTO", "PENDIENTE_RECOJO", "FACTURADO"))]
+    for record in exit_rows:
+        external = record.exit_order_id.strip().upper()
+        local = by_exit.get(external) or by_exit.get(external.split("/")[-1])
+        if not local and record.customer_reference:
+            local = by_web.get(record.customer_reference.strip().upper())
+            if local and not local.nro_pedido_exit:
+                local.nro_pedido_exit = record.exit_order_id
+                local.fecha_registro_exit = record.recorded_at
+        if local:
+            linked.add(local.id)
+            payload = order_payload(local, db, True)
+            payload.update({"nro_pedido_exit": record.exit_order_id, "exit_number": record.exit_order_id,
+                            "web_number": local.order_number, "number": record.exit_order_id,
+                            "fecha_registro_exit": record.recorded_at, "estado_registro_exit": record.estado_registro_exit,
+                            "customer_reference": record.customer_reference or local.customer_reference,
+                            "notes": record.notes or local.notes, "subtotal": float(record.subtotal),
+                            "tax_total": float(record.tax_total), "total": float(record.total),
+                            "created_at": record.recorded_at or local.created_at,
+                            "created_by": record.source_created_by or payload["created_by"], "local_order": True,
+                            "workflow": exit_workflow(record),
+                            "items": [{"sku": line.sku, "description": line.description, "quantity": float(line.quantity),
+                                       "served_quantity": float(line.served_quantity or 0),
+                                       "pending_quantity": float(line.pending_quantity or 0), "unit": line.unit,
+                                       "unit_price": float(line.unit_price),
+                                       "line_total": float(line.line_total or line.quantity * line.unit_price),
+                                       "fulfillment_zone": line.fulfillment_zone} for line in record.lines]})
+        else:
+            payload = {"id": f"exit:{record.exit_order_id}", "number": record.exit_order_id,
+                       "exit_number": record.exit_order_id, "web_number": None, "nro_pedido_exit": record.exit_order_id,
+                       "local_order": False, "store": "Almeiras", "store_code": record.store_code,
+                       "customer_code": record.customer_code, "customer": exit_customer_name(record.customer_code),
+                       "customer_reference": record.customer_reference, "job_name": record.job_name,
+                       "notes": record.notes, "subtotal": float(record.subtotal), "tax_total": float(record.tax_total),
+                       "total": float(record.total), "created_at": record.recorded_at or record.source_updated_at,
+                       "fecha_registro_exit": record.recorded_at, "origen_pedido": "EXIT",
+                       "estado_registro_exit": record.estado_registro_exit,
+                       "created_by": record.source_created_by or "EXIT", "items": [
+                           {"sku": line.sku, "description": line.description, "quantity": float(line.quantity),
+                            "served_quantity": float(line.served_quantity or 0),
+                            "pending_quantity": float(line.pending_quantity or 0), "unit": line.unit,
+                            "unit_price": float(line.unit_price),
+                            "line_total": float(line.line_total or line.quantity * line.unit_price),
+                            "fulfillment_zone": line.fulfillment_zone} for line in record.lines],
+                       "documents": [], "history_enabled": False, "workflow": exit_workflow(record)}
+        result.append(payload)
+    for row in local_rows:
+        if row.id in linked:
+            continue
+        payload = order_payload(row, db, True)
+        payload.update({"web_number": row.order_number, "exit_number": row.nro_pedido_exit,
+                        "local_order": True})
+        result.append(payload)
+    if local_rows:
+        db.commit()
+    requested = state.strip().upper()
+    groups = {"BORRADOR": {"BORRADOR"}, "PENDIENTE": {"BORRADOR", "PENDIENTE"},
+              "EN_PROCESAMIENTO": {"REGISTRADO", "EN_PROCESO"},
+              "PENDIENTE_RECOJO": {"ATENDIDO"}, "FACTURADO": {"FACTURADO"}}
+    if requested not in {"", "TODOS"}:
+        accepted = groups.get(requested, {requested})
+        result = [item for item in result if str(item.get("estado_registro_exit") or "").upper() in accepted]
+    return sorted(result, key=lambda item: str(item.get("created_at") or ""), reverse=True)
 
 
 @app.get("/api/v1/orders/{order_id}")
