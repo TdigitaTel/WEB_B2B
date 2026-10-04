@@ -48,6 +48,14 @@ ARTICLE = {
     "price_without_tax": "PrecioVentaSinIVA0",
 }
 
+CUSTOMER_PURCHASES = {
+    "schema": "dbo",
+    "view": "VIS_PBI_PANELVENTAS",
+    "customer_code": "CodigoCliente",
+    "article_code": "CodigoArticulo",
+    "units": "Unidades",
+}
+
 # Pedidos pendientes para la bandeja de operación. Los nombres de campos
 # alternativos se resuelven contra INFORMATION_SCHEMA en cada instalación.
 EXIT_SALES_ORDER = {

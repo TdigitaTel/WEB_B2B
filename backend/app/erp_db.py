@@ -3,7 +3,7 @@ import re
 from datetime import date
 
 from .config import settings
-from .erp_schema import ARTICLE, CUSTOMER, IMAGE, SALES_DOCUMENTS, STOCK, WAREHOUSE
+from .erp_schema import ARTICLE, CUSTOMER, CUSTOMER_PURCHASES, IMAGE, SALES_DOCUMENTS, STOCK, WAREHOUSE
 
 
 def connect_sqlserver():
@@ -109,6 +109,39 @@ def fetch_customer_codes(after_code: str = "", limit: int = 30) -> list[str]:
             cursor.execute(sql, (str(after_code).strip(),))
             rows = cursor.fetchall()
     return [str(row["customer_code"]).strip() for row in rows if row.get("customer_code")]
+
+
+def fetch_customer_favorite_articles(customer_code: str, limit: int = 8) -> list[dict]:
+    """Devuelve los artículos más comprados por el cliente, ordenados por unidades."""
+    schema = _identifier(CUSTOMER_PURCHASES["schema"])
+    view = _identifier(CUSTOMER_PURCHASES["view"])
+    customer_column = _identifier(CUSTOMER_PURCHASES["customer_code"])
+    article_column = _identifier(CUSTOMER_PURCHASES["article_code"])
+    units_column = _identifier(CUSTOMER_PURCHASES["units"])
+    result_limit = max(1, min(int(limit), 50))
+    sql = (
+        f"SELECT TOP {result_limit} "
+        f"LTRIM(RTRIM(CONVERT(varchar(100), v.{article_column}))) AS article_code, "
+        f"SUM(COALESCE(v.{units_column}, 0)) AS purchased_units "
+        f"FROM {schema}.{view} v "
+        f"WHERE LTRIM(RTRIM(CONVERT(varchar(100), v.{customer_column}))) = %s "
+        f"AND v.{article_column} IS NOT NULL "
+        f"AND LTRIM(RTRIM(CONVERT(varchar(100), v.{article_column}))) <> '' "
+        f"GROUP BY v.{article_column} "
+        f"ORDER BY purchased_units DESC, article_code"
+    )
+    with connect_sqlserver() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(sql, (str(customer_code).strip(),))
+            rows = cursor.fetchall()
+    return [
+        {
+            "article_code": str(row["article_code"]).strip(),
+            "purchased_units": float(row["purchased_units"] or 0),
+        }
+        for row in rows
+        if row.get("article_code")
+    ]
 
 
 def _document_id(year, series, number) -> str:
