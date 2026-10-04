@@ -20,7 +20,7 @@ from .db import get_db
 from .erp_db import (
     fetch_customer, fetch_customer_delivery_notes, fetch_customer_delivery_statuses, fetch_customer_invoices,
     fetch_delivery_statuses_for_orders,
-    fetch_product_image, fetch_product_price, fetch_product_prices,
+    fetch_customer_favorite_articles, fetch_product_image, fetch_product_price, fetch_product_prices,
     fetch_product_stock, fetch_product_stocks, image_media_type,
 )
 from .exit_db import fetch_customer_exit_orders, fetch_exit_orders_live
@@ -257,6 +257,45 @@ def products(q: str = "", family: str | None = None, area_id: int | None = None,
         logger.exception("Error consultando precios ERP para el catalogo")
         prices = {}
     return {"items": [product_view(p, customer, db, stocks.get(p.sku, []), prices.get(p.sku)) for p in rows], "total": total, "page": page, "page_size": page_size}
+
+
+@app.get("/api/v1/catalog/favorites")
+def favorite_products(limit: int = Query(8, ge=1, le=24), user: User = Depends(current_user),
+                      db: Session = Depends(get_db)):
+    customer = customer_for(user, db)
+    customer_code = customer_code_for(user, db)
+    try:
+        purchases = fetch_customer_favorite_articles(customer_code, limit)
+    except Exception as exc:
+        logger.exception("Error consultando los artículos favoritos del cliente %s", customer_code)
+        raise HTTPException(503, "No se pudieron consultar los materiales favoritos en EXIT") from exc
+
+    purchased_units = {row["article_code"]: row["purchased_units"] for row in purchases}
+    codes = list(purchased_units)
+    if not codes:
+        return {"items": [], "total": 0}
+    products_by_code = {
+        product.sku: product
+        for product in db.scalars(select(Product).where(Product.active.is_(True), Product.sku.in_(codes))).all()
+    }
+    rows = [products_by_code[code] for code in codes if code in products_by_code]
+    product_codes = [product.sku for product in rows]
+    try:
+        stocks = fetch_product_stocks(product_codes)
+    except Exception as exc:
+        logger.exception("Error consultando stock ERP para materiales favoritos")
+        raise HTTPException(503, "No se pudo consultar el stock en el ERP") from exc
+    try:
+        prices = fetch_product_prices(product_codes)
+    except Exception:
+        logger.exception("Error consultando precios ERP para materiales favoritos")
+        prices = {}
+    items = []
+    for product in rows:
+        item = product_view(product, customer, db, stocks.get(product.sku, []), prices.get(product.sku))
+        item["purchased_units"] = purchased_units[product.sku]
+        items.append(item)
+    return {"items": items, "total": len(items)}
 
 
 @app.get("/api/v1/catalog/classification")
