@@ -8,6 +8,7 @@ from .erp_schema import EXIT_SALES_ORDER
 from .exit_orders import ExitOrderInput, ExitOrderLineInput
 
 HEADER_CANDIDATES = {
+    "company": ("CodigoEmpresa",),
     "year": ("EjercicioPedido", "Ejercicio"),
     "series": ("SeriePedido", "Serie"),
     "number": ("NumeroPedido", "NumeroPedidoVenta", "Numero"),
@@ -141,7 +142,7 @@ def fetch_exit_orders_live(view: str = "active_kardex", date_from: date | None =
         _required(detail, ("year", "series", "number", "sku", "quantity", "zone"), detail_table)
         hs = {key: _discovered_column(value) for key, value in header.items() if value}
         ds = {key: _discovered_column(value) for key, value in detail.items() if value}
-        header_fields = ("year", "series", "number", "customer", "delegation", "status", "date", "recorded_date", "recorded_time", "created_by", "updated_at", "prepared_at", "reference", "auxiliary_reference", "notes", "subtotal", "total")
+        header_fields = ("company", "year", "series", "number", "customer", "delegation", "status", "date", "recorded_date", "recorded_time", "created_by", "updated_at", "prepared_at", "reference", "auxiliary_reference", "notes", "subtotal", "total")
         header_where: list[str] = []
         header_parameters: list = []
         if customer_code:
@@ -260,7 +261,9 @@ def fetch_exit_orders_live(view: str = "active_kardex", date_from: date | None =
         local_status = "ATENDIDO" if source_status == "S" else "EN_PROCESO"
         result.append(ExitOrderInput(
             exit_order_id=external_id, order_number=f"EXIT-{year}-{series}-{number}"[:40],
-            customer_code=str(row.get("customer") or "").strip(), store_code="ALM",
+            customer_code=str(row.get("customer") or "").strip(),
+            store_code=(f"{int(row['company'])}:{str(row.get('delegation') or '').strip()}"
+                        if row.get("company") is not None else str(row.get("delegation") or "").strip()),
             estado_registro_exit=local_status, source_status=source_status, source_created_by=str(row.get("created_by") or "").strip() or None,
             source_updated_at=updated_at, recorded_at=recorded_at,
             prepared_at=(row.get("prepared_at").replace(tzinfo=ZoneInfo("Europe/Madrid"))

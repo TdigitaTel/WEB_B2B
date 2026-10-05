@@ -5,6 +5,8 @@ from . import models  # noqa: F401
 
 
 def main():
+    from .migrate_delegations import migrate_delegations
+    migrate_delegations(engine)
     Base.metadata.create_all(engine)
     if engine.dialect.name == "postgresql":
         with engine.begin() as conn:

@@ -6,9 +6,10 @@ from sqlalchemy import func, select
 from .auth import hash_password
 from .config import settings
 from .db import SessionLocal
+from .delegations import Delegation
 from .models import (
     Brand, Category, Customer,
-    Order, OrderItem, OrderStatusHistory, Product, Store, SyncStatus, User,
+    Order, OrderItem, OrderStatusHistory, Product, SyncStatus, User,
 )
 
 
@@ -75,14 +76,8 @@ def seed():
         if (db.scalar(select(func.count()).select_from(Product)) or 0) >= settings.seed_products:
             return
 
-        stores = []
-        for code, name, address in STORES:
-            store = db.scalar(select(Store).where(Store.code == code))
-            if not store:
-                store = Store(code=code, name=name, address=address)
-                db.add(store)
-            stores.append(store)
-        db.flush()
+        # Solo referencias de demostración; nunca crea una maestra PostgreSQL.
+        stores = [Delegation(0, code, name, address, "", "") for code, name, address in STORES]
 
         brands = []
         for name in BRANDS:

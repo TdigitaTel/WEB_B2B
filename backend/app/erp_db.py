@@ -138,6 +138,28 @@ def fetch_catalog_articles(query: str = "", page: int = 1, page_size: int = 24,
         if columns["inactive"]:
             conditions.append(f"COALESCE(a.{_discovered_column(columns['inactive'])}, 0) = 0")
         normalized_query = normalize_query(query)
+        stock_join = ""
+        stock_parameters: list = []
+        order_expression = code_expression
+        if not normalized_query:
+            excluded = [code.strip() for code in settings.sqlserver_stock_excluded_warehouses.split(",") if code.strip()]
+            exclusion = ""
+            if excluded:
+                exclusion = (
+                    f"WHERE LTRIM(RTRIM(CONVERT(varchar(100), s.{_identifier(STOCK['warehouse_code'])}))) "
+                    f"NOT IN ({', '.join(['%s'] * len(excluded))}) "
+                )
+                stock_parameters.extend(excluded)
+            stock_code = f"LTRIM(RTRIM(CONVERT(varchar(100), s.{_identifier(STOCK['article_code'])})))"
+            stock_join = (
+                f"INNER JOIN (SELECT {stock_code} AS article_code, "
+                f"SUM(COALESCE(s.{_identifier(STOCK['units'])}, 0)) AS available "
+                f"FROM {_identifier(STOCK['schema'])}.{_identifier(STOCK['table'])} s {exclusion}"
+                f"GROUP BY {stock_code} "
+                f"HAVING SUM(COALESCE(s.{_identifier(STOCK['units'])}, 0)) > 0) stock "
+                f"ON stock.article_code = {code_expression} "
+            )
+            order_expression = f"stock.available DESC, {code_expression}"
         if normalized_query:
             searchable = [code_expression]
             searchable.extend(expression for expression in (
@@ -146,7 +168,8 @@ def fetch_catalog_articles(query: str = "", page: int = 1, page_size: int = 24,
             for term in normalized_query.split():
                 conditions.append("(" + " OR ".join(f"{expression} LIKE %s" for expression in searchable) + ")")
                 parameters.extend([f"%{term}%"] * len(searchable))
-        from_sql = f"FROM {schema}.{table} a {eligible_join}WHERE " + " AND ".join(conditions)
+        parameters = stock_parameters + parameters
+        from_sql = f"FROM {schema}.{table} a {eligible_join}{stock_join}WHERE " + " AND ".join(conditions)
         cursor.execute(f"SELECT COUNT_BIG(*) AS total {from_sql}", tuple(parameters))
         total = int((cursor.fetchone() or {}).get("total") or 0)
         selections = {
@@ -163,7 +186,7 @@ def fetch_catalog_articles(query: str = "", page: int = 1, page_size: int = 24,
         select_sql = ", ".join(f"{expression} AS [{name}]" for name, expression in selections.items())
         page_parameters = [*parameters, (page - 1) * page_size, page_size]
         cursor.execute(
-            f"SELECT {select_sql} {from_sql} ORDER BY {code_expression} "
+            f"SELECT {select_sql} {from_sql} ORDER BY {order_expression} "
             "OFFSET %s ROWS FETCH NEXT %s ROWS ONLY",
             tuple(page_parameters),
         )
