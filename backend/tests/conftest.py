@@ -37,6 +37,10 @@ def exit_erp_stub(monkeypatch):
     from sqlalchemy import select
 
     from app import main as main_module
+    from app import delegations as delegation_module
+    from app import exit_orders as exit_orders_module
+    from app.delegations import Delegation
+    from app.seed import STORES
     from app.db import SessionLocal
     from app.models import Product
     from app.search import normalize_query
@@ -110,6 +114,11 @@ def exit_erp_stub(monkeypatch):
             ]
             for code in article_codes
         }
+
+    warehouses = {"ALM": "00", "COR": "01", "FER": "02", "SAN": "04", "SAX": "05"}
+    delegations = [Delegation(0, code, name, address, warehouses[code], name) for code, name, address in STORES]
+    monkeypatch.setattr(main_module, "fetch_delegations", lambda: delegations)
+    monkeypatch.setattr(delegation_module, "fetch_delegations", lambda: delegations)
 
     monkeypatch.setattr(main_module, "fetch_customer", fetch_customer)
     monkeypatch.setattr(main_module, "fetch_catalog_articles", fetch_catalog_articles)

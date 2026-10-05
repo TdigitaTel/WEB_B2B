@@ -6,7 +6,7 @@ import CategoryUpload from "./CategoryUpload";
 type View = "home" | "catalog" | "orders" | "documents" | "ops" | "category-upload" | "account";
 type User = { id: string; name: string; email: string; role: string };
 type AccountCustomer = { trade_name: string; legal_name: string; erp_id: string; tax_id: string; email: string; phone: string; billing_address: string; price_list: string; discount_pct: number };
-type Store = { id: string; code: string; name: string; address: string };
+type Store = { id: string; code: string; name: string; address: string; company_code: number; warehouse_code: string; warehouse_name: string };
 type Stock = { store_code: string; store: string; available: number };
 type Suggestion = { id: string; sku: string; name: string; price: number; area_id: number; family_id: number; subfamily_id: number; product_type_id: number };
 type Product = { id: string; image_url: string; sku: string; name: string; brand: string; family: string; customer_price: number; list_price: number; price_with_tax: number; price_without_tax: number; tax_rate: number; total_available: number; stock: Stock[]; purchased_units?: number };
@@ -259,7 +259,7 @@ export default function Page() {
       </div>
       <nav className="desktop-nav">{(isOperator ? [["ops","Operaciones"],["category-upload","Carga de categorías"]] : [["home","Inicio"],["catalog","Catálogo"],["orders","Mis pedidos"],["documents","Albaranes y facturas"],["account","Mi cuenta"]]).map(([id,label]) => <button key={id} className={view===id?"active":""} onClick={() => setView(id as View)}>{label}</button>)}</nav>
     </header>
-    <div className="service-strip"><span>ÁREA PROFESIONAL · Compra a tu ritmo</span><span>5 delegaciones · Recogida en tienda</span></div>{error && <div className="page error" role="alert">{error}</div>}
+    <div className="service-strip"><span>ÁREA PROFESIONAL · Compra a tu ritmo</span><span>{stores.length} delegaciones · Recogida en tienda</span></div>{error && <div className="page error" role="alert">{error}</div>}
     {view === "home" && <Home customer={customer} orders={orders} products={favoriteProducts} classification={classification} onNavigate={setView} onSelectArea={areaId=>{setCatalogFilters({areaId:String(areaId),familyId:"",subfamilyId:"",productTypeId:""});setView("catalog")}} onAdd={addProduct} />}
     {view === "catalog" && <Catalog products={products} total={totalProducts} classification={classification} filters={catalogFilters} setFilters={setCatalogFilters} onAdd={addProduct} onLoadMore={loadMoreProducts} loadingMore={loadingMoreProducts} />}
     {view === "orders" && <Orders orders={orders} refreshing={refreshingOrders} onRefresh={refreshOrders} onRepeat={repeatOrder} onSubmitDraft={submitDraft} onDelete={deleteOrder} />}

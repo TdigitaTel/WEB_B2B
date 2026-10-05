@@ -11,7 +11,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from .models import Order, OrderItem, OrderStatusHistory, Product, Store, SyncStatus, User
+from .delegations import resolve_delegation
+from .models import Order, OrderItem, OrderStatusHistory, Product, SyncStatus, User
 
 
 class ExitOrderLineInput(BaseModel):
@@ -52,7 +53,7 @@ class ExitOrderInput(BaseModel):
 
 def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: User) -> Order:
     """Crea/actualiza la proyección local. Repetir el mismo registro no lo duplica."""
-    store = db.scalar(select(Store).where(Store.code == incoming.store_code, Store.active.is_(True)))
+    store = resolve_delegation(incoming.store_code)
     if not store:
         raise ValueError(f"Almacén interno desconocido: {incoming.store_code}")
     estado_registro_exit = incoming.estado_registro_exit.strip().upper()
