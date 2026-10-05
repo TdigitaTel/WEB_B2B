@@ -7,7 +7,7 @@ Aplicación B2B mobile-first para que instaladores busquen material, consulten p
 - Next.js + TypeScript, diseño blanco y mobile-first.
 - FastAPI con API versionada y Swagger.
 - PostgreSQL 17.
-- 15.000 referencias sintéticas realistas.
+- Catálogo de artículos consultado en línea en EXITERP.
 - 100 clientes profesionales de prueba.
 - Stock en Almeiras, A Coruña, Sanxenxo, Ferrol y Santiago.
 - Precio profesional calculado según el cliente.
@@ -79,7 +79,7 @@ DATABASE_URL=sqlite+pysqlite:///./test.db SEED_PRODUCTS=300 SEED_CUSTOMERS=5 pyt
 
 ## Integración con EXITERP
 
-EXITERP es la fuente de datos maestros de clientes, precios, stock e imágenes disponibles. PostgreSQL conserva el catálogo preparado para búsquedas, las contraseñas cifradas y la actividad propia del portal (carritos, pedidos, estados y auditoría). Los datos fiscales y comerciales del cliente no se copian a PostgreSQL.
+EXITERP es la fuente en línea de artículos, clientes, precios y stock. PostgreSQL conserva la clasificación comercial (área, familia, subfamilia y tipo), los nombres homologados, las imágenes validadas, las contraseñas cifradas y la actividad propia del portal (carritos, pedidos, estados y auditoría). Los datos fiscales y comerciales del cliente no se copian a PostgreSQL.
 
 ## Despliegue en un servidor Linux
 
@@ -101,14 +101,14 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 
 La web queda disponible en el puerto definido por `WEB_PORT`, inicialmente el puerto 80. PostgreSQL no se publica en Internet y la API sigue accesible únicamente desde el propio servidor y la red interna de Docker.
 
-En la primera instalación, carga el catálogo clasificado del Excel en PostgreSQL:
+En la primera instalación, carga en PostgreSQL la clasificación comercial de los materiales:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api \
   python -m app.import_materials /app/data/materials_classified.csv
 ```
 
-Esta operación crea y relaciona departamentos, familias, subfamilias y tipos de producto; conserva la descripción original y carga la descripción normalizada utilizada por el buscador. El importador es repetible: actualiza los materiales por código y conserva una copia auditable de cada fila del archivo.
+Esta operación crea y relaciona departamentos, familias, subfamilias y tipos de producto. El maestro, la disponibilidad, la descripción original, la unidad y los precios se consultan en línea en EXITERP. El importador es repetible: actualiza por código el nombre homologado y la clasificación propia de la web, y conserva una copia auditable de cada fila.
 
 Comprobaciones:
 
@@ -242,7 +242,21 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api \
   python -m scripts.inspect_sqlserver_images
 ```
 
-Cada tarjeta solicita `/api/v1/products/{id}/image`. La API relaciona el SKU del catálogo con `dbo.imagenes.CodigoArticulo` y devuelve el binario como JPEG, PNG, GIF, BMP o WebP. El stock se obtiene de `dbo.vis_ex_stockarticuloalmacen.UnidadSaldo`, los nombres de almacén de `dbo.almacenes` y los precios de `dbo.articulos.PrecioVentaConIVA0` y `PrecioVentaSinIVA0`.
+La lista de artículos se consulta directamente en `dbo.articulos`; PostgreSQL aporta la jerarquía de categorías, el nombre homologado y un identificador estable para carrito y pedidos. El stock se obtiene de `dbo.vis_ex_stockarticuloalmacen.UnidadSaldo`, los nombres de almacén de `dbo.almacenes` y los precios de `dbo.articulos.PrecioVentaConIVA0` y `PrecioVentaSinIVA0`.
+
+Los operadores disponen de **Carga de categorías**. La pantalla permite descargar una plantilla, validar un CSV/XLSX y, después de revisar los errores, actualizar área, familia, subfamilia, tipo de producto, criterios y nombre homologado. Cuando aparece en EXIT un artículo sin ficha vinculada en PostgreSQL se escribe el aviso `CATALOG_METADATA_MISSING` en el log y la misma pantalla permite descargar `articulos_sin_clasificacion.csv` para completar esos datos. Esta carga no procesa imágenes.
+
+Cada tarjeta solicita `/api/v1/products/{id}/image`. Si el material no tiene una imagen validada en PostgreSQL, la API crea una fila en `product_image_missing`. La pantalla de carga permite descargar ese registro, pero no importa imágenes automáticamente. La utilidad independiente también trabaja en modo de validación por defecto:
+
+```bash
+# Exportar la cola a un archivo dentro del contenedor
+python -m scripts.process_missing_product_images --export-log /tmp/imagenes_pendientes.csv
+
+# Validar un archivo revisado; no guarda imágenes
+python -m scripts.process_missing_product_images --input /tmp/imagenes_revisadas.csv
+```
+
+La opción `--apply` existe para una fase posterior. Solo guarda filas que además tengan `aprobado=SI`; no debe ejecutarse hasta completar la validación humana de las imágenes.
 
 ### Clientes y contraseñas
 

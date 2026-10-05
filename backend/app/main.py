@@ -15,24 +15,30 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .auth import audit, create_access_token, current_user, hash_password, require_roles, verify_password
+from .category_import import router as category_import_router
 from .config import settings
 from .db import get_db
 from .erp_db import (
+    fetch_catalog_articles, fetch_catalog_articles_by_codes,
     fetch_customer, fetch_customer_delivery_notes, fetch_customer_delivery_statuses, fetch_customer_invoices,
     fetch_delivery_statuses_for_orders,
-    fetch_product_image, fetch_product_price, fetch_product_prices,
+    fetch_customer_favorite_articles, fetch_product_image, fetch_product_prices,
     fetch_product_stock, fetch_product_stocks, image_media_type,
 )
 from .exit_db import fetch_customer_exit_orders, fetch_exit_orders_live
+from .image_admin import router as image_admin_router
+from .image_missing import record_missing_product_image
 from .models import (
     Cart, CartItem, Customer, IntegrationOutbox, Notification,
     MaterialArea, MaterialFamily, MaterialProductType, MaterialSubfamily, Order, OrderItem,
     OrderStatusHistory, Product, ProfessionalRegistrationRequest, Store, SyncStatus, User,
 )
 from .schemas import CartItemIn, CartItemUpdate, CustomerAccessReset, ExternalStatusChange, LoginIn, OrderCreate, PasswordChange, StatusChange
-from .services import PostgresCatalogService, product_view
+from .services import PostgresCatalogService, ensure_catalog_products, product_view
 
 app = FastAPI(title="Bermúdez B2B API", version="1.0.0", openapi_url="/api/v1/openapi.json", docs_url="/docs")
+app.include_router(category_import_router)
+app.include_router(image_admin_router)
 logger = logging.getLogger(__name__)
 
 @lru_cache(maxsize=2000)
@@ -80,27 +86,40 @@ def active_cart(user: User, db: Session) -> Cart:
     return cart
 
 
-def _erp_unit_prices(products: list[Product]) -> dict[str, Decimal]:
+def _erp_articles(products: list[Product]) -> dict[str, dict]:
     try:
-        prices = fetch_product_prices([product.sku for product in products])
+        articles = fetch_catalog_articles_by_codes([product.sku for product in products])
     except Exception as exc:
-        logger.exception("Error consultando precios ERP para el carrito")
-        raise HTTPException(503, "No se pudieron consultar los precios del ERP") from exc
-    missing = [product.sku for product in products if product.sku not in prices]
+        logger.exception("Error consultando artículos EXIT para el carrito")
+        raise HTTPException(503, "No se pudieron consultar los artículos en EXIT") from exc
+    missing = [product.sku for product in products if product.sku not in articles]
     if missing:
-        raise HTTPException(409, f"Falta el precio ERP de: {', '.join(missing[:8])}")
-    return {sku: Decimal(str(values["without_tax"])) for sku, values in prices.items()}
+        raise HTTPException(409, f"Artículos no disponibles en EXIT: {', '.join(missing[:8])}")
+    return articles
+
+
+def _erp_unit_prices(products: list[Product], articles: dict[str, dict] | None = None) -> dict[str, Decimal]:
+    articles = articles or _erp_articles(products)
+    return {sku: Decimal(str(values["price_without_tax"])) for sku, values in articles.items()}
 
 
 def cart_payload(cart: Cart, user: User, db: Session) -> dict:
     rows = db.execute(select(CartItem, Product).join(Product, Product.id == CartItem.product_id).where(CartItem.cart_id == cart.id).order_by(CartItem.id)).all()
-    prices = _erp_unit_prices([product for _, product in rows]) if rows else {}
+    articles = _erp_articles([product for _, product in rows]) if rows else {}
+    prices = _erp_unit_prices([product for _, product in rows], articles) if rows else {}
     items, subtotal = [], Decimal("0")
     for item, product in rows:
         price = prices[product.sku]
+        article = articles[product.sku]
+        has_homologated_name = bool(
+            product.short_description and product.source_system != "EXIT_CATALOG"
+            and product.classification_status not in {None, "", "SIN_CLASIFICAR"}
+        )
         line = (price * item.quantity).quantize(Decimal("0.01")); subtotal += line
-        items.append({"id": item.id, "product_id": product.public_id, "sku": product.sku, "name": product.short_description,
-                      "quantity": float(item.quantity), "unit": product.unit, "unit_price": float(price), "line_total": float(line)})
+        items.append({"id": item.id, "product_id": product.public_id, "sku": product.sku,
+                      "name": product.short_description if has_homologated_name else article["description"],
+                      "quantity": float(item.quantity), "unit": article["unit"],
+                      "unit_price": float(price), "line_total": float(line)})
     store = db.get(Store, cart.store_id) if cart.store_id else None
     return {"id": cart.public_id, "store": {"id": store.public_id, "name": store.name} if store else None,
             "items": items, "line_count": len(items), "subtotal": float(subtotal),
@@ -242,21 +261,69 @@ def products(q: str = "", family: str | None = None, area_id: int | None = None,
              page_size: int = Query(24, le=100), user: User = Depends(current_user),
              db: Session = Depends(get_db)):
     customer = customer_for(user, db)
-    rows, total = PostgresCatalogService(db).search(
-        q, page, page_size, family, area_id, family_id, subfamily_id, product_type_id
+    classification_codes = PostgresCatalogService(db).classification_codes(
+        family, area_id, family_id, subfamily_id, product_type_id
     )
-    product_codes = [product.sku for product in rows]
+    try:
+        articles, total = fetch_catalog_articles(q, page, page_size, classification_codes)
+    except Exception as exc:
+        logger.exception("Error consultando la maestra de artículos EXIT")
+        raise HTTPException(503, "No se pudo consultar el catálogo en EXIT") from exc
+    products_by_code = ensure_catalog_products(db, articles)
+    product_codes = [article["article_code"] for article in articles]
     try:
         stocks = fetch_product_stocks(product_codes)
     except Exception:
         logger.exception("Error consultando stock ERP para el catalogo")
         raise HTTPException(503, "No se pudo consultar el stock en el ERP")
+    return {
+        "items": [
+            product_view(
+                products_by_code[article["article_code"]], customer, db,
+                stocks.get(article["article_code"], []), None, article,
+            )
+            for article in articles
+        ],
+        "total": total, "page": page, "page_size": page_size,
+    }
+
+
+@app.get("/api/v1/catalog/favorites")
+def favorite_products(limit: int = Query(8, ge=1, le=24), user: User = Depends(current_user),
+                      db: Session = Depends(get_db)):
+    customer = customer_for(user, db)
+    customer_code = customer_code_for(user, db)
     try:
-        prices = fetch_product_prices(product_codes)
-    except Exception:
-        logger.exception("Error consultando precios ERP para el catalogo")
-        prices = {}
-    return {"items": [product_view(p, customer, db, stocks.get(p.sku, []), prices.get(p.sku)) for p in rows], "total": total, "page": page, "page_size": page_size}
+        purchases = fetch_customer_favorite_articles(customer_code, limit)
+    except Exception as exc:
+        logger.exception("Error consultando los artículos favoritos del cliente %s", customer_code)
+        raise HTTPException(503, "No se pudieron consultar los materiales favoritos en EXIT") from exc
+
+    purchased_units = {row["article_code"]: row["purchased_units"] for row in purchases}
+    codes = list(purchased_units)
+    if not codes:
+        return {"items": [], "total": 0}
+    try:
+        articles_by_code = fetch_catalog_articles_by_codes(codes)
+    except Exception as exc:
+        logger.exception("Error consultando los artículos favoritos en EXIT")
+        raise HTTPException(503, "No se pudieron consultar los materiales favoritos en EXIT") from exc
+    articles = [articles_by_code[code] for code in codes if code in articles_by_code]
+    products_by_code = ensure_catalog_products(db, articles)
+    product_codes = [article["article_code"] for article in articles]
+    try:
+        stocks = fetch_product_stocks(product_codes)
+    except Exception as exc:
+        logger.exception("Error consultando stock ERP para materiales favoritos")
+        raise HTTPException(503, "No se pudo consultar el stock en el ERP") from exc
+    items = []
+    for article in articles:
+        code = article["article_code"]
+        product = products_by_code[code]
+        item = product_view(product, customer, db, stocks.get(code, []), None, article)
+        item["purchased_units"] = purchased_units[code]
+        items.append(item)
+    return {"items": items, "total": len(items)}
 
 
 @app.get("/api/v1/catalog/classification")
@@ -298,41 +365,54 @@ def catalog_classification(user: User = Depends(current_user), db: Session = Dep
 
 @app.get("/api/v1/search/suggestions")
 def suggestions(q: str = Query(min_length=2), user: User = Depends(current_user), db: Session = Depends(get_db)):
-    customer = customer_for(user, db)
-    rows, _ = PostgresCatalogService(db).search(q, 1, 8, None)
+    customer_for(user, db)
     try:
-        prices = fetch_product_prices([p.sku for p in rows])
-    except Exception:
-        logger.exception("Error consultando precios ERP para sugerencias")
-        prices = {}
-    return [{"id": p.public_id, "sku": p.sku, "name": p.short_description,
-             "price": float(prices.get(p.sku, {}).get("with_tax", 0)),
-             "area_id": p.material_area_id, "family_id": p.material_family_id,
-             "subfamily_id": p.material_subfamily_id,
-             "product_type_id": p.material_product_type_id} for p in rows]
+        articles, _ = fetch_catalog_articles(q, 1, 8)
+    except Exception as exc:
+        logger.exception("Error consultando sugerencias en EXIT")
+        raise HTTPException(503, "No se pudieron consultar las sugerencias en EXIT") from exc
+    products_by_code = ensure_catalog_products(db, articles)
+    result = []
+    for article in articles:
+        product = products_by_code[article["article_code"]]
+        has_homologated_name = bool(
+            product.short_description and product.source_system != "EXIT_CATALOG"
+            and product.classification_status not in {None, "", "SIN_CLASIFICAR"}
+        )
+        result.append({
+            "id": product.public_id, "sku": article["article_code"],
+            "name": product.short_description if has_homologated_name else article["description"],
+            "price": float(article["price_with_tax"]),
+            "area_id": product.material_area_id, "family_id": product.material_family_id,
+            "subfamily_id": product.material_subfamily_id,
+            "product_type_id": product.material_product_type_id,
+        })
+    return result
 
 
 @app.get("/api/v1/products/{product_id}")
 def product_detail(product_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    product = db.scalar(select(Product).where(Product.public_id == product_id, Product.active.is_(True)))
+    product = db.scalar(select(Product).where(Product.public_id == product_id))
     if not product: raise HTTPException(404, "Producto no encontrado")
+    try:
+        article = fetch_catalog_articles_by_codes([product.sku]).get(product.sku)
+    except Exception as exc:
+        logger.exception("Error consultando artículo EXIT para SKU %s", product.sku)
+        raise HTTPException(503, "No se pudo consultar el producto en EXIT") from exc
+    if not article:
+        raise HTTPException(404, "Producto no disponible en EXIT")
     try:
         stock = fetch_product_stock(product.sku)
     except Exception:
         logger.exception("Error consultando stock ERP para SKU %s", product.sku)
         raise HTTPException(503, "No se pudo consultar el stock en el ERP")
-    try:
-        price = fetch_product_price(product.sku)
-    except Exception:
-        logger.exception("Error consultando precios ERP para SKU %s", product.sku)
-        price = None
-    return product_view(product, customer_for(user, db), db, stock, price)
+    return product_view(product, customer_for(user, db), db, stock, None, article)
 
 
 @app.get("/api/v1/products/{product_id}/image")
 def product_image(product_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
     customer_for(user, db)
-    product = db.scalar(select(Product).where(Product.public_id == product_id, Product.active.is_(True)))
+    product = db.scalar(select(Product).where(Product.public_id == product_id))
     if not product:
         raise HTTPException(404, "Producto no encontrado")
     source = settings.product_image_source.lower().strip()
@@ -341,6 +421,8 @@ def product_image(product_id: str, user: User = Depends(current_user), db: Sessi
     if source != "sqlserver" and product.image_data:
         return Response(content=product.image_data, media_type=product.image_media_type or image_media_type(product.image_data),
                         headers={"Cache-Control": "private, max-age=86400", "X-Image-Source": "postgres"})
+    if not product.image_data:
+        record_missing_product_image(db, product, "Sin imagen validada en PostgreSQL")
     if source == "postgres":
         raise HTTPException(404, "Imagen no disponible en PostgreSQL")
     try:
@@ -349,6 +431,7 @@ def product_image(product_id: str, user: User = Depends(current_user), db: Sessi
         logger.exception("Error consultando imagen ERP para SKU %s", product.sku)
         raise HTTPException(503, "No se pudo consultar la imagen en el ERP")
     if not data:
+        record_missing_product_image(db, product, "Sin imagen en PostgreSQL ni en EXITERP")
         raise HTTPException(404, "Imagen no disponible")
     return Response(content=data, media_type=image_media_type(data), headers={"Cache-Control": "private, max-age=86400", "X-Image-Source": "sqlserver"})
 
@@ -360,8 +443,16 @@ def get_cart(user: User = Depends(current_user), db: Session = Depends(get_db)):
 
 @app.post("/api/v1/cart/items", status_code=201)
 def add_cart_item(data: CartItemIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    product = db.scalar(select(Product).where(Product.public_id == data.product_id, Product.active.is_(True)))
+    product = db.scalar(select(Product).where(Product.public_id == data.product_id))
     if not product: raise HTTPException(404, "Producto no encontrado")
+    try:
+        if product.sku not in fetch_catalog_articles_by_codes([product.sku]):
+            raise HTTPException(409, "El producto ya no está activo en EXIT")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Error validando el producto %s en EXIT", product.sku)
+        raise HTTPException(503, "No se pudo validar el producto en EXIT") from exc
     cart = active_cart(user, db)
     item = db.scalar(select(CartItem).where(CartItem.cart_id == cart.id, CartItem.product_id == product.id))
     if item: item.quantity += data.quantity
@@ -391,7 +482,8 @@ def create_order(data: OrderCreate, user: User = Depends(current_user), db: Sess
     if not store: raise HTTPException(404, "Tienda no encontrada")
     rows = db.execute(select(CartItem, Product).join(Product, Product.id == CartItem.product_id).where(CartItem.cart_id == cart.id)).all()
     if not rows: raise HTTPException(400, "El pedido está vacío")
-    prices = _erp_unit_prices([product for _, product in rows])
+    articles = _erp_articles([product for _, product in rows])
+    prices = _erp_unit_prices([product for _, product in rows], articles)
     warehouse_by_store = {"ALM": "00", "COR": "01", "FER": "02", "STG": "04", "SAN": "05"}
     warehouse_code = warehouse_by_store.get(store.code.strip().upper(), store.code.strip())
     stock_warning = None
@@ -416,9 +508,15 @@ def create_order(data: OrderCreate, user: User = Depends(current_user), db: Sess
     db.add(order); db.flush(); order.order_number = f"WEB-{datetime.now().year}-{order.id:07d}"
     subtotal = Decimal("0")
     for cart_item, product in rows:
+        article = articles[product.sku]
+        has_homologated_name = bool(
+            product.short_description and product.source_system != "EXIT_CATALOG"
+            and product.classification_status not in {None, "", "SIN_CLASIFICAR"}
+        )
+        description = product.short_description if has_homologated_name else article["description"]
         price = prices[product.sku]; line = (price * cart_item.quantity).quantize(Decimal("0.01")); subtotal += line
-        db.add(OrderItem(order_id=order.id, product_id=product.id, sku=product.sku, description=product.short_description,
-                         quantity=cart_item.quantity, unit=product.unit, unit_price=price, discount_pct=Decimal("0"),
+        db.add(OrderItem(order_id=order.id, product_id=product.id, sku=product.sku, description=description,
+                         quantity=cart_item.quantity, unit=article["unit"], unit_price=price, discount_pct=Decimal("0"),
                          tax_rate=product.tax_rate, line_total=line))
         db.delete(cart_item)
     order.subtotal = subtotal; order.tax_total = (subtotal * Decimal("0.21")).quantize(Decimal("0.01")); order.total = order.subtotal + order.tax_total

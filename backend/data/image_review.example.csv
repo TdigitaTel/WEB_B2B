@@ -1,0 +1,2 @@
+codigo_material,nombre_actual,motivo,estado,image_url,image_path,proveedor,aprobado
+00000,Ejemplo de material,Sin imagen en PostgreSQL,PENDIENTE,,,Proveedor oficial,NO

@@ -1,14 +1,15 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import CategoryUpload from "./CategoryUpload";
 
-type View = "home" | "catalog" | "orders" | "documents" | "ops" | "account";
+type View = "home" | "catalog" | "orders" | "documents" | "ops" | "category-upload" | "account";
 type User = { id: string; name: string; email: string; role: string };
 type AccountCustomer = { trade_name: string; legal_name: string; erp_id: string; tax_id: string; email: string; phone: string; billing_address: string; price_list: string; discount_pct: number };
 type Store = { id: string; code: string; name: string; address: string };
 type Stock = { store_code: string; store: string; available: number };
 type Suggestion = { id: string; sku: string; name: string; price: number; area_id: number; family_id: number; subfamily_id: number; product_type_id: number };
-type Product = { id: string; image_url: string; sku: string; name: string; brand: string; family: string; customer_price: number; list_price: number; price_with_tax: number; price_without_tax: number; tax_rate: number; total_available: number; stock: Stock[] };
+type Product = { id: string; image_url: string; sku: string; name: string; brand: string; family: string; customer_price: number; list_price: number; price_with_tax: number; price_without_tax: number; tax_rate: number; total_available: number; stock: Stock[]; purchased_units?: number };
 type CartItem = { id: number; product_id: string; sku: string; name: string; quantity: number; unit_price: number; line_total: number };
 type OrderLine = { sku: string; description: string; quantity: number; served_quantity?: number|null; pending_quantity?: number|null; unit: string; unit_price: number; line_total: number; fulfillment_zone?: string };
 type Cart = { items: CartItem[]; line_count: number; subtotal: number; tax_total: number; total: number; store: { id: string; name: string } | null };
@@ -76,6 +77,7 @@ export default function Page() {
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [suggestionsEnabled, setSuggestionsEnabled] = useState(true);
   const [products, setProducts] = useState<Product[]>([]);
+  const [favoriteProducts, setFavoriteProducts] = useState<Product[]>([]);
   const [totalProducts, setTotalProducts] = useState(0);
   const [catalogPage, setCatalogPage] = useState(1);
   const [loadingMoreProducts, setLoadingMoreProducts] = useState(false);
@@ -115,11 +117,12 @@ export default function Page() {
 
   const refreshCustomerData = useCallback(async () => {
     if (!user || isOperator) return;
-    const [storeData, cartData, orderData, classificationData] = await Promise.all([
+    const [storeData, cartData, orderData, classificationData, favoriteData] = await Promise.all([
       api<Store[]>("/api/v1/stores"), api<Cart>("/api/v1/cart"), api<Order[]>("/api/v1/orders"),
-      api<AreaNode[]>("/api/v1/catalog/classification")
+      api<AreaNode[]>("/api/v1/catalog/classification"),
+      api<{items:Product[];total:number}>("/api/v1/catalog/favorites?limit=8")
     ]);
-    setStores(storeData); setCart(cartData); setOrders(orderData); setClassification(classificationData);
+    setStores(storeData); setCart(cartData); setOrders(orderData); setClassification(classificationData); setFavoriteProducts(favoriteData.items);
   }, [user, isOperator]);
 
   const refreshOrders = useCallback(async (from = madridDate(new Date()), to = madridDate(new Date()), state = "PENDIENTE") => {
@@ -254,15 +257,16 @@ export default function Page() {
         <button className="account-button" onClick={()=>setView("account")}><small>Hola, {user.name.split(" ")[0]}</small><b>Mi cuenta</b></button><button className="logout-button" onClick={logout}>Salir</button>
         {!isOperator && <button className="cart-button" onClick={() => setCartOpen(true)}>▤ <span>Mi carrito</span> {cart?.line_count || 0}</button>}
       </div>
-      <nav className="desktop-nav">{(isOperator ? [["ops","Operaciones"]] : [["home","Inicio"],["catalog","Catálogo"],["orders","Mis pedidos"],["documents","Albaranes y facturas"],["account","Mi cuenta"]]).map(([id,label]) => <button key={id} className={view===id?"active":""} onClick={() => setView(id as View)}>{label}</button>)}</nav>
+      <nav className="desktop-nav">{(isOperator ? [["ops","Operaciones"],["category-upload","Carga de categorías"]] : [["home","Inicio"],["catalog","Catálogo"],["orders","Mis pedidos"],["documents","Albaranes y facturas"],["account","Mi cuenta"]]).map(([id,label]) => <button key={id} className={view===id?"active":""} onClick={() => setView(id as View)}>{label}</button>)}</nav>
     </header>
     <div className="service-strip"><span>ÁREA PROFESIONAL · Compra a tu ritmo</span><span>5 delegaciones · Recogida en tienda</span></div>{error && <div className="page error" role="alert">{error}</div>}
-    {view === "home" && <Home customer={customer} orders={orders} products={products.slice(0,8)} classification={classification} onNavigate={setView} onSelectArea={areaId=>{setCatalogFilters({areaId:String(areaId),familyId:"",subfamilyId:"",productTypeId:""});setView("catalog")}} onAdd={addProduct} />}
+    {view === "home" && <Home customer={customer} orders={orders} products={favoriteProducts} classification={classification} onNavigate={setView} onSelectArea={areaId=>{setCatalogFilters({areaId:String(areaId),familyId:"",subfamilyId:"",productTypeId:""});setView("catalog")}} onAdd={addProduct} />}
     {view === "catalog" && <Catalog products={products} total={totalProducts} classification={classification} filters={catalogFilters} setFilters={setCatalogFilters} onAdd={addProduct} onLoadMore={loadMoreProducts} loadingMore={loadingMoreProducts} />}
     {view === "orders" && <Orders orders={orders} refreshing={refreshingOrders} onRefresh={refreshOrders} onRepeat={repeatOrder} onSubmitDraft={submitDraft} onDelete={deleteOrder} />}
     {view === "documents" && <Documents notes={deliveryNotes} invoices={invoices} />}
     {view === "account" && <Account user={user} customer={customer} />}
     {view === "ops" && <Operations orders={opsOrders} onRefresh={refreshOperations} />}
+    {view === "category-upload" && isOperator && <CategoryUpload />}
     {!isOperator && <nav className="mobile-nav">{[["home","Inicio"],["catalog","Buscar"],["orders","Pedidos"],["account","Cuenta"]].map(([id,label]) => <button key={id} className={view===id?"active":""} onClick={() => setView(id as View)}>{label}</button>)}</nav>}
     {cartOpen && cart && <CartDrawer cart={cart} stores={stores} onClose={() => setCartOpen(false)} onUpdate={updateCart} onRemove={removeCart} onCheckout={checkout} />}
     {orderConfirmation && <OrderConfirmation order={orderConfirmation} onClose={()=>setOrderConfirmation(null)} onViewOrders={()=>{setOrderConfirmation(null);setView("orders")}} />}
@@ -286,7 +290,7 @@ function Home({customer,orders,products,classification,onNavigate,onSelectArea,o
   const [openStockId,setOpenStockId]=useState<string|null>(null);
   return <div className="page"><section className="hero"><div><span className="eyebrow">TU MOSTRADOR DIGITAL</span><h1>Todo lo que necesitas.<br/>Listo para tu próxima obra.</h1><p>Hola, {customer?.trade_name || "profesional"}. Encuentra tu material y recógelo en tienda.</p><button className="primary" onClick={()=>onNavigate("catalog")}>Explorar catálogo →</button></div><div className="hero-note"><span>01 / BUSCA</span><span>02 / AÑADE</span><span>03 / RECOGE</span><b>Menos esperas.<br/>Más tiempo en obra.</b></div></section>
   <section className="department-showcase"><div className="section-heading"><div><span className="eyebrow">COMPRA POR DEPARTAMENTO</span><h2>¿Qué necesitas para tu instalación?</h2></div><button className="text-button" onClick={()=>onNavigate("catalog")}>Ver todos →</button></div><div className="department-rail">{classification.slice(0,10).map((area,index)=><button key={area.id} className={`department-card tone-${index%6}`} onClick={()=>onSelectArea(area.id)}><span className="department-symbol" aria-hidden="true">{area.name.slice(0,2)}</span><b>{area.name}</b><small>{area.count.toLocaleString("es-ES")} productos</small><em>Explorar →</em></button>)}</div></section>
-  <div className="home-grid"><div><section className="shortcut-grid"><button onClick={()=>onNavigate("orders")}><span>↻</span><b>Pedidos anteriores</b><small>Consulta y duplica pedidos</small></button><button onClick={()=>onNavigate("documents")}><span>▤</span><b>Tus documentos</b><small>Facturas y albaranes a mano</small></button><button onClick={()=>onNavigate("orders")}><span>✓</span><b>Estado de pedidos</b><small>Sigue cada etapa y su fecha</small></button></section><section className="section panel"><div className="section-heading"><div><span className="eyebrow">MATERIAL PARA TU DÍA A DÍA</span><h2>Productos disponibles</h2></div><button className="text-button" onClick={()=>onNavigate("catalog")}>Ver catálogo →</button></div><div className="products">{products.map(p=><ProductCard key={p.id} product={p} onAdd={onAdd} stockOpen={openStockId===p.id} onStockToggle={open=>setOpenStockId(open?p.id:null)}/>)}</div></section></div>
+  <div className="home-grid"><div><section className="shortcut-grid"><button onClick={()=>onNavigate("orders")}><span>↻</span><b>Pedidos anteriores</b><small>Consulta y duplica pedidos</small></button><button onClick={()=>onNavigate("documents")}><span>▤</span><b>Tus documentos</b><small>Facturas y albaranes a mano</small></button><button onClick={()=>onNavigate("orders")}><span>✓</span><b>Estado de pedidos</b><small>Sigue cada etapa y su fecha</small></button></section><section className="section panel"><div className="section-heading"><div><span className="eyebrow">LOS QUE MÁS UTILIZAS</span><h2>Materiales favoritos</h2><p className="small">Tus artículos más comprados, ordenados por unidades.</p></div><button className="text-button" onClick={()=>onNavigate("catalog")}>Ver catálogo →</button></div><div className="products">{products.map(p=><ProductCard key={p.id} product={p} onAdd={onAdd} stockOpen={openStockId===p.id} onStockToggle={open=>setOpenStockId(open?p.id:null)}/>)}</div>{!products.length&&<p className="small">Todavía no hay compras anteriores disponibles para mostrar.</p>}</section></div>
   <aside className="activity-panel panel"><div className="section-heading"><h2>Mis pedidos</h2><span className="count">{active.length}</span></div><p className="small">El estado de tus últimas compras.</p>{active.slice(0,3).map(o=><div className="compact-order" key={o.id}><b>{o.number}</b><span className="small">{o.store} · {o.job_name||"Sin obra"}</span><span className="status">{orderStateLabel(visibleOrderStage(o.estado_registro_exit))}</span></div>)}{!active.length&&<p className="small">No tienes pedidos activos.</p>}<button className="ghost block" onClick={()=>onNavigate("orders")}>Ver todos mis pedidos →</button><div className="store-note"><b>Cerca de tu próxima obra</b><p>Almeiras · A Coruña · Sanxenxo · Ferrol · Santiago</p></div></aside></div></div>;
 }
 

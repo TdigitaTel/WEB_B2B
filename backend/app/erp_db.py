@@ -3,7 +3,8 @@ import re
 from datetime import date
 
 from .config import settings
-from .erp_schema import ARTICLE, CUSTOMER, IMAGE, SALES_DOCUMENTS, STOCK, WAREHOUSE
+from .erp_schema import ARTICLE, CUSTOMER, CUSTOMER_PURCHASES, IMAGE, SALES_DOCUMENTS, STOCK, WAREHOUSE
+from .search import normalize_query
 
 
 def connect_sqlserver():
@@ -55,6 +56,154 @@ def _customer_columns(connection) -> dict[str, str | None]:
     if not resolved["code"]:
         raise RuntimeError("No se encontró la columna de código en dbo.clientes")
     return resolved
+
+
+def _article_columns(connection) -> dict[str, str | None]:
+    """Resuelve las columnas disponibles de la maestra de artículos EXIT."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
+            "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s",
+            (ARTICLE["schema"], ARTICLE["table"]),
+        )
+        existing = {str(row["COLUMN_NAME"]).lower(): str(row["COLUMN_NAME"]) for row in cursor.fetchall()}
+    resolved: dict[str, str | None] = {}
+    for field, candidates in ARTICLE["columns"].items():
+        resolved[field] = next((existing[name.lower()] for name in candidates if name.lower() in existing), None)
+    if not resolved["code"]:
+        raise RuntimeError("No se encontró la columna de código en dbo.articulos")
+    return resolved
+
+
+def _article_text(column: str | None, alias: str = "a", length: int = 500) -> str:
+    if not column:
+        return "NULL"
+    return f"LTRIM(RTRIM(CONVERT(varchar({length}), {alias}.{_discovered_column(column)})))"
+
+
+def _article_number(column: str | None, alias: str = "a") -> str:
+    if not column:
+        return "0"
+    return f"COALESCE({alias}.{_discovered_column(column)}, 0)"
+
+
+def _article_from_row(row: dict) -> dict:
+    return {
+        "article_code": str(row.get("article_code") or "").strip(),
+        "description": str(row.get("description") or row.get("article_code") or "").strip(),
+        "unit": str(row.get("unit") or "UD").strip() or "UD",
+        "manufacturer_reference": str(row.get("manufacturer_reference") or "").strip(),
+        "brand_code": str(row.get("brand_code") or "").strip(),
+        "brand_name": str(row.get("brand_name") or "").strip(),
+        "ean": str(row.get("ean") or "").strip(),
+        "price_with_tax": float(row.get("price_with_tax") or 0),
+        "price_without_tax": float(row.get("price_without_tax") or 0),
+    }
+
+
+def _prepare_eligible_articles(cursor, article_codes: list[str] | None) -> str:
+    """Carga códigos de clasificación en una tabla temporal para evitar el límite de parámetros."""
+    if article_codes is None:
+        return ""
+    cursor.execute(
+        "CREATE TABLE #EligibleArticles "
+        "(article_code varchar(100) COLLATE DATABASE_DEFAULT NOT NULL PRIMARY KEY)"
+    )
+    codes = list(dict.fromkeys(str(code).strip() for code in article_codes if str(code).strip()))
+    if codes:
+        cursor.executemany("INSERT INTO #EligibleArticles (article_code) VALUES (%s)", [(code,) for code in codes])
+    return "INNER JOIN #EligibleArticles e ON e.article_code = "
+
+
+def fetch_catalog_articles(query: str = "", page: int = 1, page_size: int = 24,
+                           article_codes: list[str] | None = None) -> tuple[list[dict], int]:
+    """Pagina la maestra activa de EXIT; PostgreSQL solo limita por clasificación."""
+    if article_codes is not None and not article_codes:
+        return [], 0
+    page = max(1, int(page))
+    page_size = max(1, min(int(page_size), 100))
+    schema = _identifier(ARTICLE["schema"])
+    table = _identifier(ARTICLE["table"])
+    with connect_sqlserver() as connection, connection.cursor() as cursor:
+        columns = _article_columns(connection)
+        code_expression = _article_text(columns["code"], length=100)
+        description_expression = _article_text(columns["description"])
+        reference_expression = _article_text(columns["manufacturer_reference"], length=200)
+        ean_expression = _article_text(columns["ean"], length=100)
+        brand_expression = _article_text(columns["brand_name"], length=200)
+        eligible_prefix = _prepare_eligible_articles(cursor, article_codes)
+        eligible_join = f"{eligible_prefix}{code_expression} " if eligible_prefix else ""
+        conditions = [f"{code_expression} <> ''"]
+        parameters: list = []
+        if columns["inactive"]:
+            conditions.append(f"COALESCE(a.{_discovered_column(columns['inactive'])}, 0) = 0")
+        normalized_query = normalize_query(query)
+        if normalized_query:
+            searchable = [code_expression]
+            searchable.extend(expression for expression in (
+                description_expression, reference_expression, ean_expression, brand_expression,
+            ) if expression != "NULL")
+            for term in normalized_query.split():
+                conditions.append("(" + " OR ".join(f"{expression} LIKE %s" for expression in searchable) + ")")
+                parameters.extend([f"%{term}%"] * len(searchable))
+        from_sql = f"FROM {schema}.{table} a {eligible_join}WHERE " + " AND ".join(conditions)
+        cursor.execute(f"SELECT COUNT_BIG(*) AS total {from_sql}", tuple(parameters))
+        total = int((cursor.fetchone() or {}).get("total") or 0)
+        selections = {
+            "article_code": code_expression,
+            "description": description_expression,
+            "unit": _article_text(columns["unit"], length=80),
+            "manufacturer_reference": reference_expression,
+            "brand_code": _article_text(columns["brand_code"], length=100),
+            "brand_name": brand_expression,
+            "ean": ean_expression,
+            "price_with_tax": _article_number(columns["price_with_tax"]),
+            "price_without_tax": _article_number(columns["price_without_tax"]),
+        }
+        select_sql = ", ".join(f"{expression} AS [{name}]" for name, expression in selections.items())
+        page_parameters = [*parameters, (page - 1) * page_size, page_size]
+        cursor.execute(
+            f"SELECT {select_sql} {from_sql} ORDER BY {code_expression} "
+            "OFFSET %s ROWS FETCH NEXT %s ROWS ONLY",
+            tuple(page_parameters),
+        )
+        rows = cursor.fetchall()
+    return [_article_from_row(row) for row in rows], total
+
+
+def fetch_catalog_articles_by_codes(article_codes: list[str], active_only: bool = True) -> dict[str, dict]:
+    """Lee en bloque los datos vivos de EXIT para códigos ya conocidos por la web."""
+    codes = list(dict.fromkeys(str(code).strip() for code in article_codes if str(code).strip()))
+    if not codes:
+        return {}
+    schema = _identifier(ARTICLE["schema"])
+    table = _identifier(ARTICLE["table"])
+    with connect_sqlserver() as connection, connection.cursor() as cursor:
+        columns = _article_columns(connection)
+        code_expression = _article_text(columns["code"], length=100)
+        eligible_prefix = _prepare_eligible_articles(cursor, codes)
+        eligible_join = f"{eligible_prefix}{code_expression} "
+        selections = {
+            "article_code": code_expression,
+            "description": _article_text(columns["description"]),
+            "unit": _article_text(columns["unit"], length=80),
+            "manufacturer_reference": _article_text(columns["manufacturer_reference"], length=200),
+            "brand_code": _article_text(columns["brand_code"], length=100),
+            "brand_name": _article_text(columns["brand_name"], length=200),
+            "ean": _article_text(columns["ean"], length=100),
+            "price_with_tax": _article_number(columns["price_with_tax"]),
+            "price_without_tax": _article_number(columns["price_without_tax"]),
+        }
+        conditions = [f"{code_expression} <> ''"]
+        if active_only and columns["inactive"]:
+            conditions.append(f"COALESCE(a.{_discovered_column(columns['inactive'])}, 0) = 0")
+        select_sql = ", ".join(f"{expression} AS [{name}]" for name, expression in selections.items())
+        cursor.execute(
+            f"SELECT {select_sql} FROM {schema}.{table} a {eligible_join}WHERE " + " AND ".join(conditions)
+        )
+        rows = cursor.fetchall()
+    articles = [_article_from_row(row) for row in rows]
+    return {article["article_code"]: article for article in articles}
 
 
 def fetch_customer(customer_code: str) -> dict | None:
@@ -109,6 +258,39 @@ def fetch_customer_codes(after_code: str = "", limit: int = 30) -> list[str]:
             cursor.execute(sql, (str(after_code).strip(),))
             rows = cursor.fetchall()
     return [str(row["customer_code"]).strip() for row in rows if row.get("customer_code")]
+
+
+def fetch_customer_favorite_articles(customer_code: str, limit: int = 8) -> list[dict]:
+    """Devuelve los artículos más comprados por el cliente, ordenados por unidades."""
+    schema = _identifier(CUSTOMER_PURCHASES["schema"])
+    view = _identifier(CUSTOMER_PURCHASES["view"])
+    customer_column = _identifier(CUSTOMER_PURCHASES["customer_code"])
+    article_column = _identifier(CUSTOMER_PURCHASES["article_code"])
+    units_column = _identifier(CUSTOMER_PURCHASES["units"])
+    result_limit = max(1, min(int(limit), 50))
+    sql = (
+        f"SELECT TOP {result_limit} "
+        f"LTRIM(RTRIM(CONVERT(varchar(100), v.{article_column}))) AS article_code, "
+        f"SUM(COALESCE(v.{units_column}, 0)) AS purchased_units "
+        f"FROM {schema}.{view} v "
+        f"WHERE LTRIM(RTRIM(CONVERT(varchar(100), v.{customer_column}))) = %s "
+        f"AND v.{article_column} IS NOT NULL "
+        f"AND LTRIM(RTRIM(CONVERT(varchar(100), v.{article_column}))) <> '' "
+        f"GROUP BY v.{article_column} "
+        f"ORDER BY purchased_units DESC, article_code"
+    )
+    with connect_sqlserver() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(sql, (str(customer_code).strip(),))
+            rows = cursor.fetchall()
+    return [
+        {
+            "article_code": str(row["article_code"]).strip(),
+            "purchased_units": float(row["purchased_units"] or 0),
+        }
+        for row in rows
+        if row.get("article_code")
+    ]
 
 
 def _document_id(year, series, number) -> str:
@@ -424,32 +606,13 @@ def fetch_product_stock(article_code: str) -> list[dict]:
 
 def fetch_product_prices(article_codes: list[str]) -> dict[str, dict]:
     """Obtiene los precios con y sin IVA de la tabla de articulos del ERP."""
-    codes = list(dict.fromkeys(str(code).strip() for code in article_codes if str(code).strip()))
-    if not codes:
-        return {}
-    schema = _identifier(ARTICLE["schema"])
-    table = _identifier(ARTICLE["table"])
-    code_column = _identifier(ARTICLE["code"])
-    with_tax_column = _identifier(ARTICLE["price_with_tax"])
-    without_tax_column = _identifier(ARTICLE["price_without_tax"])
-    placeholders = ", ".join(["%s"] * len(codes))
-    sql = (
-        f"SELECT LTRIM(RTRIM(CONVERT(varchar(100), {code_column}))) AS article_code, "
-        f"COALESCE({with_tax_column}, 0) AS price_with_tax, "
-        f"COALESCE({without_tax_column}, 0) AS price_without_tax "
-        f"FROM {schema}.{table} "
-        f"WHERE LTRIM(RTRIM(CONVERT(varchar(100), {code_column}))) IN ({placeholders})"
-    )
-    with connect_sqlserver() as connection:
-        with connection.cursor() as cursor:
-            cursor.execute(sql, tuple(codes))
-            rows = cursor.fetchall()
+    rows = fetch_catalog_articles_by_codes(article_codes, active_only=False)
     return {
-        str(row["article_code"]).strip(): {
+        code: {
             "with_tax": float(row["price_with_tax"] or 0),
             "without_tax": float(row["price_without_tax"] or 0),
         }
-        for row in rows
+        for code, row in rows.items()
     }
 
 
