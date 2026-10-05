@@ -25,16 +25,6 @@ class TimestampMixin:
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
-class Store(Base, TimestampMixin):
-    __tablename__ = "stores"
-    id: Mapped[int] = mapped_column(primary_key=True)
-    public_id: Mapped[str] = mapped_column(String(36), unique=True, default=public_uuid)
-    code: Mapped[str] = mapped_column(String(20), unique=True)
-    name: Mapped[str] = mapped_column(String(100))
-    address: Mapped[str] = mapped_column(Text)
-    active: Mapped[bool] = mapped_column(Boolean, default=True)
-
-
 class Customer(Base, TimestampMixin):
     __tablename__ = "customers"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -48,7 +38,7 @@ class Customer(Base, TimestampMixin):
     billing_address: Mapped[str] = mapped_column(Text)
     price_list: Mapped[str] = mapped_column(String(30), default="PROFESIONAL")
     discount_pct: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=0)
-    usual_store_id: Mapped[int | None] = mapped_column(ForeignKey("stores.id"))
+    usual_store_id: Mapped[str | None] = mapped_column(String(40))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     sync_status: Mapped[SyncStatus] = mapped_column(Enum(SyncStatus), default=SyncStatus.pending)
     last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -64,7 +54,7 @@ class User(Base, TimestampMixin):
     role: Mapped[str] = mapped_column(String(40), index=True)
     customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id"), index=True)
     erp_customer_code: Mapped[str | None] = mapped_column(String(40), index=True)
-    store_id: Mapped[int | None] = mapped_column(ForeignKey("stores.id"))
+    store_id: Mapped[str | None] = mapped_column(String(40))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     customer: Mapped[Customer | None] = relationship()
@@ -209,7 +199,7 @@ class Cart(Base, TimestampMixin):
     customer_code: Mapped[str | None] = mapped_column(String(40), index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     status: Mapped[str] = mapped_column(String(20), default="ACTIVE")
-    store_id: Mapped[int | None] = mapped_column(ForeignKey("stores.id"))
+    store_id: Mapped[str | None] = mapped_column(String(40))
 
 
 class CartItem(Base, TimestampMixin):
@@ -229,7 +219,7 @@ class Order(Base, TimestampMixin):
     customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id"), index=True)
     customer_code: Mapped[str | None] = mapped_column(String(40), index=True)
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
-    store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), index=True)
+    store_id: Mapped[str] = mapped_column(String(40), index=True)
     nro_pedido_exit: Mapped[str | None] = mapped_column(String(80), index=True)
     fecha_registro_exit: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     origen_pedido: Mapped[str] = mapped_column(String(20), default="B2B", index=True)

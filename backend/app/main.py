@@ -18,6 +18,7 @@ from .auth import audit, create_access_token, current_user, hash_password, requi
 from .category_import import router as category_import_router
 from .config import settings
 from .db import get_db
+from .delegations import fetch_delegations, resolve_delegation
 from .erp_db import (
     fetch_catalog_articles, fetch_catalog_articles_by_codes,
     fetch_customer, fetch_customer_delivery_notes, fetch_customer_delivery_statuses, fetch_customer_invoices,
@@ -31,7 +32,7 @@ from .image_missing import record_missing_product_image
 from .models import (
     Cart, CartItem, Customer, IntegrationOutbox, Notification,
     MaterialArea, MaterialFamily, MaterialProductType, MaterialSubfamily, Order, OrderItem,
-    OrderStatusHistory, Product, ProfessionalRegistrationRequest, Store, SyncStatus, User,
+    OrderStatusHistory, Product, ProfessionalRegistrationRequest, SyncStatus, User,
 )
 from .schemas import CartItemIn, CartItemUpdate, CustomerAccessReset, ExternalStatusChange, LoginIn, OrderCreate, PasswordChange, StatusChange
 from .services import PostgresCatalogService, ensure_catalog_products, product_view
@@ -46,6 +47,26 @@ def exit_customer_name(code: str) -> str:
     customer = fetch_customer(code)
     return (customer or {}).get("trade_name") or (customer or {}).get("legal_name") or code
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+
+def live_delegations():
+    try:
+        return fetch_delegations()
+    except Exception as exc:
+        logger.exception("No se pudieron consultar las delegaciones de EXIT")
+        raise HTTPException(503, "No se pudieron consultar las delegaciones en EXIT") from exc
+
+
+def get_delegation(reference):
+    try:
+        return resolve_delegation(reference, live_delegations())
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+def delegation_name(reference):
+    delegation = get_delegation(reference)
+    return delegation.name if delegation else reference
 
 
 def customer_code_for(user: User, db: Session) -> str:
@@ -120,7 +141,7 @@ def cart_payload(cart: Cart, user: User, db: Session) -> dict:
                       "name": product.short_description if has_homologated_name else article["description"],
                       "quantity": float(item.quantity), "unit": article["unit"],
                       "unit_price": float(price), "line_total": float(line)})
-    store = db.get(Store, cart.store_id) if cart.store_id else None
+    store = get_delegation(cart.store_id) if cart.store_id else None
     return {"id": cart.public_id, "store": {"id": store.public_id, "name": store.name} if store else None,
             "items": items, "line_count": len(items), "subtotal": float(subtotal),
             "tax_total": float((subtotal * Decimal("0.21")).quantize(Decimal("0.01"))),
@@ -128,7 +149,7 @@ def cart_payload(cart: Cart, user: User, db: Session) -> dict:
 
 
 def order_payload(order: Order, db: Session, include_items: bool = False) -> dict:
-    store = db.get(Store, order.store_id)
+    store = get_delegation(order.store_id)
     customer_name = order.customer_code or "Cliente EXITERP"
     if order.customer_code:
         try:
@@ -139,7 +160,7 @@ def order_payload(order: Order, db: Session, include_items: bool = False) -> dic
             logger.exception("No se pudo enriquecer el pedido con el cliente EXITERP %s", order.customer_code)
     creator = db.get(User, order.user_id)
     result = {"id": order.public_id, "number": order.order_number,
-              "store": store.name, "store_code": store.code, "customer_code": order.customer_code, "customer_reference": order.customer_reference,
+              "store": store.name if store else order.store_id, "store_code": store.code if store else order.store_id, "customer_code": order.customer_code, "customer_reference": order.customer_reference,
               "job_name": order.job_name, "notes": order.notes, "subtotal": float(order.subtotal),
               "tax_total": float(order.tax_total), "total": float(order.total), "created_at": order.created_at,
               "customer": customer_name, "created_by": creator.full_name if creator else "Integración EXIT",
@@ -251,7 +272,9 @@ def registration(data: dict, db: Session = Depends(get_db)):
 
 @app.get("/api/v1/stores")
 def stores(user: User = Depends(current_user), db: Session = Depends(get_db)):
-    return [{"id": s.public_id, "code": s.code, "name": s.name, "address": s.address} for s in db.scalars(select(Store).where(Store.active.is_(True)).order_by(Store.name)).all()]
+    return [{"id": s.id, "code": s.code, "name": s.name, "address": s.address,
+             "company_code": s.company, "warehouse_code": s.warehouse_code,
+             "warehouse_name": s.warehouse_name} for s in live_delegations()]
 
 
 @app.get("/api/v1/products")
@@ -478,14 +501,15 @@ def delete_cart_item(item_id: int, user: User = Depends(current_user), db: Sessi
 @app.post("/api/v1/orders", status_code=201)
 def create_order(data: OrderCreate, user: User = Depends(current_user), db: Session = Depends(get_db)):
     customer = customer_for(user, db); customer_code = customer_code_for(user, db); cart = active_cart(user, db)
-    store = db.scalar(select(Store).where(Store.public_id == data.store_id, Store.active.is_(True)))
+    store = get_delegation(data.store_id)
     if not store: raise HTTPException(404, "Tienda no encontrada")
     rows = db.execute(select(CartItem, Product).join(Product, Product.id == CartItem.product_id).where(CartItem.cart_id == cart.id)).all()
     if not rows: raise HTTPException(400, "El pedido está vacío")
     articles = _erp_articles([product for _, product in rows])
     prices = _erp_unit_prices([product for _, product in rows], articles)
-    warehouse_by_store = {"ALM": "00", "COR": "01", "FER": "02", "STG": "04", "SAN": "05"}
-    warehouse_code = warehouse_by_store.get(store.code.strip().upper(), store.code.strip())
+    warehouse_code = store.warehouse_code
+    if not warehouse_code:
+        raise HTTPException(409, "La delegación no tiene CodigoAlmacen configurado en EXIT")
     stock_warning = None
     try:
         stocks = fetch_product_stocks([product.sku for _, product in rows])
@@ -552,7 +576,7 @@ def submit_draft_order(order_id: str, user: User = Depends(current_user), db: Se
         raise HTTPException(409, "Solo se puede enviar un pedido que esté en borrador")
     order.estado_registro_exit = "PENDIENTE"
     order.sync_status = SyncStatus.pending
-    store = db.get(Store, order.store_id)
+    store = get_delegation(order.store_id)
     db.add(OrderStatusHistory(order_id=order.id, estado_registro_exit="PENDIENTE", changed_by_user_id=user.id, source="WEB", note="Borrador enviado desde el portal"))
     db.add(Notification(customer_id=legacy_customer_id(user), customer_code=order.customer_code, user_id=user.id,
                         title="Pedido recibido", message=f"Hemos recibido el pedido {order.order_number}."))
@@ -693,7 +717,7 @@ def orders(date_from: date | None = None, date_to: date | None = None,
         else:
             payload = {"id": f"exit:{record.exit_order_id}", "number": record.exit_order_id,
                        "exit_number": record.exit_order_id, "web_number": None, "nro_pedido_exit": record.exit_order_id,
-                       "local_order": False, "store": "Almeiras", "store_code": record.store_code,
+                       "local_order": False, "store": delegation_name(record.store_code), "store_code": record.store_code,
                        "customer_code": record.customer_code, "customer": exit_customer_name(record.customer_code),
                        "customer_reference": record.customer_reference, "job_name": record.job_name,
                        "notes": record.notes, "subtotal": float(record.subtotal), "tax_total": float(record.tax_total),
@@ -1067,7 +1091,7 @@ def store_orders(view: str = Query("active_kardex", pattern="^(active_kardex|act
             customer_names[code] = code
     return [{
         "id": record.exit_order_id, "number": record.order_number,
-        "store": "Almeiras", "store_code": "00", "customer_code": record.customer_code,
+        "store": delegation_name(record.store_code), "store_code": record.store_code, "customer_code": record.customer_code,
         "customer": customer_names.get(record.customer_code, record.customer_code),
         "created_by": record.source_created_by or "EXIT", "created_at": record.recorded_at,
         "customer_reference": record.customer_reference, "auxiliary_reference": record.auxiliary_reference,
