@@ -43,9 +43,27 @@ WAREHOUSE = {
 ARTICLE = {
     "schema": "dbo",
     "table": "articulos",
-    "code": "CodigoArticulo",
-    "price_with_tax": "PrecioVentaConIVA0",
-    "price_without_tax": "PrecioVentaSinIVA0",
+    # EXIT installations are not completely uniform.  Catalog queries resolve
+    # the first existing candidate instead of assuming every optional column is
+    # present.  ``code`` is the only required field.
+    "columns": {
+        "code": ("CodigoArticulo",),
+        "description": ("DescripcionArticulo", "Descripcion", "Articulo"),
+        "unit": ("UnidadMedidaVentas", "UnidadMedida", "UnidadVenta"),
+        "manufacturer_reference": (
+            "ReferenciaFabricante", "ReferenciaProveedor", "CodigoAlternativo",
+        ),
+        "brand_code": ("CodigoMarca", "Marca"),
+        "brand_name": ("DescripcionMarca", "MarcaDescripcion", "Marca"),
+        "ean": ("Ean13B2C", "EAN13", "CodigoBarras"),
+        "price_with_tax": ("PrecioVentaConIVA0", "PrecioVentaconIVA0"),
+        "price_without_tax": ("PrecioVentaSinIVA0", "PrecioVentasinIVA0"),
+        "inactive": ("Inactivo",),
+        "internet": ("Internet",),
+        "web": ("ArticuloWEB",),
+        "b2b": ("InternetB2B",),
+        "kardex": ("EX_ArticuloKARDEX",),
+    },
 }
 
 CUSTOMER_PURCHASES = {

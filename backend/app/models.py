@@ -173,6 +173,21 @@ class Product(Base, TimestampMixin):
     __table_args__ = (Index("ix_products_family_active", "family", "active"),)
 
 
+class ProductImageMissing(Base, TimestampMixin):
+    """Cola auditable de materiales cuya imagen aún no está en PostgreSQL."""
+
+    __tablename__ = "product_image_missing"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    product_id: Mapped[int] = mapped_column(
+        ForeignKey("products.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    sku: Mapped[str] = mapped_column(String(50), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(30), default="PENDIENTE", index=True)
+    reason: Mapped[str | None] = mapped_column(Text)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str | None] = mapped_column(Text)
+
+
 class MaterialImportRow(Base, TimestampMixin):
     """Copia auditable de cada fila del Excel, incluidos duplicados."""
     __tablename__ = "material_import_rows"
