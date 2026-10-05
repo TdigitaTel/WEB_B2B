@@ -9,7 +9,14 @@ REFERENCES = (("orders", "store_id"), ("users", "store_id"),
 
 def match_legacy_store(store, delegations):
     by_code = [d for d in delegations if d.code == store["code"]]
-    by_name = [d for d in delegations if normalized_name(d.name) == normalized_name(store["name"])]
+    legacy_name = normalized_name(store["name"])
+    # La ficha local antigua llamaba A Coruña a la delegación San Diego.
+    legacy_name = {"acoruna": "sandiego"}.get(legacy_name, legacy_name)
+    by_name = [d for d in delegations if legacy_name in {
+        normalized_name(d.warehouse_name),
+        normalized_name(d.name),
+        normalized_name(d.name.removeprefix("Bermúdez Ulloa ")),
+    }]
     matches = [d for d in by_code if d in by_name] or by_code or by_name
     if len(matches) != 1:
         raise RuntimeError(
