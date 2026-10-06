@@ -41,6 +41,8 @@ class ExitOrderInput(BaseModel):
     source_updated_at: datetime
     recorded_at: datetime | None = None
     prepared_at: datetime | None = None
+    delivered_at: datetime | None = None
+    invoiced_at: datetime | None = None
     customer_reference: str | None = None
     auxiliary_reference: str | None = None
     job_name: str | None = None
@@ -57,7 +59,7 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
     if not store:
         raise ValueError(f"Almacén interno desconocido: {incoming.store_code}")
     estado_registro_exit = incoming.estado_registro_exit.strip().upper()
-    if estado_registro_exit not in {"PENDIENTE", "REGISTRADO", "EN_PROCESO", "ATENDIDO", "ENTREGADO", "FACTURADO"}:
+    if estado_registro_exit not in {"PENDIENTE", "REGISTRADO", "EN_PROCESO", "EN_PREPARACION", "ATENDIDO", "ENTREGADO", "FACTURADO"}:
         raise ValueError(f"Estado EXIT no mapeado: {incoming.estado_registro_exit}")
 
     order = db.scalar(select(Order).where(Order.nro_pedido_exit == incoming.exit_order_id))
@@ -83,14 +85,12 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
     # la fecha de modificación de la cabecera avance. Por eso se refrescan siempre
     # las líneas del pedido durante la sincronización.
 
-    previous_status = order.estado_registro_exit
-    first_exit_registration = is_new or not order.nro_pedido_exit
     order.nro_pedido_exit = incoming.exit_order_id
     order.fecha_registro_exit = incoming.recorded_at or order.fecha_registro_exit
     order.estado_registro_exit = estado_registro_exit
     if is_new:
         order.origen_pedido = "EXIT"
-    if incoming.recorded_at:
+    if is_new and incoming.recorded_at:
         order.created_at = incoming.recorded_at
     order.customer_code = incoming.customer_code
     order.store_id = store.id
@@ -112,18 +112,8 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
                          unit_price=line.unit_price, discount_pct=line.discount_pct, tax_rate=line.tax_rate,
                          line_total=line_total, fulfillment_zone=line.fulfillment_zone,
                          served_quantity=line.served_quantity, pending_quantity=line.pending_quantity))
-    if first_exit_registration:
-        registered_at = incoming.recorded_at or incoming.source_updated_at
-        exit_steps = ["REGISTRADO", "EN_PROCESO", "ATENDIDO", "ENTREGADO", "FACTURADO"]
-        steps_to_record = (exit_steps[:exit_steps.index(estado_registro_exit) + 1]
-                           if estado_registro_exit in exit_steps else [estado_registro_exit])
-        for step in steps_to_record:
-            db.add(OrderStatusHistory(order_id=order.id, estado_registro_exit=step,
-                                      changed_by_user_id=integration_user.id, source="EXIT",
-                                      note="Estado recibido desde EXIT", created_at=registered_at))
-    elif previous_status != estado_registro_exit:
-        db.add(OrderStatusHistory(order_id=order.id, estado_registro_exit=estado_registro_exit, changed_by_user_id=integration_user.id, source="EXIT",
-                                  note="Estado recibido desde EXIT", created_at=incoming.source_updated_at))
+    from .order_timeline import exit_events, sync_history
+    sync_history(db, order, exit_events(incoming))
     return order
 
 
