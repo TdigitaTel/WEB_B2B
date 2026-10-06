@@ -410,6 +410,20 @@ def fetch_customer_delivery_notes(customer_code: str, limit: int = 200, document
     } for row in rows]
 
 
+def _delivery_registration_sql(connection, sql):
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=%s AND TABLE_NAME=%s", (SALES_DOCUMENTS["schema"], SALES_DOCUMENTS["delivery_header"]))
+        columns = {row['COLUMN_NAME'].lower(): row['COLUMN_NAME'] for row in cursor.fetchall()}
+    column = columns.get('horagrabacion') or columns.get('horaregistro')
+    expression = _discovered_column(column) if column else 'NULL'
+    return sql.replace('FechaAlbaran,', f'FechaAlbaran, {expression} AS delivery_recorded_time,', 1).replace('ORDER BY FechaAlbaran DESC,', 'ORDER BY FechaAlbaran DESC, delivery_recorded_time DESC,')
+
+
+def _delivery_attended_at(row):
+    from .exit_db import _exit_datetime
+    return _exit_datetime(row['FechaAlbaran'], row.get('delivery_recorded_time')) if row.get('FechaAlbaran') else None
+
+
 def fetch_customer_delivery_statuses(customer_code: str, limit: int = 1000) -> list[dict]:
     """Devuelve el vínculo pedido-albarán sin cargar las líneas del documento."""
     schema = _identifier(SALES_DOCUMENTS["schema"])
@@ -425,12 +439,13 @@ def fetch_customer_delivery_statuses(customer_code: str, limit: int = 1000) -> l
         "ORDER BY FechaAlbaran DESC, EjercicioAlbaran DESC, SerieAlbaran DESC, NumeroAlbaran DESC"
     )
     with connect_sqlserver() as connection, connection.cursor() as cursor:
+        sql = _delivery_registration_sql(connection, sql)
         cursor.execute(sql, (str(customer_code).strip(),))
         rows = cursor.fetchall()
     return [{
         "order_number": _document_id(row.get("EjercicioPedido"), row.get("SeriePedido"), row.get("NumeroPedido")),
         "delivery_number": _document_id(row.get("EjercicioAlbaran"), row.get("SerieAlbaran"), row.get("NumeroAlbaran")),
-        "attended_at": row.get("FechaAlbaran"),
+        "attended_at": _delivery_attended_at(row),
         "delivered_at": row.get("FechaEntrega"),
         "invoiced_at": row.get("FechaFactura"),
         "is_printed": int(row.get("StatusImpresion") or 0) == -1,
@@ -461,12 +476,13 @@ def fetch_delivery_statuses_for_orders(order_numbers: list[str]) -> list[dict]:
         " ORDER BY FechaAlbaran DESC, EjercicioAlbaran DESC, SerieAlbaran DESC, NumeroAlbaran DESC"
     )
     with connect_sqlserver() as connection, connection.cursor() as cursor:
+        sql = _delivery_registration_sql(connection, sql)
         cursor.execute(sql, tuple(parameters))
         rows = cursor.fetchall()
     return [{
         "order_number": _document_id(row.get("EjercicioPedido"), row.get("SeriePedido"), row.get("NumeroPedido")),
         "delivery_number": _document_id(row.get("EjercicioAlbaran"), row.get("SerieAlbaran"), row.get("NumeroAlbaran")),
-        "attended_at": row.get("FechaAlbaran"),
+        "attended_at": _delivery_attended_at(row),
         "delivered_at": row.get("FechaEntrega"),
         "invoiced_at": row.get("FechaFactura"),
         "is_printed": int(row.get("StatusImpresion") or 0) == -1,

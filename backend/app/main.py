@@ -18,6 +18,7 @@ from .auth import audit, create_access_token, current_user, hash_password, requi
 from .category_import import router as category_import_router
 from .config import settings
 from .db import get_db
+from .order_timeline import exit_events, sync_history, instant
 from .delegations import fetch_delegations, resolve_delegation
 from .erp_db import (
     fetch_catalog_articles, fetch_catalog_articles_by_codes,
@@ -182,33 +183,30 @@ def order_payload(order: Order, db: Session, include_items: bool = False) -> dic
         history = db.scalars(select(OrderStatusHistory).where(OrderStatusHistory.order_id == order.id).order_by(OrderStatusHistory.created_at)).all()
         result["history_enabled"] = settings.show_order_status_history
         if settings.show_order_status_history:
-            result["history"] = [{"estado_registro_exit": h.estado_registro_exit, "source": h.source, "note": h.note, "created_at": h.created_at} for h in history]
+            result["history"] = [{"estado_registro_exit": h.estado_registro_exit, "source": h.source, "note": h.note, "created_at": h.created_at, "date_only": h.estado_registro_exit == "FACTURADO"} for h in sorted(history, key=lambda event: instant(event.created_at), reverse=True)]
         result["documents"] = []
         current_state = order.estado_registro_exit.strip().upper()
         visible_stage = {
-            "BORRADOR": "PENDIENTE", "PENDIENTE": "PENDIENTE",
-            "REGISTRADO": "EN_PROCESAMIENTO", "EN_PROCESO": "EN_PROCESAMIENTO",
+            "BORRADOR": "BORRADOR", "PENDIENTE": "PENDIENTE",
+            "REGISTRADO": "EN_PROCESAMIENTO", "EN_PROCESO": "EN_PROCESAMIENTO", "EN_PREPARACION": "EN_PROCESAMIENTO",
             "ATENDIDO": "PENDIENTE_RECOJO", "ENTREGADO": "ENTREGADO", "FACTURADO": "FACTURADO",
         }.get(current_state, "PENDIENTE")
-        stage_position = {"PENDIENTE": 0, "EN_PROCESAMIENTO": 1, "PENDIENTE_RECOJO": 2, "ENTREGADO": 3, "FACTURADO": 4}
-        pending_dates = [event.created_at for event in history if event.estado_registro_exit in {"BORRADOR", "PENDIENTE"}]
-        processing_dates = [event.created_at for event in history if event.estado_registro_exit in {"REGISTRADO", "EN_PROCESO"}]
+        stage_position = {"BORRADOR": 0, "PENDIENTE": 0, "EN_PROCESAMIENTO": 1, "PENDIENTE_RECOJO": 2, "ENTREGADO": 3, "FACTURADO": 4}
+        pending_dates = [event.created_at for event in history if event.estado_registro_exit == "PENDIENTE"]
+        draft_dates = [event.created_at for event in history if event.estado_registro_exit == "BORRADOR"]
+        processing_dates = [event.created_at for event in history if event.estado_registro_exit in {"REGISTRADO", "EN_PROCESO", "EN_PREPARACION"}]
         pickup_dates = [event.created_at for event in history if event.estado_registro_exit == "ATENDIDO"]
         delivered_dates = [event.created_at for event in history if event.estado_registro_exit == "ENTREGADO"]
         invoice_dates = [event.created_at for event in history if event.estado_registro_exit == "FACTURADO"]
-        fallback_date = order.fecha_registro_exit or order.updated_at or order.created_at
-        if not processing_dates and stage_position[visible_stage] >= 1:
-            processing_dates = [fallback_date]
-        if not pickup_dates and stage_position[visible_stage] >= 2:
-            pickup_dates = [fallback_date]
         stage_dates = {
-            "PENDIENTE": max(pending_dates) if pending_dates else order.created_at,
-            "EN_PROCESAMIENTO": max(processing_dates) if processing_dates and stage_position[visible_stage] >= 1 else None,
+            **({"BORRADOR": min(draft_dates)} if draft_dates else {}),
+            "PENDIENTE": max(pending_dates) if pending_dates else None,
+            "EN_PROCESAMIENTO": min(processing_dates) if processing_dates and stage_position[visible_stage] >= 1 else None,
             "PENDIENTE_RECOJO": max(pickup_dates) if pickup_dates and stage_position[visible_stage] >= 2 else None,
             "ENTREGADO": max(delivered_dates) if delivered_dates and stage_position[visible_stage] >= 3 else None,
             "FACTURADO": max(invoice_dates) if invoice_dates and stage_position[visible_stage] >= 4 else None,
         }
-        result["workflow"] = [{"etapa": etapa, "completed_at": completed_at} for etapa, completed_at in stage_dates.items()]
+        result["workflow"] = [{"etapa": etapa, "completed_at": completed_at, "date_only": etapa == "FACTURADO"} for etapa, completed_at in stage_dates.items()]
     return result
 
 
@@ -645,22 +643,20 @@ def orders(date_from: date | None = None, date_to: date | None = None,
     result: list[dict] = []
     def exit_workflow(record, current: str | None = None, delivery: dict | None = None) -> list[dict]:
         current = current or record.estado_registro_exit
-        positions = {"PENDIENTE": 0, "REGISTRADO": 1, "EN_PROCESO": 1, "ATENDIDO": 2, "ENTREGADO": 3, "FACTURADO": 4}
+        positions = {"PENDIENTE": 0, "REGISTRADO": 1, "EN_PROCESO": 1, "EN_PREPARACION": 1, "ATENDIDO": 2, "ENTREGADO": 3, "FACTURADO": 4}
         position = positions.get(current, 0)
-        process_at = record.prepared_at or record.source_updated_at or record.recorded_at
-        fallback = ((delivery or {}).get("invoiced_at") or (delivery or {}).get("delivered_at")
-                    or (delivery or {}).get("attended_at") or process_at)
-        dates = (record.recorded_at or process_at, process_at,
-                 (delivery or {}).get("attended_at") or fallback,
-                 (delivery or {}).get("delivered_at"),
-                 (delivery or {}).get("invoiced_at"))
-        return [{"etapa": stage, "completed_at": dates[index] if index <= position else None}
+        event_dates = {state: stamp for state, stamp, _ in exit_events(record, delivery)}
+        processing = [event_dates[state] for state in ('REGISTRADO', 'EN_PREPARACION') if state in event_dates]
+        dates = (None, min(processing) if processing else None,
+                 event_dates.get('ATENDIDO'), event_dates.get('ENTREGADO'), event_dates.get('FACTURADO'))
+        return [{"etapa": stage, "completed_at": dates[index] if index <= position else None,
+                 "date_only": stage == "FACTURADO"}
                 for index, stage in enumerate(("PENDIENTE", "EN_PROCESAMIENTO", "PENDIENTE_RECOJO", "ENTREGADO", "FACTURADO"))]
     for record in exit_rows:
         external = record.exit_order_id.strip().upper()
         external_key = document_key(external)
         delivery = deliveries.get(external_key) or deliveries.get(external_key.split("/")[-1])
-        effective_state = record.estado_registro_exit
+        effective_state = "EN_PREPARACION" if record.prepared_at else "REGISTRADO"
         if delivery:
             if delivery["is_invoiced"]:
                 effective_state = "FACTURADO"
@@ -676,28 +672,13 @@ def orders(date_from: date | None = None, date_to: date | None = None,
                 local.fecha_registro_exit = record.recorded_at
         if local:
             linked.add(local.id)
-            existing_history = set(db.scalars(select(OrderStatusHistory.estado_registro_exit).where(
-                OrderStatusHistory.order_id == local.id
-            )).all())
-            if record.prepared_at and "EN_PROCESO" not in existing_history:
-                db.add(OrderStatusHistory(order_id=local.id, estado_registro_exit="EN_PROCESO", source="EXIT",
-                                          note="Pedido preparado en EXIT", created_at=record.prepared_at))
-            if delivery:
-                document_events = [("ATENDIDO", delivery["attended_at"], f"Albarán {delivery['delivery_number']} generado")]
-                if delivery["is_printed"] and delivery["delivered_at"]:
-                    document_events.append(("ENTREGADO", delivery["delivered_at"], f"Albarán {delivery['delivery_number']} impreso"))
-                if delivery["is_invoiced"] and delivery["invoiced_at"]:
-                    document_events.append(("FACTURADO", delivery["invoiced_at"], f"Albarán {delivery['delivery_number']} facturado"))
-                sequence = ["PENDIENTE", "REGISTRADO", "EN_PROCESO", "ATENDIDO", "ENTREGADO", "FACTURADO"]
-                current_index = sequence.index(local.estado_registro_exit) if local.estado_registro_exit in sequence else 0
-                if effective_state in sequence and current_index > sequence.index(effective_state):
-                    effective_state = local.estado_registro_exit
-                for status, occurred_at, note in document_events:
-                    if sequence.index(status) > current_index:
-                        db.add(OrderStatusHistory(order_id=local.id, estado_registro_exit=status, source="EXIT",
-                                                  note=note, created_at=occurred_at))
-                if sequence.index(effective_state) > current_index:
-                    local.estado_registro_exit = effective_state
+            local.fecha_registro_exit = record.recorded_at
+            if record.prepared_at and not delivery:
+                effective_state = "EN_PREPARACION"
+            elif not delivery:
+                effective_state = "REGISTRADO"
+            sync_history(db, local, exit_events(record, delivery))
+            local.estado_registro_exit = effective_state
             payload = order_payload(local, db, True)
             payload.update({"nro_pedido_exit": record.exit_order_id, "exit_number": record.exit_order_id,
                             "web_number": local.order_number, "number": record.exit_order_id,
@@ -731,7 +712,13 @@ def orders(date_from: date | None = None, date_to: date | None = None,
                             "unit_price": float(line.unit_price),
                             "line_total": float(line.line_total or line.quantity * line.unit_price),
                             "fulfillment_zone": line.fulfillment_zone} for line in record.lines],
-                       "documents": [], "history_enabled": False, "workflow": exit_workflow(record, effective_state, delivery)}
+                       "documents": [], "history_enabled": settings.show_order_status_history,
+                       "history": [{"estado_registro_exit": state, "created_at": stamp, "source": "EXIT", "note": note, "date_only": state == "FACTURADO"}
+                                   for state, stamp, note in sorted(exit_events(record, delivery), key=lambda event: event[1], reverse=True)],
+                       "workflow": exit_workflow(record, effective_state, delivery)}
+        if local and payload.get("workflow"):
+            web_pending = db.scalars(select(OrderStatusHistory).where(OrderStatusHistory.order_id == local.id, OrderStatusHistory.estado_registro_exit == "PENDIENTE", OrderStatusHistory.source == "WEB")).all()
+            payload["workflow"][0]["completed_at"] = max((h.created_at for h in web_pending), default=None)
         payload["auxiliary_reference"] = record.auxiliary_reference
         payload["is_web_order"] = bool(payload.get("is_web_order")) or "PEDIDOGENERADOWEBB2B" in "".join(str(record.auxiliary_reference or "").upper().split())
         result.append(payload)
@@ -743,7 +730,7 @@ def orders(date_from: date | None = None, date_to: date | None = None,
             key = document_key(row.nro_pedido_exit)
             delivery = deliveries.get(key) or deliveries.get(key.split("/")[-1])
         if delivery:
-            sequence = ["PENDIENTE", "REGISTRADO", "EN_PROCESO", "ATENDIDO", "ENTREGADO", "FACTURADO"]
+            sequence = ["PENDIENTE", "REGISTRADO", "EN_PROCESO", "EN_PREPARACION", "ATENDIDO", "ENTREGADO", "FACTURADO"]
             target = "FACTURADO" if delivery["is_invoiced"] else "ENTREGADO" if delivery["is_printed"] else "ATENDIDO"
             current_index = sequence.index(row.estado_registro_exit) if row.estado_registro_exit in sequence else 0
             events = [("ATENDIDO", delivery["attended_at"], f"Albarán {delivery['delivery_number']} generado")]
@@ -763,7 +750,7 @@ def orders(date_from: date | None = None, date_to: date | None = None,
     db.commit()
     requested = state.strip().upper()
     groups = {"BORRADOR": {"BORRADOR"}, "PENDIENTE": {"BORRADOR", "PENDIENTE"},
-              "EN_PROCESAMIENTO": {"REGISTRADO", "EN_PROCESO"},
+              "EN_PROCESAMIENTO": {"REGISTRADO", "EN_PROCESO", "EN_PREPARACION"},
               "PENDIENTE_RECOJO": {"ATENDIDO"}, "ENTREGADO": {"ENTREGADO"}, "FACTURADO": {"FACTURADO"}}
     if requested not in {"", "TODOS"}:
         accepted = groups.get(requested, {requested})
@@ -908,7 +895,7 @@ def export_documents(kind: str, q: str = "", date_from: date | None = None, date
     return StreamingResponse(output, media_type=media, headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
-INTEGRATION_STATUS_SEQUENCE = ["PENDIENTE", "REGISTRADO", "EN_PROCESO", "ATENDIDO", "ENTREGADO", "FACTURADO"]
+INTEGRATION_STATUS_SEQUENCE = ["PENDIENTE", "REGISTRADO", "EN_PROCESO", "EN_PREPARACION", "ATENDIDO", "ENTREGADO", "FACTURADO"]
 
 
 def require_integration_key(x_integration_key: str | None = Header(default=None)):
@@ -1050,7 +1037,8 @@ def update_order_status_from_integration(
 ALLOWED_TRANSITIONS = {
     "BORRADOR": {"PENDIENTE"},
     "PENDIENTE": {"REGISTRADO"},
-    "REGISTRADO": {"EN_PROCESO"},
+    "REGISTRADO": {"EN_PROCESO", "EN_PREPARACION"},
+    "EN_PREPARACION": {"ATENDIDO"},
     "EN_PROCESO": {"ATENDIDO"},
     "ATENDIDO": {"ENTREGADO"},
     "ENTREGADO": {"FACTURADO"},
