@@ -22,6 +22,8 @@ HEADER_CANDIDATES = {
     "created_by": ("NombreCorto", "WebUsuario", "CodigoUsuario"),
     "updated_at": ("FechaUltimaModificacion", "FechaModificacion"),
     "prepared_at": ("FechaPreparacionPedido",),
+    "delivered_at": ("FechaEntrega",),
+    "invoiced_at": ("FechaFactura",),
     "reference": ("SuPedidoNumero", "SuPedido", "ReferenciaInterna", "ReferenciaCliente", "Referencia"),
     "auxiliary_reference": ("ReferenciaAuxiliar", "Referencia_Auxiliar", "RefAuxiliar"),
     "notes": ("Observaciones", "Comentario", "Comentarios"),
@@ -105,6 +107,8 @@ def _exit_datetime(date_value, time_value=None) -> datetime:
         base = datetime.combine(date_value, dt_time.min)
     else:
         base = datetime.now()
+    if time_value is None:
+        return base.replace(tzinfo=ZoneInfo("Europe/Madrid"))
     hour = minute = second = 0
     if time_value is not None:
         if isinstance(time_value, datetime):
@@ -142,7 +146,7 @@ def fetch_exit_orders_live(view: str = "active_kardex", date_from: date | None =
         _required(detail, ("year", "series", "number", "sku", "quantity", "zone"), detail_table)
         hs = {key: _discovered_column(value) for key, value in header.items() if value}
         ds = {key: _discovered_column(value) for key, value in detail.items() if value}
-        header_fields = ("company", "year", "series", "number", "customer", "delegation", "status", "date", "recorded_date", "recorded_time", "created_by", "updated_at", "prepared_at", "reference", "auxiliary_reference", "notes", "subtotal", "total")
+        header_fields = ("company", "year", "series", "number", "customer", "delegation", "status", "date", "recorded_date", "recorded_time", "created_by", "updated_at", "prepared_at", "delivered_at", "invoiced_at", "reference", "auxiliary_reference", "notes", "subtotal", "total")
         header_where: list[str] = []
         header_parameters: list = []
         if customer_code:
@@ -258,7 +262,7 @@ def fetch_exit_orders_live(view: str = "active_kardex", date_from: date | None =
         else:
             updated_at = imported_at
         source_status = str(row.get("status") or "").strip().upper()
-        local_status = "ATENDIDO" if source_status == "S" else "EN_PROCESO"
+        local_status = "EN_PREPARACION" if row.get("prepared_at") else "REGISTRADO"
         result.append(ExitOrderInput(
             exit_order_id=external_id, order_number=f"EXIT-{year}-{series}-{number}"[:40],
             customer_code=str(row.get("customer") or "").strip(),
@@ -266,6 +270,7 @@ def fetch_exit_orders_live(view: str = "active_kardex", date_from: date | None =
                         if row.get("company") is not None else str(row.get("delegation") or "").strip()),
             estado_registro_exit=local_status, source_status=source_status, source_created_by=str(row.get("created_by") or "").strip() or None,
             source_updated_at=updated_at, recorded_at=recorded_at,
+            delivered_at=row.get("delivered_at"), invoiced_at=row.get("invoiced_at"),
             prepared_at=(row.get("prepared_at").replace(tzinfo=ZoneInfo("Europe/Madrid"))
                          if isinstance(row.get("prepared_at"), datetime) else None),
             customer_reference=str(row.get("reference") or "").strip() or None,
