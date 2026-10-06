@@ -3,7 +3,7 @@ from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 from sqlalchemy import select
 from .config import settings
-from .models import OrderStatusHistory
+from .models import Order, OrderStatusHistory
 
 MADRID = ZoneInfo('Europe/Madrid')
 
@@ -41,6 +41,7 @@ def exit_events(record, delivery=None):
     return [(state, stamp, note) for state, stamp, note in events if stamp is not None]
 
 def sync_history(db, order, events):
+    db.execute(select(Order.id).where(Order.id == order.id).with_for_update()).all()
     history = db.scalars(select(OrderStatusHistory).where(OrderStatusHistory.order_id == order.id)).all()
     for state, stamp, note in events:
         existing = next((h for h in history if h.source == 'EXIT' and h.estado_registro_exit in ({'EN_PROCESO', 'EN_PREPARACION'} if state == 'EN_PREPARACION' else {state})), None)
