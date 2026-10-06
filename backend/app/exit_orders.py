@@ -8,7 +8,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session
 
 from .delegations import resolve_delegation
@@ -62,6 +62,8 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
     if estado_registro_exit not in {"PENDIENTE", "REGISTRADO", "EN_PROCESO", "EN_PREPARACION", "ATENDIDO", "ENTREGADO", "FACTURADO"}:
         raise ValueError(f"Estado EXIT no mapeado: {incoming.estado_registro_exit}")
 
+    if db.bind.dialect.name == "postgresql":
+        db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": f"exit-order:{incoming.exit_order_id}"})
     order = db.scalar(select(Order).where(Order.nro_pedido_exit == incoming.exit_order_id))
     if not order and incoming.web_order_number:
         order = db.scalar(select(Order).where(Order.order_number == incoming.web_order_number))

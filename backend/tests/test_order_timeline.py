@@ -29,3 +29,23 @@ def test_delivery_requires_printing_and_invoice_has_no_time():
 
 def test_exit_does_not_invent_web_or_missing_stages():
     assert [state for state,_,_ in exit_events(record())]==['REGISTRADO']
+
+def test_repeated_sync_updates_existing_history_and_preserves_web_dates():
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.orm import Session
+    from app.models import Base, Order, OrderStatusHistory
+    from app.order_timeline import sync_history
+    engine=create_engine('sqlite://')
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        order=Order(order_number='WEB-TIMELINE',store_id='1:00',origen_pedido='B2B',estado_registro_exit='PENDIENTE')
+        db.add(order);db.flush()
+        web_date=datetime(2026,10,5,8,0)
+        db.add(OrderStatusHistory(order_id=order.id,estado_registro_exit='PENDIENTE',source='WEB',created_at=web_date))
+        db.flush()
+        sync_history(db,order,[('REGISTRADO',datetime(2026,10,5,9),'Registro EXIT')])
+        sync_history(db,order,[('REGISTRADO',datetime(2026,10,5,10),'Registro corregido EXIT')])
+        history=db.scalars(select(OrderStatusHistory).where(OrderStatusHistory.order_id==order.id)).all()
+        assert len(history)==2
+        assert next(h for h in history if h.source=='WEB').created_at==web_date
+        assert next(h for h in history if h.source=='EXIT').created_at.hour==10

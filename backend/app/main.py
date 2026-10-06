@@ -11,13 +11,14 @@ from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from .auth import audit, create_access_token, current_user, hash_password, require_roles, verify_password
 from .category_import import router as category_import_router
 from .config import settings
 from .db import get_db
+from .exit_orders import upsert_exit_order
 from .order_timeline import exit_events, sync_history, instant
 from .delegations import fetch_delegations, resolve_delegation
 from .erp_db import (
@@ -615,6 +616,8 @@ def orders(date_from: date | None = None, date_to: date | None = None,
     condition = Order.customer_code == customer_code
     if user.customer_id:
         condition = condition | (Order.customer_id == user.customer_id)
+    if db.bind.dialect.name == "postgresql":
+        db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": f"order-history-customer:{customer_code}"})
     all_local_rows = db.scalars(select(Order).where(condition).order_by(Order.created_at.desc()).limit(5000)).all()
     local_rows = [row for row in all_local_rows if start <= row.created_at.date() <= end]
     exit_rows = fetch_customer_exit_orders(customer_code, start, end)
@@ -670,6 +673,9 @@ def orders(date_from: date | None = None, date_to: date | None = None,
             if local and not local.nro_pedido_exit:
                 local.nro_pedido_exit = record.exit_order_id
                 local.fecha_registro_exit = record.recorded_at
+        if local is None:
+            local = upsert_exit_order(db, record, user)
+            by_exit[external] = local
         if local:
             linked.add(local.id)
             local.fecha_registro_exit = record.recorded_at
@@ -681,13 +687,13 @@ def orders(date_from: date | None = None, date_to: date | None = None,
             local.estado_registro_exit = effective_state
             payload = order_payload(local, db, True)
             payload.update({"nro_pedido_exit": record.exit_order_id, "exit_number": record.exit_order_id,
-                            "web_number": local.order_number, "number": record.exit_order_id,
+                            "web_number": local.order_number if local.origen_pedido == "B2B" else None, "number": record.exit_order_id,
                             "fecha_registro_exit": record.recorded_at, "estado_registro_exit": effective_state,
                             "customer_reference": record.customer_reference or local.customer_reference,
                             "notes": record.notes or local.notes, "subtotal": float(record.subtotal),
                             "tax_total": float(record.tax_total), "total": float(record.total),
                             "created_at": record.recorded_at or local.created_at,
-                            "created_by": record.source_created_by or payload["created_by"], "local_order": True,
+                            "created_by": record.source_created_by or "EXIT", "local_order": local.origen_pedido == "B2B",
                             "workflow": exit_workflow(record, effective_state, delivery),
                             "items": [{"sku": line.sku, "description": line.description, "quantity": float(line.quantity),
                                        "served_quantity": float(line.served_quantity or 0),
@@ -744,8 +750,8 @@ def orders(date_from: date | None = None, date_to: date | None = None,
             if sequence.index(target) > current_index:
                 row.estado_registro_exit = target
         payload = order_payload(row, db, True)
-        payload.update({"web_number": row.order_number, "exit_number": row.nro_pedido_exit,
-                        "local_order": True})
+        payload.update({"web_number": row.order_number if row.origen_pedido == "B2B" else None, "exit_number": row.nro_pedido_exit,
+                        "local_order": row.origen_pedido == "B2B"})
         result.append(payload)
     db.commit()
     requested = state.strip().upper()
