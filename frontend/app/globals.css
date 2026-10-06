@@ -163,3 +163,12 @@ body{background:linear-gradient(180deg,#f6f9fb 0,#f1f5f7 420px,#f5f6f7 100%)}.se
 .dispatch-order.is-normal-order .dispatch-origin-badge{background:#dfe8ed;color:#3f596b}
 .dispatch-order.is-web-order .dispatch-origin-badge{background:#b42318;color:#fff}
 .document-card.invoice-card>summary{grid-template-columns:1.4fr .9fr .5fr 85px}
+
+/* Indicadores de origen de los pedidos */
+.order-origin-filters{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0}
+.order-origin-filters button{padding:10px 18px;border:1px solid #9bb4c4;border-radius:8px;background:#fff;color:#19445c;font-weight:700;cursor:pointer}
+.order-origin-filters button.selected{background:#0b6388;color:#fff;border-color:#0b6388;box-shadow:0 0 0 2px #c5e7f5}
+.order-origin-check{display:inline-flex!important;align-items:center;gap:7px;padding:5px 9px;border-radius:6px;font-size:12px;width:fit-content}
+.order-origin-check.web{background:#d8f3e5;color:#11603b}
+.order-origin-check.normal{background:#edf1f4;color:#526270}
+.order-origin-check input{width:16px;height:16px;margin:0;accent-color:#16834d;pointer-events:none}

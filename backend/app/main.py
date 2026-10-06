@@ -165,7 +165,7 @@ def order_payload(order: Order, db: Session, include_items: bool = False) -> dic
               "tax_total": float(order.tax_total), "total": float(order.total), "created_at": order.created_at,
               "customer": customer_name, "created_by": creator.full_name if creator else "Integración EXIT",
               "nro_pedido_exit": order.nro_pedido_exit, "fecha_registro_exit": order.fecha_registro_exit,
-              "origen_pedido": order.origen_pedido, "estado_registro_exit": order.estado_registro_exit}
+              "origen_pedido": order.origen_pedido, "is_web_order": order.origen_pedido == "B2B", "estado_registro_exit": order.estado_registro_exit}
     if include_items:
         result["items"] = []
         for item in db.scalars(select(OrderItem).where(OrderItem.order_id == order.id).order_by(OrderItem.id)).all():
@@ -732,6 +732,8 @@ def orders(date_from: date | None = None, date_to: date | None = None,
                             "line_total": float(line.line_total or line.quantity * line.unit_price),
                             "fulfillment_zone": line.fulfillment_zone} for line in record.lines],
                        "documents": [], "history_enabled": False, "workflow": exit_workflow(record, effective_state, delivery)}
+        payload["auxiliary_reference"] = record.auxiliary_reference
+        payload["is_web_order"] = bool(payload.get("is_web_order")) or "PEDIDOGENERADOWEBB2B" in "".join(str(record.auxiliary_reference or "").upper().split())
         result.append(payload)
     for row in local_rows:
         if row.id in linked:
