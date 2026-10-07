@@ -55,9 +55,16 @@ def sync_history(db, order, events):
 
 def dispatch_timing(record, delivery=None, now=None):
     registered = instant(record.recorded_at)
-    closed = next((stamp for state, stamp, _ in exit_events(record, delivery) if state == 'ENTREGADO'), None)
+    dates = {state: stamp for state, stamp, _ in exit_events(record, delivery)}
+    closed = dates.get('ENTREGADO')
+    processing = [dates[state] for state in ('REGISTRADO', 'EN_PREPARACION') if state in dates]
     end = closed or instant(now or datetime.now(MADRID))
     invalid = bool(registered and closed and closed < registered)
     seconds = int((end - registered).total_seconds()) if registered and not invalid else None
-    return {'closed_at': closed, 'dispatch_seconds': max(0, seconds) if seconds is not None else None,
+    return {'workflow': [
+                {'etapa': stage, 'completed_at': stamp}
+                for stage, stamp in (('PENDIENTE', None),
+                    ('EN_PROCESAMIENTO', min(processing) if processing else None),
+                    ('PENDIENTE_RECOJO', dates.get('ATENDIDO')), ('ENTREGADO', closed))],
+            'closed_at': closed, 'dispatch_seconds': max(0, seconds) if seconds is not None else None,
             'dispatch_date_error': invalid}
