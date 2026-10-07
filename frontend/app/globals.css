@@ -175,3 +175,6 @@ body{background:linear-gradient(180deg,#f6f9fb 0,#f1f5f7 420px,#f5f6f7 100%)}.se
 .order-card summary .order-origin-check,.order-origin-check{flex-direction:row;gap:4px;padding:2px 5px;font-size:10px;border-radius:4px;white-space:nowrap}
 .order-origin-check input{width:12px;height:12px}
 .order-filters{flex-wrap:wrap}
+
+.dispatch-clock-state{display:block;font-size:10px;font-weight:600;margin:3px 0}
+.dispatch-clock-state.live{color:#986000}.dispatch-clock-state.closed{color:#16704a}
