@@ -44,6 +44,10 @@ def aggregate(inputs, outputs):
     return {'kardex_started_at': start, 'kardex_closed_at': closed if not invalid else None,
             'kardex_date_error': invalid}
 
+def sales_order_number(reference):
+    """EXIT references contain year/series; Kardex INFO3 contains only the number."""
+    return str(reference).strip().replace("~", "/").split("/")[-1]
+
 def fetch_kardex_timings(numbers):
     numbers = list(dict.fromkeys(str(number).strip() for number in numbers))
     result = {}
