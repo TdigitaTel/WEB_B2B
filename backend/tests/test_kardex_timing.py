@@ -14,3 +14,11 @@ def test_invalid_dates_do_not_close_order():
                        [{'ORDEN': 'A', 'FECHA_MOVIMIENTO': '2026-10-07T09:00:00', 'ORDEN_COMPLETA': 1}])
     assert result['kardex_date_error']
     assert result['kardex_closed_at'] is None
+
+
+def test_real_exit_reference_and_kardex_dates():
+    from app.kardex_timing import sales_order_number
+    assert sales_order_number('2026/AL/6006762') == '6006762'
+    result = aggregate([{'ORDEN': '2026-AL-6006762', 'FECHA_CREACION': '2026-10-07 11:39:28'}],
+                       [{'ORDEN': '2026-AL-6006762', 'FECHA_MOVIMIENTO': '07/10/2026 11:40:47', 'ORDEN_COMPLETA': 1}])
+    assert (result['kardex_closed_at'] - result['kardex_started_at']).total_seconds() == 79
