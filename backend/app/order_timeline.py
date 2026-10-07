@@ -61,7 +61,10 @@ def dispatch_timing(record, delivery=None, now=None):
     end = closed or instant(now or datetime.now(MADRID))
     invalid = bool(registered and closed and closed < registered)
     seconds = int((end - registered).total_seconds()) if registered and not invalid else None
-    return {'workflow': [
+    return {'operational_workflow': [
+                {'stage': stage, 'occurred_at': dates.get(stage)}
+                for stage in ('REGISTRADO', 'EN_PREPARACION', 'ATENDIDO', 'ENTREGADO')],
+            'workflow': [
                 {'etapa': stage, 'completed_at': stamp}
                 for stage, stamp in (('PENDIENTE', None),
                     ('EN_PROCESAMIENTO', min(processing) if processing else None),

@@ -22,3 +22,15 @@ def test_real_exit_reference_and_kardex_dates():
     result = aggregate([{'ORDEN': '2026-AL-6006762', 'FECHA_CREACION': '2026-10-07 11:39:28'}],
                        [{'ORDEN': '2026-AL-6006762', 'FECHA_MOVIMIENTO': '07/10/2026 11:40:47', 'ORDEN_COMPLETA': 1}])
     assert (result['kardex_closed_at'] - result['kardex_started_at']).total_seconds() == 79
+
+
+def test_operations_preserves_registered_and_preparation_dates():
+    from types import SimpleNamespace
+    from datetime import datetime
+    from app.order_timeline import dispatch_timing
+    record = SimpleNamespace(recorded_at=datetime(2026,10,7,12,2), prepared_at=datetime(2026,10,7), delivered_at=None, invoiced_at=None, source_updated_at=None)
+    steps = dispatch_timing(record)['operational_workflow']
+    assert [step['stage'] for step in steps] == ['REGISTRADO', 'EN_PREPARACION', 'ATENDIDO', 'ENTREGADO']
+    assert steps[0]['occurred_at'].hour == 12
+    assert steps[1]['occurred_at'].second == 10
+    assert steps[2]['occurred_at'] is None
