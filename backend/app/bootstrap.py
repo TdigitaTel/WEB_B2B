@@ -7,6 +7,8 @@ from . import models  # noqa: F401
 def main():
     from .migrate_delegations import migrate_delegations
     migrate_delegations(engine)
+    from .migrate_delegation_fields import migrate_delegation_fields
+    migrate_delegation_fields(engine)
     Base.metadata.create_all(engine)
     if engine.dialect.name == "postgresql":
         with engine.begin() as conn:
@@ -102,7 +104,7 @@ def main():
                 "CREATE UNIQUE INDEX IF NOT EXISTS ux_orders_nro_pedido_exit ON orders(nro_pedido_exit) WHERE nro_pedido_exit IS NOT NULL",
                 "CREATE INDEX IF NOT EXISTS ix_orders_origen_pedido ON orders(origen_pedido)",
                 "CREATE INDEX IF NOT EXISTS ix_orders_estado_registro_exit ON orders(estado_registro_exit)",
-                "CREATE INDEX IF NOT EXISTS ix_orders_store_created ON orders(store_id, created_at)",
+                "CREATE INDEX IF NOT EXISTS ix_orders_store_created ON orders(company_code, delegation_code, created_at)",
                 "UPDATE orders SET origen_pedido = 'B2B' WHERE origen_pedido IS NULL OR origen_pedido NOT IN ('B2B', 'EXIT')",
                 "ALTER TABLE notifications ADD COLUMN IF NOT EXISTS customer_code VARCHAR(40)",
                 "ALTER TABLE notifications ALTER COLUMN customer_id DROP NOT NULL",

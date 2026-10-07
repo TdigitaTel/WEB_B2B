@@ -35,6 +35,7 @@ class ExitOrderInput(BaseModel):
     order_number: str
     customer_code: str
     store_code: str
+    company_code: int | None = None
     estado_registro_exit: str
     source_status: str | None = None
     source_created_by: str | None = None
@@ -55,7 +56,7 @@ class ExitOrderInput(BaseModel):
 
 def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: User) -> Order:
     """Crea/actualiza la proyección local. Repetir el mismo registro no lo duplica."""
-    store = resolve_delegation(incoming.store_code)
+    store = resolve_delegation(incoming.store_code, company_code=incoming.company_code)
     if not store:
         raise ValueError(f"Almacén interno desconocido: {incoming.store_code}")
     estado_registro_exit = incoming.estado_registro_exit.strip().upper()
@@ -74,7 +75,7 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
             customer_id=None,
             customer_code=incoming.customer_code,
             user_id=integration_user.id,
-            store_id=store.id,
+            company_code=store.company, delegation_code=store.code,
             nro_pedido_exit=incoming.exit_order_id,
             fecha_registro_exit=incoming.recorded_at,
             origen_pedido="EXIT",
@@ -95,7 +96,8 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
     if is_new and incoming.recorded_at:
         order.created_at = incoming.recorded_at
     order.customer_code = incoming.customer_code
-    order.store_id = store.id
+    order.company_code = store.company
+    order.delegation_code = store.code
     order.customer_reference = incoming.customer_reference
     order.job_name = incoming.job_name
     order.notes = incoming.notes
