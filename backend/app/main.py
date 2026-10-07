@@ -59,15 +59,15 @@ def live_delegations():
         raise HTTPException(503, "No se pudieron consultar las delegaciones en EXIT") from exc
 
 
-def get_delegation(reference):
+def get_delegation(reference, company_code=None):
     try:
-        return resolve_delegation(reference, live_delegations())
+        return resolve_delegation(reference, live_delegations(), company_code=company_code)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
 
 
-def delegation_name(reference):
-    delegation = get_delegation(reference)
+def delegation_name(reference, company_code=None):
+    delegation = get_delegation(reference, company_code)
     return delegation.name if delegation else reference
 
 
@@ -143,7 +143,7 @@ def cart_payload(cart: Cart, user: User, db: Session) -> dict:
                       "name": product.short_description if has_homologated_name else article["description"],
                       "quantity": float(item.quantity), "unit": article["unit"],
                       "unit_price": float(price), "line_total": float(line)})
-    store = get_delegation(cart.store_id) if cart.store_id else None
+    store = get_delegation(cart.delegation_code, cart.company_code) if cart.store_id else None
     return {"id": cart.public_id, "store": {"id": store.public_id, "name": store.name} if store else None,
             "items": items, "line_count": len(items), "subtotal": float(subtotal),
             "tax_total": float((subtotal * Decimal("0.21")).quantize(Decimal("0.01"))),
@@ -151,7 +151,7 @@ def cart_payload(cart: Cart, user: User, db: Session) -> dict:
 
 
 def order_payload(order: Order, db: Session, include_items: bool = False) -> dict:
-    store = get_delegation(order.store_id)
+    store = get_delegation(order.delegation_code, order.company_code)
     customer_name = order.customer_code or "Cliente EXITERP"
     if order.customer_code:
         try:
@@ -162,7 +162,7 @@ def order_payload(order: Order, db: Session, include_items: bool = False) -> dic
             logger.exception("No se pudo enriquecer el pedido con el cliente EXITERP %s", order.customer_code)
     creator = db.get(User, order.user_id)
     result = {"id": order.public_id, "number": order.order_number,
-              "store": store.name if store else order.store_id, "store_code": store.code if store else order.store_id, "customer_code": order.customer_code, "customer_reference": order.customer_reference,
+              "store": store.name if store else order.store_id, "store_code": store.code if store else order.delegation_code, "company_code": order.company_code, "delegation_code": order.delegation_code, "customer_code": order.customer_code, "customer_reference": order.customer_reference,
               "job_name": order.job_name, "notes": order.notes, "subtotal": float(order.subtotal),
               "tax_total": float(order.tax_total), "total": float(order.total), "created_at": order.created_at,
               "customer": customer_name, "created_by": creator.full_name if creator else "Integración EXIT",
@@ -500,7 +500,9 @@ def delete_cart_item(item_id: int, user: User = Depends(current_user), db: Sessi
 @app.post("/api/v1/orders", status_code=201)
 def create_order(data: OrderCreate, user: User = Depends(current_user), db: Session = Depends(get_db)):
     customer = customer_for(user, db); customer_code = customer_code_for(user, db); cart = active_cart(user, db)
-    store = get_delegation(data.store_id)
+    if data.delegation_code is not None and data.company_code is None:
+        raise HTTPException(422, "Indica CodigoEmpresa junto a IdDelegacion")
+    store = get_delegation(data.delegation_code or data.store_id, data.company_code)
     if not store: raise HTTPException(404, "Tienda no encontrada")
     rows = db.execute(select(CartItem, Product).join(Product, Product.id == CartItem.product_id).where(CartItem.cart_id == cart.id)).all()
     if not rows: raise HTTPException(400, "El pedido está vacío")
@@ -524,7 +526,7 @@ def create_order(data: OrderCreate, user: User = Depends(current_user), db: Sess
     except Exception:
         logger.exception("No se pudo comprobar el stock de recogida del pedido")
     initial_status = "BORRADOR" if data.draft else "PENDIENTE"
-    order = Order(order_number=f"TMP-{cart.public_id[:20]}", customer_id=legacy_customer_id(user), customer_code=customer_code, user_id=user.id, store_id=store.id,
+    order = Order(order_number=f"TMP-{cart.public_id[:20]}", customer_id=legacy_customer_id(user), customer_code=customer_code, user_id=user.id, company_code=store.company, delegation_code=store.code,
                   origen_pedido="B2B", estado_registro_exit=initial_status,
                   customer_reference=data.customer_reference, job_name=data.job_name, notes=data.notes,
                   subtotal=0, tax_total=0, total=0, sync_status=SyncStatus.pending)
@@ -575,7 +577,7 @@ def submit_draft_order(order_id: str, user: User = Depends(current_user), db: Se
         raise HTTPException(409, "Solo se puede enviar un pedido que esté en borrador")
     order.estado_registro_exit = "PENDIENTE"
     order.sync_status = SyncStatus.pending
-    store = get_delegation(order.store_id)
+    store = get_delegation(order.delegation_code, order.company_code)
     db.add(OrderStatusHistory(order_id=order.id, estado_registro_exit="PENDIENTE", changed_by_user_id=user.id, source="WEB", note="Borrador enviado desde el portal"))
     db.add(Notification(customer_id=legacy_customer_id(user), customer_code=order.customer_code, user_id=user.id,
                         title="Pedido recibido", message=f"Hemos recibido el pedido {order.order_number}."))
@@ -704,7 +706,7 @@ def orders(date_from: date | None = None, date_to: date | None = None,
         else:
             payload = {"id": f"exit:{record.exit_order_id}", "number": record.exit_order_id,
                        "exit_number": record.exit_order_id, "web_number": None, "nro_pedido_exit": record.exit_order_id,
-                       "local_order": False, "store": delegation_name(record.store_code), "store_code": record.store_code,
+                       "local_order": False, "store": delegation_name(record.store_code, record.company_code), "store_code": record.store_code, "company_code": record.company_code, "delegation_code": record.store_code,
                        "customer_code": record.customer_code, "customer": exit_customer_name(record.customer_code),
                        "customer_reference": record.customer_reference, "job_name": record.job_name,
                        "notes": record.notes, "subtotal": float(record.subtotal), "tax_total": float(record.tax_total),
@@ -1087,7 +1089,7 @@ def store_orders(view: str = Query("active_kardex", pattern="^(active_kardex|act
             customer_names[code] = code
     return [{
         "id": record.exit_order_id, "number": record.order_number,
-        "store": delegation_name(record.store_code), "store_code": record.store_code, "customer_code": record.customer_code,
+        "store": delegation_name(record.store_code, record.company_code), "store_code": record.store_code, "company_code": record.company_code, "delegation_code": record.store_code, "customer_code": record.customer_code,
         "customer": customer_names.get(record.customer_code, record.customer_code),
         "created_by": record.source_created_by or "EXIT", "created_at": record.recorded_at,
         "customer_reference": record.customer_reference, "auxiliary_reference": record.auxiliary_reference,
@@ -1107,7 +1109,7 @@ def store_orders(view: str = Query("active_kardex", pattern="^(active_kardex|act
 @app.post("/api/v1/store/orders/{order_id}/transitions")
 def transition(order_id: str, data: StatusChange, user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
     order = db.scalar(select(Order).where(Order.public_id == order_id))
-    if not order or (user.role == "OPERADOR_TIENDA" and order.store_id != user.store_id): raise HTTPException(404, "Pedido no encontrado")
+    if not order or (user.role == "OPERADOR_TIENDA" and (order.company_code, order.delegation_code) != (user.company_code, user.delegation_code)): raise HTTPException(404, "Pedido no encontrado")
     new_status = data.estado_registro_exit.strip().upper()
     if new_status not in ALLOWED_TRANSITIONS.get(order.estado_registro_exit, set()):
         raise HTTPException(409, f"No se puede pasar de {order.estado_registro_exit} a {new_status}")

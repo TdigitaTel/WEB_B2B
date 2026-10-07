@@ -38,7 +38,7 @@ def test_repeated_sync_updates_existing_history_and_preserves_web_dates():
     engine=create_engine('sqlite://')
     Base.metadata.create_all(engine)
     with Session(engine) as db:
-        order=Order(order_number='WEB-TIMELINE',store_id='1:00',origen_pedido='B2B',estado_registro_exit='PENDIENTE')
+        order=Order(order_number='WEB-TIMELINE',company_code=1,delegation_code='00',origen_pedido='B2B',estado_registro_exit='PENDIENTE')
         db.add(order);db.flush()
         web_date=datetime(2026,10,5,8,0)
         db.add(OrderStatusHistory(order_id=order.id,estado_registro_exit='PENDIENTE',source='WEB',created_at=web_date))

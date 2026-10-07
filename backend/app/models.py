@@ -3,8 +3,8 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Index, Integer, JSON, LargeBinary, Numeric, String, Text, UniqueConstraint, func
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, Enum, ForeignKey, Index, Integer, JSON, LargeBinary, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship, synonym
 
 from .db import Base
 
@@ -38,10 +38,14 @@ class Customer(Base, TimestampMixin):
     billing_address: Mapped[str] = mapped_column(Text)
     price_list: Mapped[str] = mapped_column(String(30), default="PROFESIONAL")
     discount_pct: Mapped[Decimal] = mapped_column(Numeric(6, 2), default=0)
-    usual_store_id: Mapped[str | None] = mapped_column(String(40))
+    company_code: Mapped[int | None] = mapped_column(Integer)
+    delegation_code: Mapped[str | None] = mapped_column(String(40))
+    usual_store_id = synonym("delegation_code")
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     sync_status: Mapped[SyncStatus] = mapped_column(Enum(SyncStatus), default=SyncStatus.pending)
     last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (CheckConstraint("(delegation_code IS NULL) = (company_code IS NULL)", name="ck_customers_delegation_company"),)
 
 
 class User(Base, TimestampMixin):
@@ -54,10 +58,14 @@ class User(Base, TimestampMixin):
     role: Mapped[str] = mapped_column(String(40), index=True)
     customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id"), index=True)
     erp_customer_code: Mapped[str | None] = mapped_column(String(40), index=True)
-    store_id: Mapped[str | None] = mapped_column(String(40))
+    company_code: Mapped[int | None] = mapped_column(Integer)
+    delegation_code: Mapped[str | None] = mapped_column(String(40))
+    store_id = synonym("delegation_code")
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     customer: Mapped[Customer | None] = relationship()
+
+    __table_args__ = (CheckConstraint("(delegation_code IS NULL) = (company_code IS NULL)", name="ck_users_delegation_company"),)
 
 
 class ProfessionalRegistrationRequest(Base, TimestampMixin):
@@ -199,7 +207,11 @@ class Cart(Base, TimestampMixin):
     customer_code: Mapped[str | None] = mapped_column(String(40), index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     status: Mapped[str] = mapped_column(String(20), default="ACTIVE")
-    store_id: Mapped[str | None] = mapped_column(String(40))
+    company_code: Mapped[int | None] = mapped_column(Integer)
+    delegation_code: Mapped[str | None] = mapped_column(String(40))
+    store_id = synonym("delegation_code")
+
+    __table_args__ = (CheckConstraint("(delegation_code IS NULL) = (company_code IS NULL)", name="ck_carts_delegation_company"),)
 
 
 class CartItem(Base, TimestampMixin):
@@ -219,7 +231,9 @@ class Order(Base, TimestampMixin):
     customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id"), index=True)
     customer_code: Mapped[str | None] = mapped_column(String(40), index=True)
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
-    store_id: Mapped[str] = mapped_column(String(40), index=True)
+    company_code: Mapped[int] = mapped_column(Integer)
+    delegation_code: Mapped[str] = mapped_column(String(40), index=True)
+    store_id = synonym("delegation_code")
     nro_pedido_exit: Mapped[str | None] = mapped_column(String(80), index=True)
     fecha_registro_exit: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     origen_pedido: Mapped[str] = mapped_column(String(20), default="B2B", index=True)
@@ -232,7 +246,8 @@ class Order(Base, TimestampMixin):
     total: Mapped[Decimal] = mapped_column(Numeric(14, 2), default=0)
     sync_status: Mapped[SyncStatus] = mapped_column(Enum(SyncStatus), default=SyncStatus.pending)
     __table_args__ = (
-        Index("ix_orders_store_created", "store_id", "created_at"),
+        CheckConstraint("(delegation_code IS NULL) = (company_code IS NULL)", name="ck_orders_delegation_company"),
+        Index("ix_orders_store_created", "company_code", "delegation_code", "created_at"),
         Index("ux_orders_nro_pedido_exit", "nro_pedido_exit", unique=True),
     )
 

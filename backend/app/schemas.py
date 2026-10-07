@@ -28,7 +28,9 @@ class CartItemUpdate(BaseModel):
 
 
 class OrderCreate(BaseModel):
-    store_id: str
+    store_id: str | None = None
+    company_code: int | None = None
+    delegation_code: str | None = Field(default=None, max_length=40)
     draft: bool = False
     customer_reference: str | None = Field(default=None, max_length=100)
     job_name: str | None = Field(default=None, max_length=160)

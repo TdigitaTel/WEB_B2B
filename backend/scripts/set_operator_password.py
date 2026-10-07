@@ -34,7 +34,8 @@ def main():
         user.full_name = full_name
         user.password_hash = hash_password(password)
         user.role = "OPERADOR_TIENDA"
-        user.store_id = store.id
+        user.company_code = store.company
+        user.delegation_code = store.code
         user.customer_id = None
         user.erp_customer_code = None
         user.active = True
