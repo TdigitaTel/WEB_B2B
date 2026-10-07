@@ -53,9 +53,11 @@ def sync_history(db, order, events):
             history.append(existing)
     db.flush()
 
-def dispatch_timing(record, delivery=None, now=None):
+def dispatch_timing(record, delivery=None, now=None, kardex_started_at=None):
     registered = instant(record.recorded_at)
     dates = {state: stamp for state, stamp, _ in exit_events(record, delivery)}
+    if kardex_started_at is not None:
+        dates['EN_PREPARACION'] = instant(kardex_started_at)
     closed = dates.get('ENTREGADO')
     processing = [dates[state] for state in ('REGISTRADO', 'EN_PREPARACION') if state in dates]
     end = closed or instant(now or datetime.now(MADRID))
