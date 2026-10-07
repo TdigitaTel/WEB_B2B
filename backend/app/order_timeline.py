@@ -52,3 +52,12 @@ def sync_history(db, order, events):
             db.add(existing)
             history.append(existing)
     db.flush()
+
+def dispatch_timing(record, delivery=None, now=None):
+    registered = instant(record.recorded_at)
+    closed = next((stamp for state, stamp, _ in exit_events(record, delivery) if state == 'ENTREGADO'), None)
+    end = closed or instant(now or datetime.now(MADRID))
+    invalid = bool(registered and closed and closed < registered)
+    seconds = int((end - registered).total_seconds()) if registered and not invalid else None
+    return {'closed_at': closed, 'dispatch_seconds': max(0, seconds) if seconds is not None else None,
+            'dispatch_date_error': invalid}
