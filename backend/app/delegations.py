@@ -46,10 +46,12 @@ def fetch_delegations() -> list[Delegation]:
         ) for row in cursor.fetchall() if str(row["code"] or "").strip()]
 
 
-def resolve_delegation(reference: str | None, rows: list[Delegation] | None = None) -> Delegation | None:
+def resolve_delegation(reference: str | None, rows: list[Delegation] | None = None, company_code: int | None = None) -> Delegation | None:
     if not reference:
         return None
     rows = fetch_delegations() if rows is None else rows
+    if company_code is not None:
+        rows = [row for row in rows if row.company == company_code]
     exact = [row for row in rows if row.id == str(reference)]
     matches = exact or [row for row in rows if row.code == str(reference)]
     if len(matches) > 1:

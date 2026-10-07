@@ -133,13 +133,13 @@ def seed():
                 trade_name=f"Instalaciones {surnames[i % len(surnames)]} {i}", tax_id=f"B15{i:06d}",
                 email=f"compras{i:03d}@cliente.test", phone=f"981{i:06d}",
                 billing_address=f"Rúa Profesional {i}, {15000 + i} A Coruña", price_list="PROFESIONAL",
-                discount_pct=Decimal(str(5 + (i % 16))), usual_store_id=stores[(i - 1) % len(stores)].id,
+                discount_pct=Decimal(str(5 + (i % 16))), company_code=stores[(i - 1) % len(stores)].company, delegation_code=stores[(i - 1) % len(stores)].code,
                 active=True, sync_status=SyncStatus.pending,
             )
             db.add(customer)
             db.flush()
             db.add(User(email=customer.email, password_hash=password, full_name=f"Comprador {surnames[i % len(surnames)]}", role="CLIENTE_ADMIN", customer_id=customer.id, erp_customer_code=customer.erp_id))
-        db.add(User(email="operador@bermudez.test", password_hash=password, full_name="Operador A Coruña", role="OPERADOR_TIENDA", store_id=stores[1].id))
+        db.add(User(email="operador@bermudez.test", password_hash=password, full_name="Operador A Coruña", role="OPERADOR_TIENDA", company_code=stores[1].company, delegation_code=stores[1].code))
         db.add(User(email="admin@bermudez.test", password_hash=password, full_name="Administrador", role="ADMIN"))
         db.commit()
 
@@ -152,7 +152,7 @@ def seed():
             user = users_by_customer[customer.id]
             for n in range(2):
                 order = Order(order_number=f"WEB-2026-{sequence:06d}", customer_id=customer.id, user_id=user.id,
-                              store_id=customer.usual_store_id, estado_registro_exit=statuses[(customer.id + n) % len(statuses)],
+                              company_code=customer.company_code, delegation_code=customer.delegation_code, estado_registro_exit=statuses[(customer.id + n) % len(statuses)],
                               customer_reference=f"OBRA-{customer.id:03d}-{n+1}", job_name=f"Obra cliente {customer.id}",
                               notes="Pedido sintético de demostración", subtotal=0, tax_total=0, total=0,
                               sync_status=SyncStatus.pending)

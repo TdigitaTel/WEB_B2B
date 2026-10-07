@@ -218,7 +218,9 @@ export default function Page() {
   async function repeatOrder(id: string) { setCart(await api<Cart>(`/api/v1/orders/${id}/repeat`, { method: "POST" })); setCartOpen(true); }
 
   async function checkout(storeId: string, jobName: string, reference: string, notes: string, draft: boolean) {
-    const order = await api<Order>("/api/v1/orders", { method: "POST", body: JSON.stringify({ store_id: storeId, job_name: jobName || null, customer_reference: reference || null, notes: notes || null, draft }) });
+    const selectedStore=stores.find(store=>store.id===storeId);
+    if(!selectedStore)throw new Error("Selecciona una delegación válida");
+    const order = await api<Order>("/api/v1/orders", { method: "POST", body: JSON.stringify({ company_code: selectedStore.company_code, delegation_code: selectedStore.code, job_name: jobName || null, customer_reference: reference || null, notes: notes || null, draft }) });
     setCartOpen(false); setView("orders"); setOrderConfirmation(order); await refreshCustomerData();
   }
 
