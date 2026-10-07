@@ -49,3 +49,19 @@ def test_repeated_sync_updates_existing_history_and_preserves_web_dates():
         assert len(history)==2
         assert next(h for h in history if h.source=='WEB').created_at==web_date
         assert next(h for h in history if h.source=='EXIT').created_at.hour==10
+
+def test_dispatch_timer_closes_only_on_printed_delivery():
+    from app.order_timeline import dispatch_timing
+    data=record(recorded_at=datetime(2026,10,6,9),delivered_at=datetime(2026,10,6),source_updated_at=datetime(2026,10,6,10))
+    delivery={'is_printed':False}
+    assert dispatch_timing(data,delivery,datetime(2026,10,6,11))['dispatch_seconds']==7200
+    delivery['is_printed']=True
+    timing=dispatch_timing(data,delivery,datetime(2026,10,6,11))
+    assert timing['dispatch_seconds']==3600
+    assert timing['closed_at'].hour==10
+    assert dispatch_timing(data,delivery,datetime(2026,10,7,11))['dispatch_seconds']==3600
+
+def test_dispatch_timer_reports_invalid_closing_date():
+    from app.order_timeline import dispatch_timing
+    data=record(recorded_at=datetime(2026,10,6,12),delivered_at=datetime(2026,10,6),source_updated_at=datetime(2026,10,6,10))
+    assert dispatch_timing(data,{'is_printed':True})['dispatch_date_error']

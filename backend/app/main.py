@@ -19,7 +19,7 @@ from .category_import import router as category_import_router
 from .config import settings
 from .db import get_db
 from .exit_orders import upsert_exit_order
-from .order_timeline import exit_events, sync_history, instant
+from .order_timeline import exit_events, sync_history, instant, dispatch_timing
 from .delegations import fetch_delegations, resolve_delegation
 from .erp_db import (
     fetch_catalog_articles, fetch_catalog_articles_by_codes,
@@ -1060,7 +1060,7 @@ def store_orders(view: str = Query("active_kardex", pattern="^(active_kardex|act
                  user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN"))):
     records = fetch_exit_orders_live(view, date_from, date_to)
     delivery_by_order: dict[str, dict] = {}
-    if view == "web" and records:
+    if records:
         for delivery in fetch_delivery_statuses_for_orders([record.exit_order_id for record in records]):
             key = str(delivery["order_number"]).replace("~", "/").upper()
             delivery_by_order.setdefault(key, delivery)
@@ -1097,6 +1097,7 @@ def store_orders(view: str = Query("active_kardex", pattern="^(active_kardex|act
         "notes": record.notes,
         "subtotal": float(record.subtotal), "tax_total": float(record.tax_total), "total": float(record.total),
         "nro_pedido_exit": record.exit_order_id, "fecha_registro_exit": record.recorded_at,
+        **dispatch_timing(record, delivery_by_order.get(record.exit_order_id.upper())),
         "origen_pedido": "EXIT", "estado_registro_exit": operational_state(record),
         "items": [{"sku": line.sku, "description": line.description, "quantity": float(line.quantity),
                    "served_quantity": float(line.served_quantity or 0),
