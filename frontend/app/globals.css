@@ -204,3 +204,5 @@ body{background:linear-gradient(180deg,#f6f9fb 0,#f1f5f7 420px,#f5f6f7 100%)}.se
 .process-badge.status-completo{background:#16834d}.process-badge.status-incompleto{background:#b77908}
 
 .process-badge.status-servido-kardex{background:#16834d;color:#fff}.process-badge.status-incompleto-kardex{background:#b77908;color:#fff}.process-badge.status-sin-kardex{background:#64748b;color:#fff}
+
+.sga-service-progress{display:flex;align-items:center;gap:12px;padding:14px 20px;color:#164460}.sga-service-progress progress{flex:1;min-width:50px;height:12px;accent-color:#12af65}.sga-service-progress b,.sga-service-progress span,.sga-service-progress strong{white-space:nowrap}
