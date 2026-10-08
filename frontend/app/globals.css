@@ -202,3 +202,5 @@ body{background:linear-gradient(180deg,#f6f9fb 0,#f1f5f7 420px,#f5f6f7 100%)}.se
 .ops-date-filters input[type="search"]{width:135px;height:35px;border:1px solid #c7d6df;border-radius:6px;background:#fff;padding:6px 9px;color:var(--navy)}.ops-date-filters{flex-wrap:wrap}
 
 .process-badge.status-completo{background:#16834d}.process-badge.status-incompleto{background:#b77908}
+
+.process-badge.status-servido-kardex{background:#16834d;color:#fff}.process-badge.status-incompleto-kardex{background:#b77908;color:#fff}.process-badge.status-sin-kardex{background:#64748b;color:#fff}
