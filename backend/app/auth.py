@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import uuid
 
 import jwt
 from argon2 import PasswordHasher
@@ -8,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from .config import settings
 from .db import get_db
-from .models import AuditEvent, User
+from .models import AuditEvent, AuthSession, User
 
 hasher = PasswordHasher()
 
@@ -24,10 +25,13 @@ def verify_password(password: str, password_hash: str) -> bool:
         return False
 
 
-def create_access_token(user: User) -> str:
+def create_access_token(user: User, db: Session) -> str:
     now = datetime.now(timezone.utc)
+    session_id = str(uuid.uuid4())
+    db.add(AuthSession(id=session_id, user_id=user.id, last_activity_at=now))
     payload = {
         "sub": str(user.id),
+        "jti": session_id,
         "erp_customer_code": user.erp_customer_code,
         "role": user.role,
         "iat": now,
@@ -54,6 +58,15 @@ def current_user(
         raise HTTPException(401, "Sesión inválida o caducada") from exc
     if not user or not user.active:
         raise HTTPException(401, "Usuario inactivo")
+    session = db.get(AuthSession, payload.get("jti", ""))
+    if not session or session.revoked or session.user_id != user.id:
+        raise HTTPException(401, "Sesión inválida o caducada")
+    last_activity = session.last_activity_at
+    if last_activity.tzinfo is None:
+        last_activity = last_activity.replace(tzinfo=timezone.utc)
+    if datetime.now(timezone.utc) - last_activity >= timedelta(minutes=1):
+        raise HTTPException(401, "La sesión ha caducado por inactividad")
+    request.state.auth_session = session
     return user
 
 
