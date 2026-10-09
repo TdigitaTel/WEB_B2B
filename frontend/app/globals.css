@@ -257,13 +257,3 @@ body{background:linear-gradient(180deg,#f6f9fb 0,#f1f5f7 420px,#f5f6f7 100%)}.se
 
 .site-menu{width:min(420px,calc(100vw - 24px));max-height:calc(100dvh - 24px);overflow:auto;background:#fff;border-radius:12px;box-shadow:0 20px 70px #09243840;padding:18px}.site-menu>header{display:flex;align-items:center;justify-content:space-between;color:var(--navy)}.site-menu h2{margin:0 0 12px}.site-menu>header button{border:0;background:var(--soft);border-radius:50%;width:36px;height:36px;font-size:24px}.site-menu nav{display:flex;flex-direction:column}.site-menu nav>button,.site-menu summary{padding:14px 10px;border:0;border-bottom:1px solid var(--line);background:#fff;color:var(--navy);text-align:left;cursor:pointer;font-weight:700}.site-menu details>div{padding:8px 12px;background:#f3f7fa;display:flex;flex-direction:column;gap:6px}.site-menu details button{border:0;padding:12px;background:transparent;color:var(--blue);text-align:left;border-radius:6px}.site-menu nav button:hover{background:#eaf3f8}
 .visibility-table{margin-top:18px;overflow:auto;max-width:100%;background:#fff;border:1px solid var(--line);border-radius:8px}.visibility-table table{width:100%;border-collapse:collapse}.visibility-table th,.visibility-table td{text-align:left;padding:12px;border-bottom:1px solid var(--line)}.visibility-table label{display:flex;align-items:center;gap:8px;white-space:nowrap}.visibility-table input{width:20px;height:20px;accent-color:var(--blue)}
-
-/* Shortcuts within the home introduction, also available on small screens. */
-.hero-note .hero-shortcuts{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;margin-top:22px;width:100%;min-width:0}
-.hero-note .hero-shortcuts button{min-width:0;text-align:left;padding:14px 16px;grid-template-columns:32px minmax(0,1fr);border-radius:10px}
-.hero-note .hero-shortcuts button>span{display:block;grid-row:1/3;font-size:26px;letter-spacing:0}
-.hero-note .hero-shortcuts button>b{font-size:15px;line-height:1.3;margin:0}
-.hero-note .hero-shortcuts button>small{font-size:12px;line-height:1.4}
-.hero-note .hero-shortcuts button:focus-visible{outline:3px solid var(--blue);outline-offset:3px}
-@media(max-width:800px){.hero .hero-note{display:block;margin-top:22px;padding:20px 0 0;border-left:0;border-top:1px solid var(--line)}.hero-note>span,.hero-note>b{display:none}.hero-note .hero-shortcuts{margin-top:0;grid-template-columns:repeat(3,minmax(0,1fr))}.hero-note .hero-shortcuts button{grid-template-columns:minmax(0,1fr);padding:12px}.hero-note .hero-shortcuts button>span{grid-row:auto}}
-@media(max-width:550px){.hero-note .hero-shortcuts{grid-template-columns:minmax(0,1fr)}.hero-note .hero-shortcuts button{grid-template-columns:28px minmax(0,1fr)}.hero-note .hero-shortcuts button>span{grid-row:1/3}}
