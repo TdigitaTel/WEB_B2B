@@ -5,7 +5,7 @@ from io import BytesIO
 import logging
 import secrets
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
@@ -52,6 +52,14 @@ def exit_customer_name(code: str) -> str:
     customer = fetch_customer(code)
     return (customer or {}).get("trade_name") or (customer or {}).get("legal_name") or code
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+
+@app.middleware("http")
+async def prevent_private_cache(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store, private"
+    return response
 
 
 def live_delegations():
@@ -229,16 +237,24 @@ def login(data: LoginIn, response: Response, db: Session = Depends(get_db)):
         customer = customer_for(user, db)
     user.last_login_at = datetime.now(timezone.utc)
     audit(db, user, "LOGIN", "USER", user.public_id)
-    token = create_access_token(user)
-    response.set_cookie("b2b_access", token, httponly=True, samesite="lax", secure=False, max_age=8 * 3600)
+    token = create_access_token(user, db)
+    response.set_cookie("b2b_access", token, httponly=True, samesite="lax", secure=False)
     db.commit()
     display_name = (customer or {}).get("trade_name") or (customer or {}).get("legal_name") or user.full_name
     return {"user": {"id": user.public_id, "name": display_name, "email": user.email, "role": user.role}, "access_token": token}
 
 
 @app.post("/api/v1/auth/logout")
-def logout(response: Response, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def logout(request: Request, response: Response, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    request.state.auth_session.revoked = True
     audit(db, user, "LOGOUT", "USER", user.public_id); db.commit(); response.delete_cookie("b2b_access")
+    return {"ok": True}
+
+
+@app.post("/api/v1/auth/activity")
+def session_activity(request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    request.state.auth_session.last_activity_at = datetime.now(timezone.utc)
+    db.commit()
     return {"ok": True}
 
 

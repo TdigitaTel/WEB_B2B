@@ -25,6 +25,14 @@ class TimestampMixin:
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    last_activity_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
 class Customer(Base, TimestampMixin):
     __tablename__ = "customers"
     id: Mapped[int] = mapped_column(primary_key=True)

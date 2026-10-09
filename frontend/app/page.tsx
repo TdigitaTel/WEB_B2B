@@ -41,6 +41,7 @@ function productsUrl(text: string, filters: CatalogFilters, page = 1) {
 
 async function api<T>(url: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(url, { ...options, credentials: "include", headers: { "Content-Type": "application/json", ...(options.headers || {}) } });
+  if(response.status===401 && url!=="/api/v1/auth/login") window.dispatchEvent(new Event("session-expired"));
   const text = await response.text();
   let data;
   try { data = text ? JSON.parse(text) : {}; }
@@ -111,6 +112,40 @@ export default function Page() {
   }, []);
 
   useEffect(() => { loadAccount(); }, [loadAccount]);
+
+  useEffect(() => {
+    const expire = () => { setUser(null); setCustomer(null); setProducts([]); setFavoriteProducts([]); setOrders([]); setOpsOrders([]); setCart(null); setDeliveryNotes([]); setInvoices([]); setCartOpen(false); setMenuOpen(false); setCatalogMenuOpen(false); setView("home"); setError("La sesión ha finalizado. Inicia sesión de nuevo."); };
+    const hide = () => { document.documentElement.style.visibility="hidden"; };
+    const restore = (event: PageTransitionEvent) => {
+      if(event.persisted){ location.reload(); return; }
+      document.documentElement.style.visibility="";
+    };
+    window.addEventListener("session-expired",expire);
+    window.addEventListener("pagehide",hide);
+    window.addEventListener("pageshow",restore);
+    return () => { window.removeEventListener("session-expired",expire); window.removeEventListener("pagehide",hide); window.removeEventListener("pageshow",restore); };
+  }, []);
+
+  useEffect(() => {
+    if(!user) return;
+    let lastActivity=Date.now(), lastSent=Date.now(), pending=0;
+    const expire = () => { window.dispatchEvent(new Event("session-expired")); void fetch("/api/v1/auth/logout",{method:"POST",credentials:"include"}); };
+    const sendActivity = () => { lastSent=Date.now(); void api("/api/v1/auth/activity",{method:"POST"}).catch(()=>{}); };
+    const activity = (event: Event) => {
+      if(!event.isTrusted) return;
+      if(Date.now()-lastActivity>=60000){expire();return;}
+      lastActivity=Date.now(); window.clearTimeout(pending);
+      if(lastActivity-lastSent>=1000) sendActivity();
+      pending=window.setTimeout(sendActivity,1000);
+    };
+    const check = () => { if(Date.now()-lastActivity>=60000) expire(); };
+    const events=["pointerdown","pointermove","keydown","scroll","touchstart"];
+    events.forEach(name=>window.addEventListener(name,activity,{passive:true}));
+    const timer=window.setInterval(check,1000);
+    const validation=window.setInterval(()=>{ void api("/api/v1/account").catch(()=>{}); },15000);
+    document.addEventListener("visibilitychange",check);
+    return () => { events.forEach(name=>window.removeEventListener(name,activity)); window.clearTimeout(pending); window.clearInterval(timer); window.clearInterval(validation); document.removeEventListener("visibilitychange",check); };
+  }, [user]);
 
   useEffect(() => {
     const forced = new URLSearchParams(window.location.search).get("kiosk") === "1";
@@ -203,7 +238,7 @@ export default function Page() {
     setUser(result.user); setLoading(true); await loadAccount();
   }
 
-  async function logout() { await api("/api/v1/auth/logout", { method: "POST" }); location.reload(); }
+  async function logout() { try { await api("/api/v1/auth/logout", { method: "POST" }); } finally { window.dispatchEvent(new Event("session-expired")); location.replace(location.pathname); } }
 
   async function addProduct(productId: string, quantity = 1) {
     const updated = await api<Cart>("/api/v1/cart/items", { method: "POST", body: JSON.stringify({ product_id: productId, quantity }) });
@@ -291,9 +326,9 @@ function SiteMenu({onClose,onNavigate,onCatalog}:{onClose:()=>void;onNavigate:(v
 function CatalogMenu({classification,onClose,onSelect}:{classification:AreaNode[];onClose:()=>void;onSelect:(filters:CatalogFilters)=>void}) { const [areaId,setAreaId]=useState(String(classification[0]?.id||"")); const area=classification.find(item=>String(item.id)===areaId); return <div className="menu-overlay" role="presentation" onMouseDown={e=>{if(e.target===e.currentTarget)onClose()}}><section className="mega-menu" role="dialog" aria-modal="true" aria-label="Categorías del catálogo"><div className="mega-menu-head"><div><span className="eyebrow">CATÁLOGO PROFESIONAL</span><h2>¿Qué material necesitas?</h2></div><button aria-label="Cerrar menú" onClick={onClose}>×</button></div><div className="mega-menu-body"><nav className="mega-departments"><b>Departamentos</b>{classification.map(item=><button key={item.id} className={areaId===String(item.id)?"active":""} onMouseEnter={()=>setAreaId(String(item.id))} onClick={()=>setAreaId(String(item.id))}>{item.name}<span>›</span></button>)}</nav><div className="mega-content"><button className="mega-all" onClick={()=>onSelect({areaId:String(area?.id||""),familyId:"",subfamilyId:"",productTypeId:""})}>Ver todo en {area?.name||"el catálogo"} →</button><div className="mega-family-grid">{area?.families.map(family=><section key={family.id}><button className="mega-family" onClick={()=>onSelect({areaId:String(area.id),familyId:String(family.id),subfamilyId:"",productTypeId:""})}>{family.name}</button>{family.subfamilies.slice(0,6).map(subfamily=><button key={subfamily.id} onClick={()=>onSelect({areaId:String(area.id),familyId:String(family.id),subfamilyId:String(subfamily.id),productTypeId:""})}>{subfamily.name}</button>)}</section>)}</div></div></div></section></div> }
 
 function Login({onLogin,error}:{onLogin:(email:string,password:string)=>Promise<void>;error:string}) {
-  const [loginError,setLoginError]=useState(""); const [email,setEmail]=useState("pumaresdavid@gmail.com"); const [password,setPassword]=useState("123456"); const [busy,setBusy]=useState(false);
+  const [loginError,setLoginError]=useState(""); const [email,setEmail]=useState(""); const [password,setPassword]=useState(""); const [busy,setBusy]=useState(false);
   async function submit(e:FormEvent){e.preventDefault();setBusy(true);try{await onLogin(email,password)}catch(e){setLoginError((e as Error).message)}finally{setBusy(false)}}
-  return <div className="login"><section className="login-brand"><img className="login-logo" src="/bermudez-ulloa-logo.jpg" alt="Bermúdez Ulloa"/><h1>Material profesional.<br/>Pedido en segundos.</h1><p>Consulta tu precio, comprueba stock local y deja el pedido preparado para recoger en Almeiras.</p></section><section className="login-panel"><form className="login-form" onSubmit={submit}><h2>Acceso profesional</h2><p className="small">Entra con la cuenta de tu empresa.</p><label className="label">Usuario o email</label><input className="input" value={email} onChange={e=>setEmail(e.target.value)}/><label className="label">Contraseña</label><input className="input" type="password" value={password} onChange={e=>setPassword(e.target.value)}/>{(error||loginError)&&<p className="error">{error||loginError}</p>}<button className="primary block" disabled={busy}>{busy?"Entrando…":"Iniciar sesión"}</button><div className="demo-access"><p>Accesos de ejemplo</p><button type="button" onClick={()=>{setEmail("pumaresdavid@gmail.com");setPassword("123456")}}><span><b>DAVID PUMARES FERNANDEZ</b><small>Cliente EXITERP 00004</small></span><strong>pumaresdavid@gmail.com<small>Contraseña: 123456</small></strong></button><button type="button" onClick={()=>{setEmail("operador@bermudez.test");setPassword("123456")}}><span><b>Operaciones</b><small>Comandas y preparación</small></span><strong>operador@bermudez.test<small>Contraseña: 123456</small></strong></button></div></form></section></div>
+  return <div className="login"><section className="login-brand"><img className="login-logo" src="/bermudez-ulloa-logo.jpg" alt="Bermúdez Ulloa"/><h1>Material profesional.<br/>Pedido en segundos.</h1><p>Consulta tu precio, comprueba stock local y deja el pedido preparado para recoger en Almeiras.</p></section><section className="login-panel"><form className="login-form" onSubmit={submit}><h2>Acceso profesional</h2><p className="small">Entra con la cuenta de tu empresa.</p><label className="label">Usuario o email</label><input className="input" value={email} onChange={e=>setEmail(e.target.value)}/><label className="label">Contraseña</label><input className="input" type="password" autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)}/>{(error||loginError)&&<p className="error">{error||loginError}</p>}<button className="primary block" disabled={busy}>{busy?"Entrando…":"Iniciar sesión"}</button></form></section></div>
 }
 
 function Home({customer,orders,products,classification,onNavigate,onSelectArea,onAdd}:{customer:AccountCustomer|null;orders:Order[];products:Product[];classification:AreaNode[];onNavigate:(v:View)=>void;onSelectArea:(id:number)=>void;onAdd:(id:string)=>void}) {
