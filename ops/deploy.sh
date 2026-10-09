@@ -49,9 +49,9 @@ previous="$(cat "$state_file" 2>/dev/null || true)"
 
 "${compose[@]}" config --quiet
 
-if [[ "$target" == "prod" ]] && "${compose[@]}" ps --status running --services | grep -qx db; then
+if "${compose[@]}" ps --status running --services | grep -qx db; then
   mkdir -p "$backup_dir"
-  backup_file="$backup_dir/postgres-$(date +%Y%m%d-%H%M%S).sql.gz"
+  backup_file="$backup_dir/postgres-$target-$(date +%Y%m%d-%H%M%S).sql.gz"
   "${compose[@]}" exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB"' | gzip > "$backup_file"
   echo "Copia PostgreSQL: $backup_file"
 fi
@@ -71,6 +71,9 @@ trap rollback ERR
 for _ in $(seq 1 36); do
   if curl --fail --silent "http://127.0.0.1:${API_PORT}/health" >/dev/null \
     && curl --fail --silent "http://127.0.0.1:${WEB_PORT}/" >/dev/null; then
+    if [[ "$target" == "dev" ]]; then
+      "${compose[@]}" exec -T api python -m app.reclassify_materials
+    fi
     printf '%s' "$IMAGE_TAG" > "$state_file"
     trap - ERR
     echo "Despliegue $target completado: $IMAGE_TAG"
