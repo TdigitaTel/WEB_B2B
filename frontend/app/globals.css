@@ -254,3 +254,5 @@ body{background:linear-gradient(180deg,#f6f9fb 0,#f1f5f7 420px,#f5f6f7 100%)}.se
  .products .product .stock{min-height:44px;margin:0}
  .products .product .product-actions{margin:0;align-self:end}
 }
+
+.site-menu{width:min(420px,calc(100vw - 24px));max-height:calc(100dvh - 24px);overflow:auto;background:#fff;border-radius:12px;box-shadow:0 20px 70px #09243840;padding:18px}.site-menu>header{display:flex;align-items:center;justify-content:space-between;color:var(--navy)}.site-menu h2{margin:0 0 12px}.site-menu>header button{border:0;background:var(--soft);border-radius:50%;width:36px;height:36px;font-size:24px}.site-menu nav{display:flex;flex-direction:column}.site-menu nav>button,.site-menu summary{padding:14px 10px;border:0;border-bottom:1px solid var(--line);background:#fff;color:var(--navy);text-align:left;cursor:pointer;font-weight:700}.site-menu details>div{padding:8px 12px;background:#f3f7fa;display:flex;flex-direction:column;gap:6px}.site-menu details button{border:0;padding:12px;background:transparent;color:var(--blue);text-align:left;border-radius:6px}.site-menu nav button:hover{background:#eaf3f8}
