@@ -10,6 +10,8 @@ def main():
     from .migrate_delegation_fields import migrate_delegation_fields
     migrate_delegation_fields(engine)
     Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO catalog_area_visibility (area_id, code, name, visible) SELECT id, code, name, true FROM material_areas WHERE true ON CONFLICT (area_id) DO NOTHING"))
     if engine.dialect.name == "postgresql":
         with engine.begin() as conn:
             # create_all does not alter an existing MVP database. These additions are
