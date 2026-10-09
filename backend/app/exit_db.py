@@ -164,9 +164,6 @@ def fetch_exit_orders_live(view: str = "active_kardex", date_from: date | None =
             _required(header, ("recorded_date",), header_table)
             start = date_from or datetime.now(ZoneInfo("Europe/Madrid")).date()
             end = date_to or start
-            if view == "attended":
-                header_where.append(f"UPPER(LTRIM(RTRIM(CONVERT(varchar(20),h.{hs['status']}))))=%s")
-                header_parameters.append("S")
             header_where.append(f"CONVERT(date,h.{hs['recorded_date']}) BETWEEN %s AND %s")
             header_parameters.extend((start, end))
         else:

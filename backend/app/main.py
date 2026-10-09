@@ -1078,6 +1078,10 @@ def store_orders(view: str = Query("active_kardex", pattern="^(active_kardex|act
             return "ATENDIDO"
         served = [line.served_quantity or Decimal("0") for line in record.lines]
         return "EN_PROCESO" if any(quantity > 0 for quantity in served) else "PENDIENTE"
+    if view in {"active_kardex", "active_sga"}:
+        records = [record for record in records if operational_state(record) not in {"ENTREGADO", "FACTURADO"}]
+    elif view == "attended":
+        records = [record for record in records if operational_state(record) in {"ATENDIDO", "ENTREGADO", "FACTURADO"}]
     if view == "web" and state.strip().upper() not in {"", "TODOS"}:
         requested = state.strip().upper()
         groups = {"EN_PROCESAMIENTO": {"EN_PROCESO"}, "PENDIENTE_RECOJO": {"ATENDIDO"}}
