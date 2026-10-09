@@ -71,9 +71,7 @@ trap rollback ERR
 for _ in $(seq 1 36); do
   if curl --fail --silent "http://127.0.0.1:${API_PORT}/health" >/dev/null \
     && curl --fail --silent "http://127.0.0.1:${WEB_PORT}/" >/dev/null; then
-    if [[ "$target" == "dev" ]]; then
-      "${compose[@]}" exec -T api python -m app.reclassify_materials
-    fi
+    "${compose[@]}" exec -T api python -m app.reclassify_materials
     printf '%s' "$IMAGE_TAG" > "$state_file"
     trap - ERR
     echo "Despliegue $target completado: $IMAGE_TAG"
