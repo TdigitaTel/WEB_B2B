@@ -116,7 +116,7 @@ def _prepare_eligible_articles(cursor, article_codes: list[str] | None) -> str:
 
 
 def fetch_catalog_articles(query: str = "", page: int = 1, page_size: int = 24,
-                           article_codes: list[str] | None = None) -> tuple[list[dict], int]:
+                           article_codes: list[str] | None = None, excluded_codes: list[str] | None = None) -> tuple[list[dict], int]:
     """Pagina la maestra activa de EXIT; PostgreSQL solo limita por clasificación."""
     if article_codes is not None and not article_codes:
         return [], 0
@@ -134,6 +134,10 @@ def fetch_catalog_articles(query: str = "", page: int = 1, page_size: int = 24,
         eligible_prefix = _prepare_eligible_articles(cursor, article_codes)
         eligible_join = f"{eligible_prefix}{code_expression} " if eligible_prefix else ""
         conditions = [f"{code_expression} <> ''"]
+        if excluded_codes:
+            cursor.execute("CREATE TABLE #HiddenArticles (article_code nvarchar(100) PRIMARY KEY)")
+            cursor.executemany("INSERT INTO #HiddenArticles (article_code) VALUES (%s)", [(code,) for code in dict.fromkeys(excluded_codes)])
+            conditions.append(f"NOT EXISTS (SELECT 1 FROM #HiddenArticles hidden WHERE hidden.article_code = {code_expression})")
         parameters: list = []
         if columns["inactive"]:
             conditions.append(f"COALESCE(a.{_discovered_column(columns['inactive'])}, 0) = 0")

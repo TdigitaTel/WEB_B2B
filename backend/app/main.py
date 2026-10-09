@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from .auth import audit, create_access_token, current_user, hash_password, require_roles, verify_password
 from .category_import import router as category_import_router
+from .category_visibility import router as category_visibility_router, hidden_areas, hidden_codes
 from .config import settings
 from .db import get_db
 from .exit_orders import upsert_exit_order
@@ -42,6 +43,7 @@ from .services import PostgresCatalogService, ensure_catalog_products, product_v
 
 app = FastAPI(title="Bermúdez B2B API", version="1.0.0", openapi_url="/api/v1/openapi.json", docs_url="/docs")
 app.include_router(category_import_router)
+app.include_router(category_visibility_router)
 app.include_router(image_admin_router)
 logger = logging.getLogger(__name__)
 
@@ -288,7 +290,7 @@ def products(q: str = "", family: str | None = None, area_id: int | None = None,
         family, area_id, family_id, subfamily_id, product_type_id
     )
     try:
-        articles, total = fetch_catalog_articles(q, page, page_size, classification_codes)
+        articles, total = fetch_catalog_articles(q, page, page_size, classification_codes, excluded_codes=hidden_codes(db))
     except Exception as exc:
         logger.exception("Error consultando la maestra de artículos EXIT")
         raise HTTPException(503, "No se pudo consultar el catálogo en EXIT") from exc
@@ -323,7 +325,7 @@ def favorite_products(limit: int = Query(8, ge=1, le=24), user: User = Depends(c
         raise HTTPException(503, "No se pudieron consultar los materiales favoritos en EXIT") from exc
 
     purchased_units = {row["article_code"]: row["purchased_units"] for row in purchases}
-    codes = list(purchased_units)
+    codes = [code for code in purchased_units if code not in set(hidden_codes(db))]
     if not codes:
         return {"items": [], "total": 0}
     try:
@@ -364,7 +366,7 @@ def catalog_classification(user: User = Depends(current_user), db: Session = Dep
         .join(MaterialSubfamily, MaterialSubfamily.family_id == MaterialFamily.id)
         .join(MaterialProductType, MaterialProductType.subfamily_id == MaterialSubfamily.id)
         .join(Product, Product.material_product_type_id == MaterialProductType.id)
-        .where(Product.active.is_(True))
+        .where(Product.active.is_(True), MaterialArea.id.not_in(hidden_areas(db)))
         .group_by(MaterialArea.id, MaterialFamily.id, MaterialSubfamily.id, MaterialProductType.id)
         .order_by(MaterialArea.name, MaterialFamily.name, MaterialSubfamily.name, MaterialProductType.name)
     ).all()
@@ -390,7 +392,7 @@ def catalog_classification(user: User = Depends(current_user), db: Session = Dep
 def suggestions(q: str = Query(min_length=2), user: User = Depends(current_user), db: Session = Depends(get_db)):
     customer_for(user, db)
     try:
-        articles, _ = fetch_catalog_articles(q, 1, 8)
+        articles, _ = fetch_catalog_articles(q, 1, 8, excluded_codes=hidden_codes(db))
     except Exception as exc:
         logger.exception("Error consultando sugerencias en EXIT")
         raise HTTPException(503, "No se pudieron consultar las sugerencias en EXIT") from exc
