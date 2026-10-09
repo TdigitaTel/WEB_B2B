@@ -1082,6 +1082,14 @@ def store_orders(view: str = Query("active_kardex", pattern="^(active_kardex|act
         records = [record for record in records if operational_state(record) not in {"ENTREGADO", "FACTURADO"}]
     elif view == "attended":
         records = [record for record in records if operational_state(record) in {"ATENDIDO", "ENTREGADO", "FACTURADO"}]
+    if view == "active_kardex":
+        records = [record for record in records if any(
+            step["stage"] == "EN_PREPARACION" and step["occurred_at"]
+            for step in dispatch_timing(
+                record, delivery_by_order.get(record.exit_order_id.upper()),
+                kardex_started_at=kardex_timings.get(sales_order_number(record.exit_order_id), {}).get("kardex_started_at"),
+            )["operational_workflow"]
+        )]
     if view == "web" and state.strip().upper() not in {"", "TODOS"}:
         requested = state.strip().upper()
         groups = {"EN_PROCESAMIENTO": {"EN_PROCESO"}, "PENDIENTE_RECOJO": {"ATENDIDO"}}
