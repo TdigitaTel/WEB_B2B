@@ -25,7 +25,7 @@ def test_idle_session_expires_and_polling_does_not_extend_it():
         before = session.last_activity_at
     assert client.get('/api/v1/account').status_code == 200
     with SessionLocal() as db:
-        assert db.get(AuthSession, sid).last_activity_at == before
+        assert db.get(AuthSession, sid).last_activity_at.replace(tzinfo=None) == before.replace(tzinfo=None)
     with SessionLocal() as db:
         session = db.get(AuthSession, sid)
         session.last_activity_at = datetime.now(timezone.utc)-timedelta(seconds=61)
