@@ -242,3 +242,15 @@ body{background:linear-gradient(180deg,#f6f9fb 0,#f1f5f7 420px,#f5f6f7 100%)}.se
  .products .product{padding:9px;min-height:0}.product-visual{height:110px;min-height:0}.product h3{font-size:12px;line-height:1.35;min-height:0;margin:7px 0}.product .family-name{font-size:9px;padding:3px 5px;white-space:normal}.product .sku{font-size:10px}.product .price{font-size:20px}.product .stock{font-size:10px;padding:7px 5px}.product-actions{flex-wrap:wrap;gap:6px}.product-actions label{width:42px}.product-actions .secondary{flex:1 1 100%;font-size:11px;min-height:40px;padding:8px 5px}.product-actions .qty{height:36px}.product-visual img{max-height:110px}
 }
 @media(max-width:720px){.product-image-wrap{padding:0}.product-body{padding:8px 0 0}.product-code{left:5px;top:5px}.product-visual small{font-size:8px;letter-spacing:.3px;text-align:center;padding:0 5px}.product .price-block{margin-top:12px;padding:9px 7px}.product .price-block>span,.product .price-block>small{font-size:9px}}
+
+/* Align adjacent cards when names and availability wrap differently. */
+@media(max-width:720px){
+ .products .product .product-body{display:grid;grid-template-rows:36px minmax(49px,auto) 30px minmax(82px,auto) minmax(44px,auto) auto;gap:6px;align-content:start;flex:1}
+ .products .product .family-name{align-self:start;max-height:none;margin:0;line-height:1.35}
+ .products .product h3{margin:0;min-height:49px;line-height:1.35}
+ .products .product .sku{margin:0;line-height:1.4}
+ .products .product .price-block{margin:0;align-self:stretch}
+ .products .product .stock-popover{margin:0;align-self:stretch;min-width:0}
+ .products .product .stock{min-height:44px;margin:0}
+ .products .product .product-actions{margin:0;align-self:end}
+}
