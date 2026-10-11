@@ -400,3 +400,7 @@ Content-Type: application/json
 ```
 
 Cada ciclo consulta como máximo 30 clientes y continúa desde el último código revisado. Al llegar al final vuelve al inicio de la maestra. La respuesta devuelve el usuario de acceso, que para las cuentas detectadas automáticamente es el código EXIT. El cliente autenticado también puede modificar su propia contraseña desde **Mi cuenta**; esa operación usa `PATCH /api/v1/account/password` y exige la contraseña actual.
+
+### Caducidad por inactividad
+
+`SESSION_IDLE_TIMEOUT_MINUTES` configura el cierre de sesión por inactividad: 15 minutos por defecto, entre 1 y 480. Configurar en el archivo privado `dev.env` o `prod.env` y volver a desplegar. El servidor comunica el mismo valor al navegador. Las consultas automáticas no prolongan la sesión; la actividad real del usuario sí. Se mantiene el límite absoluto de 8 horas.

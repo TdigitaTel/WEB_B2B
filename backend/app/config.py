@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://bermudez:cambia_esta_clave@db:5432/bermudez_b2b"
     jwt_secret: str = "desarrollo_local_cambiar"
     integration_api_key: str = ""
+    session_idle_timeout_minutes: int = Field(default=15, ge=1, le=480)
     exit_preparation_offset_seconds: int = Field(default=10, ge=0)
     show_order_status_history: bool = True
     customer_sync_interval_seconds: int = 10

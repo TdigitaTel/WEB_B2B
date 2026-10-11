@@ -64,7 +64,7 @@ def current_user(
     last_activity = session.last_activity_at
     if last_activity.tzinfo is None:
         last_activity = last_activity.replace(tzinfo=timezone.utc)
-    if datetime.now(timezone.utc) - last_activity >= timedelta(minutes=1):
+    if datetime.now(timezone.utc) - last_activity >= timedelta(minutes=settings.session_idle_timeout_minutes):
         raise HTTPException(401, "La sesión ha caducado por inactividad")
     request.state.auth_session = session
     return user

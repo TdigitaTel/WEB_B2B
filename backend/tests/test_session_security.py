@@ -12,7 +12,9 @@ def login(client):
     return response.json()['access_token']
 
 
-def test_idle_session_expires_and_polling_does_not_extend_it():
+def test_idle_session_expires_and_polling_does_not_extend_it(monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "session_idle_timeout_minutes", 2)
     client = TestClient(app)
     token = login(client)
     import jwt
@@ -20,7 +22,7 @@ def test_idle_session_expires_and_polling_does_not_extend_it():
     sid = jwt.decode(token, settings.jwt_secret, algorithms=['HS256'])['jti']
     with SessionLocal() as db:
         session = db.get(AuthSession, sid)
-        session.last_activity_at = datetime.now(timezone.utc)-timedelta(seconds=45)
+        session.last_activity_at = datetime.now(timezone.utc)-timedelta(seconds=90)
         db.commit()
         before = session.last_activity_at
     assert client.get('/api/v1/account').status_code == 200
@@ -28,7 +30,7 @@ def test_idle_session_expires_and_polling_does_not_extend_it():
         assert db.get(AuthSession, sid).last_activity_at.replace(tzinfo=None) == before.replace(tzinfo=None)
     with SessionLocal() as db:
         session = db.get(AuthSession, sid)
-        session.last_activity_at = datetime.now(timezone.utc)-timedelta(seconds=61)
+        session.last_activity_at = datetime.now(timezone.utc)-timedelta(seconds=121)
         db.commit()
     assert client.get('/api/v1/account').status_code == 401
     assert client.post('/api/v1/auth/activity').status_code == 401
@@ -43,3 +45,12 @@ def test_activity_refresh_logout_revokes_bearer_and_no_cache():
     assert client.get('/api/v1/account').status_code == 200
     assert client.post('/api/v1/auth/logout').status_code == 200
     assert client.get('/api/v1/account', headers={'Authorization':'Bearer '+token}).status_code == 401
+
+
+def test_session_policy_matches_configuration(monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, 'session_idle_timeout_minutes', 30)
+    client = TestClient(app)
+    response = client.post('/api/v1/auth/login',json={'email':'operador@bermudez.test','password':'123456'})
+    assert response.json()['user']['idle_timeout_seconds'] == 1800
+    assert client.get('/api/v1/account').json()['user']['idle_timeout_seconds'] == 1800

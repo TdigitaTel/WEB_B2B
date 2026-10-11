@@ -5,7 +5,7 @@ import CategoryUpload from "./CategoryUpload";
 import CategoryVisibility from "./CategoryVisibility";
 
 type View = "home" | "catalog" | "orders" | "documents" | "ops" | "category-upload" | "category-visibility" | "account";
-type User = { id: string; name: string; email: string; role: string };
+type User = { id: string; name: string; email: string; role: string; idle_timeout_seconds: number };
 type AccountCustomer = { trade_name: string; legal_name: string; erp_id: string; tax_id: string; email: string; phone: string; billing_address: string; price_list: string; discount_pct: number };
 type Store = { id: string; code: string; name: string; address: string; company_code: number; warehouse_code: string; warehouse_name: string };
 type Stock = { store_code: string; store: string; available: number };
@@ -128,17 +128,18 @@ export default function Page() {
 
   useEffect(() => {
     if(!user) return;
+    const idleTimeout=user.idle_timeout_seconds*1000;
     let lastActivity=Date.now(), lastSent=Date.now(), pending=0;
     const expire = () => { window.dispatchEvent(new Event("session-expired")); void fetch("/api/v1/auth/logout",{method:"POST",credentials:"include"}); };
     const sendActivity = () => { lastSent=Date.now(); void api("/api/v1/auth/activity",{method:"POST"}).catch(()=>{}); };
     const activity = (event: Event) => {
       if(!event.isTrusted) return;
-      if(Date.now()-lastActivity>=60000){expire();return;}
+      if(Date.now()-lastActivity>=idleTimeout){expire();return;}
       lastActivity=Date.now(); window.clearTimeout(pending);
       if(lastActivity-lastSent>=1000) sendActivity();
       pending=window.setTimeout(sendActivity,1000);
     };
-    const check = () => { if(Date.now()-lastActivity>=60000) expire(); };
+    const check = () => { if(Date.now()-lastActivity>=idleTimeout) expire(); };
     const events=["pointerdown","pointermove","keydown","scroll","touchstart"];
     events.forEach(name=>window.addEventListener(name,activity,{passive:true}));
     const timer=window.setInterval(check,1000);
