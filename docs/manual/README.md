@@ -139,6 +139,8 @@ Cuando venza la sesión, inicia sesión de nuevo. Al terminar, pulsa **Salir**, 
 
 ## Cómo mantener este manual
 
+La versión descargable se genera con `python docs/manual/build_pdf.py` (requiere reportlab) y se publica en `frontend/public/manual-de-uso.pdf`. Regenera el PDF cuando cambies texto o ilustraciones.
+
 Este manual se mantiene en **`docs/manual/README.md`**, con ilustraciones editables en **`docs/manual/assets/`**. En GitHub, abre el archivo y utiliza **Edit** para proponer una actualización; dirige el cambio a **develop**. Actualiza también la fecha de revisión y las ilustraciones afectadas.
 
 Describe únicamente funciones disponibles y comprueba los nombres de los botones. Si se añaden capturas reales, utiliza una cuenta de demostración y evita incluir datos de clientes. Git conserva el historial de versiones del manual.

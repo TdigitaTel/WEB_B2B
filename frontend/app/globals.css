@@ -312,3 +312,5 @@ body{background:linear-gradient(180deg,#f6f9fb 0,#f1f5f7 420px,#f5f6f7 100%)}.se
  .document-toolbar>.document-consult{flex:0 0 auto;white-space:nowrap}
  .document-toolbar-actions{flex:0 0 auto;margin-left:auto}
 }
+
+.site-menu .manual-menu-link{display:block;padding:14px 10px;border-bottom:1px solid var(--line);color:var(--blue);font-weight:700;text-decoration:none}.site-menu .manual-menu-link:hover{background:#eaf3f8}
