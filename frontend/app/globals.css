@@ -277,3 +277,5 @@ body{background:linear-gradient(180deg,#f6f9fb 0,#f1f5f7 420px,#f5f6f7 100%)}.se
 .activity-panel .home-orders-button{min-height:48px;border:1px solid var(--blue);background:var(--blue);color:#fff;box-shadow:0 3px 0 #123e5c;font-weight:800}
 .activity-panel .home-orders-button:hover{background:var(--navy);border-color:var(--navy)}
 .activity-panel .home-orders-button:active{box-shadow:none;transform:translateY(2px)}
+.drawer .cart-continue{min-height:48px;margin:12px 0;border:1px solid var(--blue);background:#eaf3f9;color:var(--blue)}
+.drawer .cart-continue:hover{background:#d9eaf5}
