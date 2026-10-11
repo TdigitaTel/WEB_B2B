@@ -825,7 +825,9 @@ def delivery_notes(document_number: str = "", date_from: date | None = None, dat
 def invoices(document_number: str = "", date_from: date | None = None, date_to: date | None = None,
              user: User = Depends(current_user), db: Session = Depends(get_db)):
     customer_for(user, db)
-    return fetch_customer_invoices(customer_code_for(user, db), 1000, document_number, date_from, date_to)
+    return fetch_customer_invoices(customer_code_for(user, db), 1000, document_number,
+                                   None if document_number.strip() else date_from,
+                                   None if document_number.strip() else date_to)
 
 
 def customer_documents(kind: str, user: User, db: Session) -> tuple[str, list[dict]]:
