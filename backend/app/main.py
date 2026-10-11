@@ -242,7 +242,7 @@ def login(data: LoginIn, response: Response, db: Session = Depends(get_db)):
     response.set_cookie("b2b_access", token, httponly=True, samesite="lax", secure=False)
     db.commit()
     display_name = (customer or {}).get("trade_name") or (customer or {}).get("legal_name") or user.full_name
-    return {"user": {"id": user.public_id, "name": display_name, "email": user.email, "role": user.role}, "access_token": token}
+    return {"user": {"id": user.public_id, "name": display_name, "email": user.email, "role": user.role, "idle_timeout_seconds": settings.session_idle_timeout_minutes * 60}, "access_token": token}
 
 
 @app.post("/api/v1/auth/logout")
@@ -263,7 +263,7 @@ def session_activity(request: Request, user: User = Depends(current_user), db: S
 def account(user: User = Depends(current_user), db: Session = Depends(get_db)):
     customer = None if user.role in {"OPERADOR_TIENDA", "ADMIN"} else customer_for(user, db)
     display_name = (customer or {}).get("trade_name") or (customer or {}).get("legal_name") or user.full_name
-    return {"user": {"id": user.public_id, "name": display_name, "email": user.email, "role": user.role},
+    return {"user": {"id": user.public_id, "name": display_name, "email": user.email, "role": user.role, "idle_timeout_seconds": settings.session_idle_timeout_minutes * 60},
             "customer": customer}
 
 
