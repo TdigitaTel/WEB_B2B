@@ -52,7 +52,7 @@ class ScreenshotDetail(Flowable):
         super().__init__()
         self.spec=spec
         x1,y1,x2,y2=spec['box']
-        self.scale=min(190/(x2-x1),spec.get("max_height",140)/(y2-y1))
+        self.scale=min(190/(x2-x1),spec.get("max_height",140)/(y2-y1),1.0)
         self.width=(x2-x1)*self.scale
         self.height=(y2-y1)*self.scale
     def draw(self):
@@ -105,7 +105,8 @@ for index,section in enumerate(sections):
             if j<len(lines) and lines[j].strip().startswith('!['):
                 path=re.search(r'\]\((.*?)\)',lines[j]).group(1)
                 spec=captures.get(f"{index+1}:{number}")
-                visual=ScreenshotDetail(spec) if spec else illustration(root/path,compact=True)
+                if spec is None: raise ValueError(f'Falta captura real para el paso {index+1}:{number}')
+                visual=ScreenshotDetail(spec)
                 row=Table([[badge,step[0],visual]],colWidths=[28,269,198],hAlign='LEFT')
                 row.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'MIDDLE'),('LEFTPADDING',(0,0),(-1,-1),0),('RIGHTPADDING',(0,0),(0,0),4),('RIGHTPADDING',(1,0),(1,0),16),('RIGHTPADDING',(2,0),(2,0),0),('TOPPADDING',(0,0),(-1,-1),0),('BOTTOMPADDING',(0,0),(-1,-1),0)]))
                 step=[row,Spacer(1,8)]
