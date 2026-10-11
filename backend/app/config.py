@@ -7,6 +7,14 @@ class Settings(BaseSettings):
     jwt_secret: str = "desarrollo_local_cambiar"
     integration_api_key: str = ""
     session_idle_timeout_minutes: int = Field(default=15, ge=1, le=480)
+    initial_password_ttl_hours: int = Field(default=72, ge=1, le=720)
+    customer_portal_url: str = "https://extranet.bermudezulloa.es/"
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_sender: str = ""
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_ssl: bool = False
     exit_preparation_offset_seconds: int = Field(default=10, ge=0)
     show_order_status_history: bool = True
     customer_sync_interval_seconds: int = 10
