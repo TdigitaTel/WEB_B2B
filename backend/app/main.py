@@ -19,6 +19,7 @@ from .category_import import router as category_import_router
 from .category_visibility import router as category_visibility_router, image_router as category_image_router, image_urls, hidden_areas, hidden_codes
 from .config import settings
 from .db import get_db
+from .schemas import DeliveryConfirmation
 from .exit_orders import upsert_exit_order
 from .kardex_timing import fetch_kardex_timings, sales_order_number
 from .order_timeline import exit_events, sync_history, instant, dispatch_timing
@@ -180,7 +181,7 @@ def order_payload(order: Order, db: Session, include_items: bool = False) -> dic
               "job_name": order.job_name, "notes": order.notes, "subtotal": float(order.subtotal),
               "tax_total": float(order.tax_total), "total": float(order.total), "created_at": order.created_at,
               "customer": customer_name, "created_by": creator.full_name if creator else "Integración EXIT",
-              "nro_pedido_exit": order.nro_pedido_exit, "fecha_registro_exit": order.fecha_registro_exit,
+              "nro_pedido_exit": order.nro_pedido_exit, "fecha_registro_exit": order.fecha_registro_exit, "delivered_at": order.delivered_at,
               "origen_pedido": order.origen_pedido, "is_web_order": order.origen_pedido == "B2B", "estado_registro_exit": order.estado_registro_exit}
     if include_items:
         result["items"] = []
@@ -218,7 +219,7 @@ def order_payload(order: Order, db: Session, include_items: bool = False) -> dic
             "PENDIENTE": max(pending_dates) if pending_dates else None,
             "EN_PROCESAMIENTO": min(processing_dates) if processing_dates and stage_position[visible_stage] >= 1 else None,
             "PENDIENTE_RECOJO": max(pickup_dates) if pickup_dates and stage_position[visible_stage] >= 2 else None,
-            "ENTREGADO": max(delivered_dates) if delivered_dates and stage_position[visible_stage] >= 3 else None,
+            "ENTREGADO": order.delivered_at or (max(delivered_dates) if delivered_dates and stage_position[visible_stage] >= 3 else None),
             "FACTURADO": max(invoice_dates) if invoice_dates and stage_position[visible_stage] >= 4 else None,
         }
         result["workflow"] = [{"etapa": etapa, "completed_at": completed_at, "date_only": etapa == "FACTURADO"} for etapa, completed_at in stage_dates.items()]
@@ -716,6 +717,8 @@ def orders(date_from: date | None = None, date_to: date | None = None,
             elif not delivery:
                 effective_state = "REGISTRADO"
             sync_history(db, local, exit_events(record, delivery))
+            if local.delivered_at and effective_state != "FACTURADO":
+                effective_state = "ENTREGADO"
             local.estado_registro_exit = effective_state
             payload = order_payload(local, db, True)
             payload.update({"nro_pedido_exit": record.exit_order_id, "exit_number": record.exit_order_id,
@@ -754,6 +757,10 @@ def orders(date_from: date | None = None, date_to: date | None = None,
                        "history": [{"estado_registro_exit": state, "created_at": stamp, "source": "EXIT", "note": note, "date_only": state == "FACTURADO"}
                                    for state, stamp, note in sorted(exit_events(record, delivery), key=lambda event: event[1], reverse=True)],
                        "workflow": exit_workflow(record, effective_state, delivery)}
+        if local and local.delivered_at and payload.get("workflow"):
+            for step in payload["workflow"]:
+                if step["etapa"] == "ENTREGADO":
+                    step["completed_at"] = local.delivered_at
         if local and payload.get("workflow"):
             web_pending = db.scalars(select(OrderStatusHistory).where(OrderStatusHistory.order_id == local.id, OrderStatusHistory.estado_registro_exit == "PENDIENTE", OrderStatusHistory.source == "WEB")).all()
             payload["workflow"][0]["completed_at"] = max((h.created_at for h in web_pending), default=None)
@@ -1089,7 +1096,7 @@ ALLOWED_TRANSITIONS = {
 def store_orders(view: str = Query("active_kardex", pattern="^(active_kardex|active_sga|attended|web)$"),
                  date_from: date | None = None, date_to: date | None = None,
                  state: str = Query("PENDIENTE"),
-                 user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN"))):
+                 user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
     records = fetch_exit_orders_live(view, date_from, date_to)
     kardex_timings = fetch_kardex_timings([sales_order_number(record.exit_order_id) for record in records])
     delivery_by_order: dict[str, dict] = {}
@@ -1097,10 +1104,18 @@ def store_orders(view: str = Query("active_kardex", pattern="^(active_kardex|act
         for delivery in fetch_delivery_statuses_for_orders([record.exit_order_id for record in records]):
             key = str(delivery["order_number"]).replace("~", "/").upper()
             delivery_by_order.setdefault(key, delivery)
+    keys = [key for record in records for key in (record.exit_order_id, record.customer_reference or "")]
+    local_orders = list(db.scalars(select(Order).where((Order.nro_pedido_exit.in_(keys)) | (Order.order_number.in_(keys)))).all()) if keys else []
+    local_by_key = {key.upper(): row for row in local_orders for key in (row.nro_pedido_exit, row.order_number) if key}
+    def local_record(record):
+        return local_by_key.get(record.exit_order_id.upper()) or local_by_key.get((record.customer_reference or "").upper())
     def operational_state(record) -> str:
         delivery = delivery_by_order.get(record.exit_order_id.upper())
         if delivery and delivery["is_invoiced"]:
             return "FACTURADO"
+        local = local_record(record)
+        if local and local.delivered_at:
+            return "ENTREGADO"
         if delivery and delivery["is_printed"]:
             return "ENTREGADO"
         if delivery:
@@ -1145,6 +1160,8 @@ def store_orders(view: str = Query("active_kardex", pattern="^(active_kardex|act
         **dispatch_timing(record, delivery_by_order.get(record.exit_order_id.upper()),
                           kardex_started_at=kardex_timings.get(sales_order_number(record.exit_order_id), {}).get("kardex_started_at")),
         **kardex_timings.get(sales_order_number(record.exit_order_id), {}),
+        "delivery_order_id": local_record(record).public_id if local_record(record) else None,
+        "delivered_at": local_record(record).delivered_at if local_record(record) else None,
         "origen_pedido": "EXIT", "estado_registro_exit": operational_state(record),
         "items": [{"sku": line.sku, "description": line.description, "quantity": float(line.quantity),
                    "served_quantity": float(line.served_quantity or 0),
@@ -1152,6 +1169,38 @@ def store_orders(view: str = Query("active_kardex", pattern="^(active_kardex|act
                    "unit_price": float(line.unit_price), "line_total": float(line.line_total or 0),
                    "fulfillment_zone": line.fulfillment_zone} for line in record.lines],
     } for record in records]
+
+
+@app.post("/api/v1/store/orders/delivery")
+def confirm_delivery(data: DeliveryConfirmation, user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
+    order = db.scalar(select(Order).where((Order.public_id == data.order_id) | (Order.nro_pedido_exit == data.order_id)).with_for_update())
+    if order is None:
+        records = fetch_exit_orders_live("web", data.order_date, data.order_date)
+        record = next((r for r in records if r.exit_order_id == data.order_id), None)
+        if not record or "PEDIDOGENERADOWEBB2B" not in "".join(str(record.auxiliary_reference or "").upper().split()):
+            raise HTTPException(404, "Pedido WEB no encontrado")
+        store = resolve_delegation(record.store_code, company_code=record.company_code)
+        if not store or (user.role == "OPERADOR_TIENDA" and (store.company, store.code) != (user.company_code, user.delegation_code)):
+            raise HTTPException(404, "Pedido no encontrado")
+        linked = db.scalar(select(Order).where(Order.order_number == record.customer_reference, Order.origen_pedido == "B2B")) if record.customer_reference else None
+        if linked:
+            record = record.model_copy(update={"web_order_number": linked.order_number})
+        order = upsert_exit_order(db, record, user)
+    if user.role == "OPERADOR_TIENDA" and (order.company_code, order.delegation_code) != (user.company_code, user.delegation_code):
+        raise HTTPException(404, "Pedido no encontrado")
+    if order.delivered_at:
+        return order_payload(order, db, True)
+    if order.estado_registro_exit == "BORRADOR":
+        raise HTTPException(409, "Un borrador no puede marcarse como entregado")
+    stamp = datetime.now(timezone.utc)
+    order.delivered_at = stamp
+    if order.estado_registro_exit != "FACTURADO":
+        order.estado_registro_exit = "ENTREGADO"
+    db.add(OrderStatusHistory(order_id=order.id, estado_registro_exit="ENTREGADO", changed_by_user_id=user.id,
+                              source="WEB", note="Entrega confirmada en Operaciones", created_at=stamp))
+    audit(db, user, "ORDER_DELIVERY_CONFIRMED", "ORDER", order.public_id, {"delivered_at": stamp.isoformat()})
+    db.commit()
+    return order_payload(order, db, True)
 
 
 @app.post("/api/v1/store/orders/{order_id}/transitions")
@@ -1162,6 +1211,8 @@ def transition(order_id: str, data: StatusChange, user: User = Depends(require_r
     if new_status not in ALLOWED_TRANSITIONS.get(order.estado_registro_exit, set()):
         raise HTTPException(409, f"No se puede pasar de {order.estado_registro_exit} a {new_status}")
     order.estado_registro_exit = new_status
+    if new_status == "ENTREGADO" and not order.delivered_at:
+        order.delivered_at = datetime.now(timezone.utc)
     db.add(OrderStatusHistory(order_id=order.id, estado_registro_exit=new_status, changed_by_user_id=user.id, source="WEB", note=data.note))
     db.add(IntegrationOutbox(aggregate_type="ORDER", aggregate_id=order.public_id, event_type="ORDER_STATUS_CHANGED",
                              payload={"order_number": order.order_number, "nro_pedido_exit": order.nro_pedido_exit, "estado_registro_exit": new_status}, sync_status=SyncStatus.pending))

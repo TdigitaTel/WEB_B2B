@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from pydantic import BaseModel, Field, model_validator
 
@@ -35,6 +35,11 @@ class OrderCreate(BaseModel):
     customer_reference: str | None = Field(default=None, max_length=100)
     job_name: str | None = Field(default=None, max_length=160)
     notes: str | None = Field(default=None, max_length=1000)
+
+
+class DeliveryConfirmation(BaseModel):
+    order_id: str = Field(min_length=1, max_length=80)
+    order_date: date
 
 
 class StatusChange(BaseModel):

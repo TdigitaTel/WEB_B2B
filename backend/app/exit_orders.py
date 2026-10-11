@@ -90,7 +90,7 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
 
     order.nro_pedido_exit = incoming.exit_order_id
     order.fecha_registro_exit = incoming.recorded_at or order.fecha_registro_exit
-    order.estado_registro_exit = estado_registro_exit
+    order.estado_registro_exit = "ENTREGADO" if order.delivered_at and estado_registro_exit != "FACTURADO" else estado_registro_exit
     if is_new:
         order.origen_pedido = "EXIT"
     if is_new and incoming.recorded_at:
