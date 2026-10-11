@@ -1,0 +1,57 @@
+{
+  "2:2": {
+    "file": "pantalla-inicio.png",
+    "box": [
+      90,
+      468,
+      480,
+      584
+    ]
+  },
+  "2:3": {
+    "file": "pantalla-busqueda.png",
+    "box": [
+      1100,
+      35,
+      1920,
+      137
+    ]
+  },
+  "2:4": {
+    "file": "pantalla-busqueda.png",
+    "box": [
+      1900,
+      314,
+      2160,
+      376
+    ]
+  },
+  "2:5": {
+    "file": "pantalla-material.png",
+    "box": [
+      640,
+      390,
+      1120,
+      890
+    ]
+  },
+  "2:6": {
+    "file": "pantalla-material.png",
+    "box": [
+      640,
+      892,
+      755,
+      1008
+    ],
+    "max_height": 60
+  },
+  "2:7": {
+    "file": "pantalla-material.png",
+    "box": [
+      720,
+      910,
+      1130,
+      1015
+    ]
+  }
+}
