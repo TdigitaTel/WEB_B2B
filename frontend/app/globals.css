@@ -300,3 +300,15 @@ body{background:linear-gradient(180deg,#f6f9fb 0,#f1f5f7 420px,#f5f6f7 100%)}.se
  .head>.brand{display:block;flex:0 0 145px;margin-right:auto}
  .head>.brand img{display:block;width:145px;max-width:100%;height:auto;object-fit:contain}
 }
+
+.document-toolbar select{min-height:39px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:#fff;color:var(--ink)}
+
+/* Compact document reference and keep all desktop actions together. */
+@media(min-width:1101px){
+ .document-toolbar{display:flex;flex-wrap:nowrap;align-items:end;gap:10px}
+ .document-toolbar>label{flex:0 0 135px;min-width:0}
+ .document-toolbar>label:first-child{flex:0 0 20ch;font-size:12px;max-width:20ch}
+ .document-toolbar>label:first-child input{width:100%;min-width:0;font-size:12px}
+ .document-toolbar>.document-consult{flex:0 0 auto;white-space:nowrap}
+ .document-toolbar-actions{flex:0 0 auto;margin-left:auto}
+}
