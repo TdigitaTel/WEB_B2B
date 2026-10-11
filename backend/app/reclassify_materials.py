@@ -7,6 +7,7 @@ from pathlib import Path
 from sqlalchemy import select
 
 from .db import SessionLocal
+from .prune_categories import prune_unused_categories
 from .models import CatalogAreaVisibility, MaterialImportRow, Product
 from .category_import import (
     _get_or_create_area, _get_or_create_category, _get_or_create_family,
@@ -97,6 +98,7 @@ def apply_classification(db, path=DATA):
 def main():
     with SessionLocal() as db:
         result = apply_classification(db)
+        result["removed_unused"] = prune_unused_categories(db)
         db.commit()
         print(result)
 
