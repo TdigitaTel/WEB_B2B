@@ -25,7 +25,10 @@ def test_upload_replacement_and_permissions():
         response = client.post(endpoint, files={'file':('image.png',buf.getvalue(),'image/png')})
         assert response.status_code == 200
         urls.append(response.json()['image_url'])
-        assert client.get(urls[-1]).content == buf.getvalue()
+        image_response = client.get(urls[-1])
+        assert image_response.headers['content-type'] == 'image/webp'
+        with Image.open(io.BytesIO(image_response.content)) as stored:
+            assert stored.size == (20,20)
     assert urls[0] != urls[1]
     with SessionLocal() as db:
         assert db.get(MaterialAreaImage,area_id).filename == 'image.png'

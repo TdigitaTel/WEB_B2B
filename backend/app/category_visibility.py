@@ -14,6 +14,15 @@ from .models import CatalogAreaVisibility, MaterialArea, MaterialAreaImage, Prod
 router = APIRouter(prefix="/api/v1/store/category-visibility", tags=["catalog"])
 image_router = APIRouter(prefix="/api/v1/catalog/category-images", tags=["catalog"])
 
+def optimized_image(content):
+    with Image.open(io.BytesIO(content)) as image:
+        image.thumbnail((640, 640), Image.Resampling.LANCZOS)
+        converted = image.convert('RGBA' if 'A' in image.getbands() else 'RGB')
+        output = io.BytesIO()
+        converted.save(output, format='WEBP', quality=80, method=6)
+        return output.getvalue()
+
+
 def image_urls(db):
     return {area_id: f"/api/v1/catalog/category-images/{area_id}?v={digest}"
             for area_id, digest in db.execute(select(MaterialAreaImage.area_id, MaterialAreaImage.sha256)).all()}
@@ -58,6 +67,8 @@ async def upload_category_image(area_id: int, file: UploadFile = File(...),
             image.verify()
     except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError) as exc:
         raise HTTPException(422, "Utiliza una imagen PNG, JPG o WebP de hasta 4096 × 4096 píxeles") from exc
+    content = optimized_image(content)
+    mime_type = "image/webp"
     row = db.get(MaterialAreaImage, area_id)
     if row is None:
         row = MaterialAreaImage(area_id=area_id)

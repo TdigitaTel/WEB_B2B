@@ -7,6 +7,7 @@ import unicodedata
 import zipfile
 from PIL import Image
 from sqlalchemy import select
+from .category_visibility import optimized_image
 from .db import SessionLocal
 from .models import MaterialArea, MaterialAreaImage
 
@@ -37,8 +38,9 @@ def import_images(db, path):
                 if image.format != 'PNG' or max(image.size) > 4096:
                     raise ValueError(f'Imagen no admitida: {key}')
                 image.verify()
+            content = optimized_image(content)
             db.add(MaterialAreaImage(area_id=area.id, filename=key+'.png',
-                       mime_type='image/png', image_data=content,
+                       mime_type='image/webp', image_data=content,
                        sha256=hashlib.sha256(content).hexdigest()))
             db.flush()
             added += 1
@@ -48,5 +50,15 @@ def import_images(db, path):
 if __name__ == '__main__':
     with SessionLocal() as db:
         result = import_images(db, sys.argv[1])
+        before = after = count = 0
+        for row in db.scalars(select(MaterialAreaImage)).all():
+            if row.mime_type == 'image/webp':
+                continue
+            before += len(row.image_data)
+            row.image_data = optimized_image(row.image_data)
+            after += len(row.image_data)
+            row.mime_type = 'image/webp'
+            row.sha256 = hashlib.sha256(row.image_data).hexdigest()
+            count += 1
         db.commit()
-        print(result)
+        print(result, {'optimizadas': count, 'bytes_antes': before, 'bytes_despues': after})
