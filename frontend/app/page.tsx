@@ -164,8 +164,10 @@ export default function Page() {
     setStores(storeData); setCart(cartData); setOrders(orderData); setClassification(classificationData); setFavoriteProducts(favoriteData.items);
   }, [user, isOperator]);
 
+  const lastOrdersQuery = useRef({from:madridDate(new Date()),to:madridDate(new Date()),state:"PENDIENTE"});
   const refreshOrders = useCallback(async (from = madridDate(new Date()), to = madridDate(new Date()), state = "PENDIENTE") => {
     if (!user || isOperator) return;
+    lastOrdersQuery.current={from,to,state};
     setRefreshingOrders(true);
     try { const params=new URLSearchParams({date_from:from,date_to:to,state});setOrders(await api<Order[]>(`/api/v1/orders?${params}`)); setError(""); }
     catch (e) { setError((e as Error).message); }
@@ -273,7 +275,10 @@ export default function Page() {
     if (!window.confirm("¿Eliminar este pedido? Esta acción no se puede deshacer.")) return;
     try {
       await api(`/api/v1/orders/${id}`, { method: "DELETE" });
-      setError(""); await refreshCustomerData();
+      setOrders(current=>current.filter(order=>order.id!==id));
+      setError("");
+      const {from,to,state}=lastOrdersQuery.current;
+      await refreshOrders(from,to,state);
     } catch (e) { setError((e as Error).message); }
   }
 
