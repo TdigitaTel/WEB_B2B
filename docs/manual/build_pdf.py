@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 import xml.etree.ElementTree as ET
 from html import escape
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Table, TableStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Table, TableStyle, KeepTogether
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -28,13 +28,14 @@ def inline(text):
     return text
 
 def illustration(path):
-    drawing=Drawing(1000,410)
+    height=float(ET.parse(path).getroot().attrib["height"])
+    drawing=Drawing(1000,height)
     for node in ET.parse(path).getroot():
         a=node.attrib; tag=node.tag.split('}')[-1]; fill=colors.toColor(a.get('fill','#000000'))
-        if tag=='rect': drawing.add(Rect(float(a.get('x',0)),410-float(a.get('y',0))-float(a['height']),float(a['width']),float(a['height']),rx=float(a.get('rx',0)),fillColor=fill,strokeColor=None))
-        elif tag=='circle':drawing.add(Circle(float(a['cx']),410-float(a['cy']),float(a['r']),fillColor=fill,strokeColor=None))
-        elif tag=='text':drawing.add(String(float(a['x']),410-float(a['y']),''.join(node.itertext()),fontName='Helvetica-Bold' if a.get('font-weight')=='bold' else 'Helvetica',fontSize=float(a.get('font-size',16)),fillColor=fill,textAnchor=a.get('text-anchor','start')))
-    drawing.scale(.49,.49);drawing.width=490;drawing.height=201
+        if tag=='rect': drawing.add(Rect(float(a.get('x',0)),height-float(a.get('y',0))-float(a['height']),float(a['width']),float(a['height']),rx=float(a.get('rx',0)),fillColor=fill,strokeColor=None))
+        elif tag=='circle':drawing.add(Circle(float(a['cx']),height-float(a['cy']),float(a['r']),fillColor=fill,strokeColor=None))
+        elif tag=='text':drawing.add(String(float(a['x']),height-float(a['y']),''.join(node.itertext()),fontName='Helvetica-Bold' if a.get('font-weight')=='bold' else 'Helvetica',fontSize=float(a.get('font-size',16)),fillColor=fill,textAnchor=a.get('text-anchor','start')))
+    drawing.scale(.49,.49);drawing.width=490;drawing.height=height*.49
     return drawing
 
 source=(root/'README.md').read_text().split('## Cómo mantener este manual')[0]
@@ -58,7 +59,16 @@ for index,section in enumerate(sections):
             table.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),colors.HexColor('#e7f0f6')),('VALIGN',(0,0),(-1,-1),'TOP'),('BOX',(0,0),(-1,-1),.4,colors.HexColor('#dfe5e9')),('INNERGRID',(0,0),(-1,-1),.3,colors.HexColor('#dfe5e9')),('TOPPADDING',(0,0),(-1,-1),6),('BOTTOMPADDING',(0,0),(-1,-1),3)]));story.extend([table,Spacer(1,8)]);continue
         if line.startswith('### '):story.append(Paragraph(inline(line[4:]),styles['Heading2']));continue
         if line.startswith('- '):line='• '+line[2:]
-        story.append(Paragraph(inline(line),styles['BodyManual']))
+        if re.match(r'^\d+\. ',line):
+            step=[Paragraph(inline(line),styles['BodyManual'])]
+            j=i
+            while j<len(lines) and not lines[j].strip():j+=1
+            if j<len(lines) and lines[j].strip().startswith('!['):
+                path=re.search(r'\]\((.*?)\)',lines[j]).group(1)
+                step.extend([illustration(root/path),Spacer(1,14)])
+                i=j+1
+            story.append(KeepTogether(step))
+        else:story.append(Paragraph(inline(line),styles['BodyManual']))
 
 def footer(canvas,doc):
     canvas.setTitle('Manual de uso - Bermúdez Ulloa')
