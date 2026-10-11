@@ -359,7 +359,7 @@ def fetch_customer_delivery_notes(customer_code: str, limit: int = 200, document
         f"SELECT TOP {max(1, min(limit, 1000))} EjercicioAlbaran, SerieAlbaran, NumeroAlbaran, "
         "FechaAlbaran, CodigoCliente, IdDelegacion, BaseImponible, TotalCuotaIva AS TaxTotal, ImporteFactura, "
         "StatusFacturado, StatusImpresion, EjercicioPedido, SeriePedido, NumeroPedido, "
-        f"EjercicioFactura, SerieFactura, NumeroFactura FROM {schema}.{table} a "
+        f"EjercicioFactura, SerieFactura, NumeroFactura, (SELECT TOP 1 d.Delegacion FROM dbo.delegaciones d WHERE d.CodigoEmpresa=a.CodigoEmpresa AND d.IdDelegacion=a.IdDelegacion) AS DelegationName FROM {schema}.{table} a "
         "WHERE LTRIM(RTRIM(CONVERT(varchar(100), a.CodigoCliente)))=%s " + filters_sql + " "
         "ORDER BY FechaAlbaran DESC, EjercicioAlbaran DESC, SerieAlbaran DESC, NumeroAlbaran DESC"
     )
@@ -370,16 +370,19 @@ def fetch_customer_delivery_notes(customer_code: str, limit: int = 200, document
         lines_table = _identifier(SALES_DOCUMENTS["delivery_lines"])
         line_sql = (
             f"WITH selected AS (SELECT TOP {max(1, min(limit, 1000))} CodigoEmpresa, EjercicioAlbaran, "
-            f"SerieAlbaran, NumeroAlbaran, FechaAlbaran FROM {schema}.{table} a "
+            f"SerieAlbaran, NumeroAlbaran, FechaAlbaran, IdDelegacion FROM {schema}.{table} a "
             "WHERE LTRIM(RTRIM(CONVERT(varchar(100), a.CodigoCliente)))=%s " + filters_sql + " "
             "ORDER BY FechaAlbaran DESC, EjercicioAlbaran DESC, SerieAlbaran DESC, NumeroAlbaran DESC) "
             "SELECT l.EjercicioAlbaran, l.SerieAlbaran, l.NumeroAlbaran, l.Orden, l.CodigoArticulo, "
             "l.DescripcionArticulo, l.Descripcion2Articulo, l.UnidadMedida1_, l.Unidades, l.Precio, "
             "l.[%Descuento] AS Descuento, l.ImporteNeto, l.BaseImponible, l.[%Iva] AS Iva, "
-            "l.CuotaIva, l.ImporteLiquido, l.CodigoAlmacen "
+            "l.CuotaIva, l.ImporteLiquido, l.CodigoAlmacen, COALESCE(NULLIF(dw.Delegacion, ''), dh.Delegacion) AS DispatchDelegation "
             f"FROM {schema}.{lines_table} l INNER JOIN selected s ON s.CodigoEmpresa=l.CodigoEmpresa "
             "AND s.EjercicioAlbaran=l.EjercicioAlbaran AND s.SerieAlbaran=l.SerieAlbaran "
-            "AND s.NumeroAlbaran=l.NumeroAlbaran ORDER BY l.EjercicioAlbaran DESC, l.SerieAlbaran, "
+            "AND s.NumeroAlbaran=l.NumeroAlbaran "
+            "OUTER APPLY (SELECT TOP 1 d.Delegacion FROM dbo.delegaciones d WHERE d.CodigoEmpresa=l.CodigoEmpresa AND d.CodigoAlmacen=l.CodigoAlmacen AND LTRIM(RTRIM(CONVERT(varchar(30), l.CodigoAlmacen)))<>'99' ORDER BY d.IdDelegacion) dw "
+            "OUTER APPLY (SELECT TOP 1 d.Delegacion FROM dbo.delegaciones d WHERE d.CodigoEmpresa=s.CodigoEmpresa AND d.IdDelegacion=s.IdDelegacion) dh "
+            "ORDER BY l.EjercicioAlbaran DESC, l.SerieAlbaran, "
             "l.NumeroAlbaran DESC, l.Orden"
         )
         cursor.execute(line_sql, tuple(parameters))
@@ -395,6 +398,7 @@ def fetch_customer_delivery_notes(customer_code: str, limit: int = 200, document
             "net_amount": float(line.get("ImporteNeto") or line.get("BaseImponible") or 0),
             "tax_rate": float(line.get("Iva") or 0), "tax_amount": float(line.get("CuotaIva") or 0),
             "total": float(line.get("ImporteLiquido") or 0), "warehouse": str(line.get("CodigoAlmacen") or "").strip(),
+            "dispatch_delegation": str(line.get("DispatchDelegation") or "").strip(),
         })
     return [{
         "id": _document_id(row["EjercicioAlbaran"], row["SerieAlbaran"], row["NumeroAlbaran"]),
@@ -406,6 +410,7 @@ def fetch_customer_delivery_notes(customer_code: str, limit: int = 200, document
         "status": ("FACTURADO" if int(row.get("StatusFacturado") or 0) == -1 and int(row.get("NumeroFactura") or 0) > 0 else
                    "ENTREGADO" if int(row.get("StatusImpresion") or 0) == -1 else "PENDIENTE_DE_ENTREGA"),
         "store_code": str(row.get("IdDelegacion") or "").strip(),
+        "store_name": str(row.get("DelegationName") or "").strip(),
         "order_number": _document_id(row.get("EjercicioPedido"), row.get("SeriePedido"), row.get("NumeroPedido")),
         "invoice_number": (f'{row.get("EjercicioFactura")}-{str(row.get("SerieFactura") or "").strip()}-{row.get("NumeroFactura")}'
                            if int(row.get("NumeroFactura") or 0) else None),

@@ -12,7 +12,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.graphics.shapes import Drawing, Rect, Circle, String
 
 root = Path(__file__).resolve().parent
-output = root.parents[1] / 'frontend/public/manual-de-uso.pdf'
+output = root.parents[1] / 'frontend/public/manual-guia-tareas.pdf'
 styles=getSampleStyleSheet()
 styles.add(ParagraphStyle(name='BodyManual',fontName='Helvetica',fontSize=10,leading=14,spaceAfter=7,textColor=colors.HexColor('#233744')))
 styles['Heading1'].textColor=colors.HexColor('#195b87')
