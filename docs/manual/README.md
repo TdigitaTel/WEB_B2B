@@ -2,7 +2,7 @@
 
 **Guía práctica para clientes · 11 de octubre de 2026**
 
-Elige la tarea que necesitas. Cada apartado indica dónde entrar, qué pulsar y qué resultado esperar. Cada paso lleva una imagen referencial pequeña a su derecha en el PDF. Las ilustraciones explican los pasos; no son capturas de una cuenta real.
+Elige la tarea que necesitas. Cada apartado indica dónde entrar, qué pulsar y qué resultado esperar. Cada paso lleva una imagen referencial pequeña a su derecha en el PDF. La guía combina capturas de la aplicación e ilustraciones de referencia. Los precios y existencias de las capturas son ejemplos y pueden cambiar.
 
 ## 1. Quiero entrar en la web
 
@@ -25,40 +25,47 @@ Elige la tarea que necesitas. Cada apartado indica dónde entrar, qué pulsar y 
 
 ## 2. Quiero hacer un pedido
 
-1. Pulsa **Explorar catálogo** desde Inicio, o escribe directamente en el buscador superior.
+**Recorrido:** Ingresa → Explorar catálogo → Selecciona el material → Unidades → Añadir al carrito → Enviar pedido.
 
-![Paso 1: Inicio](assets/paso-02-01.svg)
+1. Ingresa en la web con tu **Usuario o email** y tu **Contraseña**. Pulsa **Iniciar sesión**.
 
-2. Busca el producto por nombre, referencia o medida. Ejemplos: **racor latón**, **03065** o **1/2**.
+![Paso 1](assets/paso-01-03.svg)
 
-![Paso 2: Catálogo](assets/paso-02-02.svg)
+2. En Inicio, pulsa **Explorar catálogo**.
 
-3. Revisa la descripción, el precio y la disponibilidad del artículo.
+![Paso 2](assets/pantalla-inicio.png)
 
-![Paso 3: Ficha de artículo](assets/paso-02-03.svg)
+3. Escribe el material en el buscador. Por ejemplo: **Racor**. Puedes buscar también por código o medida.
 
-4. Indica las unidades y pulsa **Añadir al carrito**. Repite con los demás materiales.
+![Paso 3](assets/pantalla-busqueda.png)
 
-![Paso 4: Ficha de artículo](assets/paso-02-04.svg)
+4. Selecciona el material que necesitas. En las sugerencias, pulsa **Ver producto** junto al artículo correcto.
 
-5. Abre **Mi carrito** y comprueba artículos, cantidades y total con IVA.
+![Paso 4](assets/pantalla-busqueda.png)
 
-![Paso 5: Mi carrito](assets/paso-02-05.svg)
+5. Comprueba que el material es el correcto: revisa su descripción, precio y disponibilidad.
 
-6. Selecciona **Recoger en**. Completa Obra, Referencia cliente y Observaciones si lo necesitas.
+![Paso 5](assets/pantalla-material.png)
 
-![Paso 6: Mi carrito](assets/paso-02-06.svg)
+6. En **Uds.**, escribe la cantidad que necesitas.
 
-7. Pulsa **Enviar pedido a tienda**.
+![Paso 6](assets/pantalla-material.png)
 
-![Paso 7: Mi carrito](assets/paso-02-07.svg)
+7. Pulsa **Añadir al carrito**. Para pedir otros materiales, repite la búsqueda y añade cada uno.
 
+![Paso 7](assets/pantalla-material.png)
 
-**¿Qué pasará?** El pedido se enviará y podrás consultarlo en **Mis pedidos**.
+8. Abre **Mi carrito**. Revisa los materiales, las cantidades y el total. Elige **Recoger en** y completa los datos de obra si los necesitas.
 
-**Quiero seguir buscando:** pulsa **Seguir comprando** en el carrito. Los artículos permanecen en el carrito de tu sesión.
+![Paso 8](assets/paso-02-06.svg)
 
-**No quiero enviarlo todavía:** marca **Guardar como borrador** y pulsa **Guardar borrador**. Después lo encontrarás en Mis pedidos, seleccionando el estado Borrador. Guardarlo no lo envía a preparación.
+9. Pulsa **Enviar pedido a tienda**. Después podrás seguirlo en **Mis pedidos**.
+
+![Paso 9](assets/paso-02-07.svg)
+
+**Quiero seguir comprando:** pulsa **Seguir comprando** dentro del carrito.
+
+**Quiero guardarlo para después:** marca **Guardar como borrador** y pulsa **Guardar borrador**. Guardarlo no lo envía a preparación.
 
 ## 3. Quiero ver mis últimos pedidos
 

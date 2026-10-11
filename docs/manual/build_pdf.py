@@ -3,12 +3,14 @@ Run: python docs/manual/build_pdf.py (requires reportlab).
 """
 from pathlib import Path
 import re
+import json
 import xml.etree.ElementTree as ET
 from html import escape
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Table, TableStyle, KeepTogether
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Table, TableStyle, KeepTogether, Flowable
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
+from reportlab.lib.utils import ImageReader
 from reportlab.graphics.shapes import Drawing, Rect, Circle, String
 
 root = Path(__file__).resolve().parent
@@ -44,6 +46,30 @@ def illustration(path, compact=False):
     drawing.scale(scale,scale);drawing.width=190 if compact else 490;drawing.height=height*scale
     return drawing
 
+class ScreenshotDetail(Flowable):
+    """Place a readable detail of an original screenshot in the PDF layout."""
+    def __init__(self, spec):
+        super().__init__()
+        self.spec=spec
+        x1,y1,x2,y2=spec['box']
+        self.scale=min(190/(x2-x1),spec.get("max_height",140)/(y2-y1))
+        self.width=(x2-x1)*self.scale
+        self.height=(y2-y1)*self.scale
+    def draw(self):
+        canvas=self.canv
+        image=ImageReader(str(root/'assets'/self.spec['file']))
+        iw,ih=image.getSize()
+        x1,y1,x2,y2=self.spec['box']
+        canvas.saveState()
+        path=canvas.beginPath();path.rect(0,0,self.width,self.height)
+        canvas.clipPath(path,stroke=0,fill=0)
+        canvas.drawImage(image,-x1*self.scale,-(ih-y2)*self.scale,
+                         width=iw*self.scale,height=ih*self.scale)
+        canvas.restoreState()
+        canvas.setStrokeColor(colors.HexColor('#dfe5e9'))
+        canvas.roundRect(0,0,self.width,self.height,4,stroke=1,fill=0)
+
+captures=json.loads((root/'assets/capturas.json').read_text())
 source=(root/'README.md').read_text().split('## Cómo mantener este manual')[0]
 sections=re.split(r'(?m)^## (?=\d\.)',source)[1:]
 story=[]
@@ -67,6 +93,9 @@ for index,section in enumerate(sections):
         if line.startswith('- '):line='• '+line[2:]
         if re.match(r'^\d+\. ',line):
             number,text=line.split('. ',1)
+            if index==1 and number=='6':
+                story.append(PageBreak())
+                story.append(Paragraph('Quiero hacer un pedido · continuación',styles['Heading1']))
             badge=Drawing(24,26)
             badge.add(Circle(11,14,10,fillColor=colors.HexColor('#195b87'),strokeColor=None))
             badge.add(String(11,10,number,fontName='Helvetica-Bold',fontSize=11,fillColor=colors.white,textAnchor='middle'))
@@ -75,7 +104,9 @@ for index,section in enumerate(sections):
             while j<len(lines) and not lines[j].strip():j+=1
             if j<len(lines) and lines[j].strip().startswith('!['):
                 path=re.search(r'\]\((.*?)\)',lines[j]).group(1)
-                row=Table([[badge,step[0],illustration(root/path,compact=True)]],colWidths=[28,269,198],hAlign='LEFT')
+                spec=captures.get(f"{index+1}:{number}")
+                visual=ScreenshotDetail(spec) if spec else illustration(root/path,compact=True)
+                row=Table([[badge,step[0],visual]],colWidths=[28,269,198],hAlign='LEFT')
                 row.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'MIDDLE'),('LEFTPADDING',(0,0),(-1,-1),0),('RIGHTPADDING',(0,0),(0,0),4),('RIGHTPADDING',(1,0),(1,0),16),('RIGHTPADDING',(2,0),(2,0),0),('TOPPADDING',(0,0),(-1,-1),0),('BOTTOMPADDING',(0,0),(-1,-1),0)]))
                 step=[row,Spacer(1,8)]
                 i=j+1
