@@ -314,3 +314,11 @@ body{background:linear-gradient(180deg,#f6f9fb 0,#f1f5f7 420px,#f5f6f7 100%)}.se
 }
 
 .site-menu .manual-menu-link{display:block;padding:14px 10px;border-bottom:1px solid var(--line);color:var(--blue);font-weight:700;text-decoration:none}.site-menu .manual-menu-link:hover{background:#eaf3f8}
+
+/* Give the operations controls the same prominence as Explore catalog. */
+.ops-toolbar-row .ops-filters{gap:8px;overflow:visible;flex-wrap:wrap}
+.ops-toolbar-row .ops-filters button,.ops-date-filters>button,.attended-sort>button{min-height:44px;height:auto;padding:12px 16px;border:1px solid var(--blue);border-radius:8px;background:var(--blue);color:#fff;font-size:13px;font-weight:750;box-shadow:0 2px 4px #153e5a16}
+.ops-toolbar-row .ops-filters button:hover,.ops-date-filters>button:hover,.attended-sort>button:hover{background:#12486e;border-color:#12486e}
+.ops-toolbar-row .ops-filters button.active,.attended-sort>button.active{background:var(--navy);border-color:var(--navy);box-shadow:inset 0 -3px 0 #c59636}
+.ops-toolbar-row .ops-filters button b{background:#fff;color:var(--blue)}
+@media(max-width:720px){.ops-toolbar-row .ops-filters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));width:100%}.ops-toolbar-row .ops-filters button{width:100%;padding:12px 8px}.attended-sort{display:flex;gap:8px}.attended-sort>button{flex:1}.ops-date-filters>button{min-height:44px}}

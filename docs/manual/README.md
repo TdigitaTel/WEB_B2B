@@ -1,146 +1,130 @@
-# Manual de uso · Bermúdez Ulloa
+# ¿Qué quieres hacer? · Manual de Bermúdez Ulloa
 
-**Guía para clientes · Actualizado el 11 de octubre de 2026**
+**Guía práctica para clientes · 11 de octubre de 2026**
 
-Busca tu material, prepara el pedido y consulta su evolución desde ordenador, tablet o móvil. Las ilustraciones son guías de pasos, no capturas de una cuenta real.
+Elige la tarea que necesitas. Cada apartado indica dónde entrar, qué pulsar y qué resultado esperar. Las ilustraciones explican los pasos; no son capturas de una cuenta real.
 
-## Índice
+## 1. Quiero entrar en la web
 
-1. [Entrar en la web](#1-entrar-en-la-web)
-2. [Moverte por la web](#2-moverte-por-la-web)
-3. [Buscar y añadir material](#3-buscar-y-añadir-material)
-4. [Revisar el carrito](#4-revisar-el-carrito)
-5. [Consultar tus pedidos](#5-consultar-tus-pedidos)
-6. [Albaranes y facturas](#6-albaranes-y-facturas)
-7. [Usar la web en el móvil](#7-usar-la-web-en-el-móvil)
-8. [Sesión y seguridad](#8-sesión-y-seguridad)
-9. [Resolver dudas](#9-resolver-dudas)
+![Entrar en la cuenta](assets/01-acceso.svg)
 
-## 1. Entrar en la web
+1. Abre la dirección de la extranet que te haya facilitado Bermúdez Ulloa.
+2. Escribe tu **Usuario o email** y tu **Contraseña**.
+3. Pulsa **Iniciar sesión**.
 
-![Pasos para iniciar sesión](assets/01-acceso.svg)
+**¿Qué veré?** La pantalla de Inicio, con el catálogo, tus pedidos y los accesos a documentos.
 
-Abre la dirección de la extranet facilitada por tu empresa. Introduce tu **usuario o email** y **contraseña**, y pulsa **Iniciar sesión**. Si no puedes acceder, solicita ayuda a tu contacto de Bermúdez Ulloa.
+**Si no puedo entrar:** revisa los datos escritos. Si no tienes una cuenta o no recuerdas la contraseña, contacta con Bermúdez Ulloa.
 
-## 2. Moverte por la web
+## 2. Quiero hacer un pedido
 
-![Secciones principales](assets/02-navegacion.svg)
+![Buscar y añadir productos](assets/03-catalogo.svg)
 
-| Opción | Para qué sirve |
+1. Pulsa **Explorar catálogo** desde Inicio, o escribe directamente en el buscador superior.
+2. Busca el producto por nombre, referencia o medida. Ejemplos: **racor latón**, **03065** o **1/2**.
+3. Revisa la descripción, el precio y la disponibilidad del artículo.
+4. Indica las unidades y pulsa **Añadir al carrito**. Repite con los demás materiales.
+5. Abre **Mi carrito** y comprueba artículos, cantidades y total con IVA.
+6. Selecciona **Recoger en**. Completa Obra, Referencia cliente y Observaciones si lo necesitas.
+7. Pulsa **Enviar pedido a tienda**.
+
+**¿Qué pasará?** El pedido se enviará y podrás consultarlo en **Mis pedidos**.
+
+**Quiero seguir buscando:** pulsa **Seguir comprando** en el carrito. Los artículos permanecen en el carrito de tu sesión.
+
+**No quiero enviarlo todavía:** marca **Guardar como borrador** y pulsa **Guardar borrador**. Después lo encontrarás en Mis pedidos, seleccionando el estado Borrador. Guardarlo no lo envía a preparación.
+
+## 3. Quiero ver mis últimos pedidos
+
+![Consultar los pedidos](assets/05-pedidos.svg)
+
+1. Entra en **Mis pedidos** desde el menú o pulsa **Ver todos mis pedidos** en Inicio.
+2. Elige las fechas **Desde** y **Hasta** que quieras revisar.
+3. En **Estado**, selecciona **Todos** si quieres ver los pedidos de cualquier estado.
+4. En **Origen**, selecciona **Todos** para incluir tanto WEB como No WEB.
+5. Pulsa **Consultar**.
+6. Abre **Ver detalle** en el pedido que te interese para ver artículos, cantidades e historial.
+
+**¿Qué veré?** Los pedidos que coinciden con las fechas, el estado y el origen seleccionados.
+
+**No encuentro un pedido:** amplía las fechas y revisa los otros filtros. Pulsa **Actualizar pedidos** para volver a consultar con los filtros elegidos.
+
+**Quiero repetir un pedido:** abre su detalle y pulsa **Duplicar pedido** cuando esté disponible. Revisa el contenido antes de enviarlo.
+
+## 4. Quiero listar mis albaranes
+
+![Consultar documentos](assets/09-listar-albaranes.svg)
+
+1. Entra en **Albaranes y facturas**.
+2. Selecciona la pestaña **Albaranes**.
+3. Deja vacío **Número de albarán** para listar documentos, en lugar de buscar uno concreto.
+4. Elige las fechas **Desde** y **Hasta**.
+5. Deja **Estado (opcional)** en **Todos**, o elige **Facturado** o **No facturado**.
+6. Pulsa **Consultar**.
+
+**¿Qué veré?** El listado de albaranes que coincide con los filtros. El encabezado muestra la cantidad de documentos y su importe total.
+
+**Quiero ver los materiales:** abre **Ver detalle** en un albarán.
+
+**Quiero guardar el listado:** pulsa **Descargar Excel**. El Excel utiliza el número o las fechas de la consulta, pero no aplica el filtro opcional de estado. **Imprimir listado** imprime el resultado visible.
+
+## 5. Quiero buscar un albarán concreto
+
+![Buscar un albarán](assets/10-buscar-albaran.svg)
+
+1. Entra en **Albaranes y facturas → Albaranes**.
+2. Escribe el número en **Número de albarán**. Puedes utilizar **12345** o la referencia completa **2026-AL-12345**.
+3. El campo admite hasta **20 caracteres**. Elige un rango de fechas que incluya el albarán.
+4. Deja **Estado (opcional)** en **Todos** si no conoces su estado.
+5. Pulsa **Consultar** y abre **Ver detalle**.
+
+**¿Qué veré?** El albarán o los documentos que coincidan con el número y los filtros. La referencia completa permite precisar año y serie.
+
+**No aparece:** amplía las fechas, selecciona Todos y comprueba el número.
+
+**Quiero abrir su factura:** dentro del detalle, pulsa el número de **Factura relacionada**. La web abre Facturas y busca esa referencia sin limitarla por las fechas.
+
+## 6. Quiero descargar mis facturas
+
+![Descargar facturas](assets/11-descargar-facturas.svg)
+
+1. Entra en **Albaranes y facturas** y selecciona **Facturas**.
+2. Para listar varias, deja vacío el número y selecciona **Desde** y **Hasta**.
+3. Para buscar una concreta, escribe su número (**12345**) o la referencia completa (**2026-FR-12345**). Cuando hay un número, las fechas no limitan la búsqueda.
+4. Pulsa **Consultar**.
+5. Abre **Ver detalle** en la factura y pulsa **Descargar PDF**.
+
+**¿Qué obtendré?** El PDF de la factura seleccionada, que podrás guardar o imprimir. Para descargar varias facturas en PDF, repite la descarga en cada documento.
+
+**Quiero un listado en una hoja de cálculo:** pulsa **Descargar Excel**. Esto exporta el listado; no es una descarga conjunta de los PDF.
+
+**Vengo desde un albarán:** pulsa su número de Factura relacionada. La factura se busca por número sin usar las fechas del albarán.
+
+## 7. Quiero salir del carrito o guardar para después
+
+![Opciones del carrito](assets/04-carrito.svg)
+
+| Quiero… | Qué debo pulsar |
 |---|---|
-| **Inicio** | Accesos rápidos, materiales favoritos y resumen de pedidos. |
-| **Catálogo** | Buscar productos y consultar precio y disponibilidad. |
-| **Mis pedidos** | Consultar pedidos, borradores, líneas e historial. |
-| **Albaranes y facturas** | Consultar y descargar documentación comercial. |
-| **Mi cuenta** | Consultar tus datos y cambiar la contraseña. |
+| Seguir buscando material | **Seguir comprando**. |
+| Cerrar el carrito sin enviar | **×** en la cabecera del carrito. |
+| Guardar el pedido para revisarlo | **Guardar como borrador → Guardar borrador**. |
+| Enviar un borrador guardado | **Mis pedidos → Borrador → Consultar → Convertir en pendiente**. |
+| Quitar un artículo del carrito | **×** junto al artículo. |
+| Eliminar un pedido permitido | **Mis pedidos → Ver detalle → Eliminar pedido**, y confirma. |
 
-**Menú** abre la navegación. **Catálogo profesional** permite ir al catálogo o explorar familias y subfamilias. **Todos los departamentos**, junto al buscador, limita la búsqueda a un departamento. El logo lleva a Inicio.
+**Al eliminar un pedido**, solo desaparece ese pedido y la lista se actualiza. La opción aparece únicamente para determinados pedidos locales sin número EXIT.
 
-## 3. Buscar y añadir material
+## 8. Quiero usar el móvil o cerrar mi sesión
 
-![Buscar, filtrar y añadir](assets/03-catalogo.svg)
+![Uso en móvil](assets/07-movil.svg)
 
-1. Escribe en el buscador un nombre, una referencia o una medida. Ejemplos: **racor latón**, **03065** o **1/2**.
-2. Pulsa el botón de búsqueda. Si hay muchos resultados, afina por **departamento, familia, subfamilia o tipo de producto**.
-3. Revisa la descripción, el precio y las unidades disponibles.
-4. Indica la cantidad y pulsa **Añadir al carrito**.
+**En el móvil:** utiliza el buscador superior y la botonera inferior **Inicio / Buscar / Pedidos / Cuenta**. Pulsa **Filtrar** para afinar el catálogo y el botón **Ver productos** para regresar al resultado. En **Menú → Manual de uso** puedes volver a abrir esta guía o descargarla.
 
-Puedes repetir estos pasos con varios artículos. **Limpiar todo** elimina los filtros aplicados para ampliar la búsqueda. El precio con IVA y sin IVA se muestra en la ficha cuando está disponible.
+**Para cerrar sesión:** pulsa **Salir**, especialmente cuando compartas el equipo. Las flechas del navegador no sustituyen el cierre de sesión.
 
-## 4. Revisar el carrito
-
-![Preparación del pedido](assets/04-carrito.svg)
-
-Pulsa **Mi carrito** para revisar el pedido. Puedes modificar las cantidades o quitar un artículo con **×**. Comprueba el subtotal, el IVA y el total.
-
-Completa **Recoger en**, y si procede **Obra**, **Referencia cliente** y **Observaciones**.
-
-| Botón u opción | Resultado |
-|---|---|
-| **Seguir comprando** | Cierra el carrito y vuelve al catálogo conservando los artículos de la sesión. |
-| **×** en la cabecera | Cierra el carrito sin enviar el pedido. |
-| **Guardar como borrador** | Guarda el pedido para revisarlo antes de enviarlo. |
-| **Enviar pedido a tienda** | Envía el pedido a la tienda seleccionada. |
-
-Guardar un borrador no equivale a enviarlo a preparación. Revisa siempre los datos antes de enviar.
-
-## 5. Consultar tus pedidos
-
-![Consultar y gestionar pedidos](assets/05-pedidos.svg)
-
-En **Mis pedidos**, selecciona **Desde**, **Hasta**, **Estado** y **Origen**, y pulsa **Consultar**. **Actualizar pedidos** vuelve a consultar con los filtros elegidos.
-
-Abre **Ver detalle** para revisar artículos, cantidades pedidas y servidas, historial y documentos disponibles.
-
-| Estado | Qué indica |
-|---|---|
-| **Borrador** | Guardado antes de enviarlo. |
-| **Pendiente** | Pendiente de continuar el proceso. |
-| **En procesamiento** | En proceso de preparación. |
-| **Pendiente de recojo** | Pendiente de recogida. |
-| **Entregado** | Entrega registrada. |
-| **Facturado** | Facturación registrada. |
-
-- **Duplicar pedido** permite preparar otro a partir de uno anterior. Revisa su contenido antes de enviarlo.
-- **Convertir en pendiente** envía un borrador al siguiente estado.
-- **Eliminar pedido** aparece únicamente en pedidos locales que cumplen las condiciones de eliminación. No aparece si el pedido ya tiene número EXIT. La eliminación requiere confirmación.
-
-Al eliminar, desaparece solo ese pedido y se actualiza la lista con la última consulta. Si no ves un pedido, revisa fechas, estado y origen: los filtros pueden excluirlo.
-
-## 6. Albaranes y facturas
-
-![Del albarán a su factura](assets/06-documentos.svg)
-
-### Consultar albaranes
-
-Abre **Albaranes**, indica el número o las fechas y pulsa **Consultar**. El filtro **Estado (opcional)** permite elegir **Todos**, **Facturado** o **No facturado**; inicialmente muestra Todos.
-
-Abre **Ver detalle** para ver los artículos despachados, cantidades e importes. Si el albarán tiene factura relacionada, pulsa **su número de factura**.
-
-### Consultar facturas
-
-La factura relacionada se abre en la pestaña **Facturas** mediante su número, **sin limitarla por las fechas del albarán**.
-
-También puedes escribir un número de factura y pulsar **Consultar**. Cuando introduces un número, la búsqueda ignora las fechas. Si no indicas número, se utiliza el rango de fechas elegido.
-
-- **Descargar PDF:** descarga el documento seleccionado.
-- **Descargar Excel:** exporta los documentos según el número o rango de fechas indicado; no aplica el filtro opcional de estado de albaranes.
-- **Imprimir listado:** abre la impresión del navegador sobre el listado visible.
-
-## 7. Usar la web en el móvil
-
-![Navegación en móvil](assets/07-movil.svg)
-
-El logo y el buscador están en la parte superior. El catálogo muestra tarjetas adaptadas a la pantalla. Pulsa **Filtrar** para abrir los filtros y **Ver productos** para regresar al resultado.
-
-La botonera inferior permite cambiar entre **Inicio**, **Buscar**, **Pedidos** y **Cuenta**. Para preparar el pedido, abre **Mi carrito**. Puedes salir del carrito con **Seguir comprando** sin enviarlo.
-
-## 8. Sesión y seguridad
-
-![Actividad y cierre de sesión](assets/08-sesion.svg)
-
-La sesión se mantiene mientras utilizas la web. **Por defecto caduca tras 15 minutos de inactividad**; la empresa puede configurar otro tiempo. Las actualizaciones automáticas de pantalla no cuentan como actividad del usuario.
-
-Cuando venza la sesión, inicia sesión de nuevo. Al terminar, pulsa **Salir**, especialmente si el equipo es compartido. No confíes en las flechas del navegador para cerrar sesión.
-
-## 9. Resolver dudas
-
-| Situación | Qué hacer |
-|---|---|
-| No encuentro un producto | Prueba su referencia y limpia los filtros de categoría. |
-| No veo un pedido | Revisa fechas, estado y origen, y pulsa Consultar. |
-| No veo la factura relacionada | Pulsa su número en el albarán; la búsqueda no usa fechas. |
-| Quiero seguir buscando sin enviar | Pulsa Seguir comprando en el carrito. |
-| Quiero revisar el pedido más tarde | Guárdalo como borrador y búscalo en Mis pedidos. |
-| La sesión ha caducado | Inicia sesión de nuevo. |
-| No puedo eliminar un pedido | Solo se permite eliminar determinados pedidos locales sin número EXIT. |
-
----
+**Si dejo de usar la web:** por defecto la sesión vence después de **15 minutos de inactividad**. Tu empresa puede configurar otro tiempo. Cuando venza, inicia sesión de nuevo. Las actualizaciones automáticas no cuentan como actividad del usuario.
 
 ## Cómo mantener este manual
 
-La versión descargable se genera con `python docs/manual/build_pdf.py` (requiere reportlab) y se publica en `frontend/public/manual-de-uso.pdf`. Regenera el PDF cuando cambies texto o ilustraciones.
-
-Este manual se mantiene en **`docs/manual/README.md`**, con ilustraciones editables en **`docs/manual/assets/`**. En GitHub, abre el archivo y utiliza **Edit** para proponer una actualización; dirige el cambio a **develop**. Actualiza también la fecha de revisión y las ilustraciones afectadas.
-
-Describe únicamente funciones disponibles y comprueba los nombres de los botones. Si se añaden capturas reales, utiliza una cuenta de demostración y evita incluir datos de clientes. Git conserva el historial de versiones del manual.
+Edita `docs/manual/README.md` y las ilustraciones de `docs/manual/assets/`. Regenera la descarga con `python docs/manual/build_pdf.py` (requiere reportlab). El resultado se publica en `frontend/public/manual-de-uso.pdf`. Guarda y revisa los cambios en develop antes de pasarlos a producción.
