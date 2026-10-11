@@ -404,3 +404,7 @@ Cada ciclo consulta como máximo 30 clientes y continúa desde el último códig
 ### Caducidad por inactividad
 
 `SESSION_IDLE_TIMEOUT_MINUTES` configura el cierre de sesión por inactividad: 15 minutos por defecto, entre 1 y 480. Configurar en el archivo privado `dev.env` o `prod.env` y volver a desplegar. El servidor comunica el mismo valor al navegador. Las consultas automáticas no prolongan la sesión; la actividad real del usuario sí. Se mantiene el límite absoluto de 8 horas.
+
+## Manual para clientes
+
+[Manual visual de uso](docs/manual/README.md), editable y versionado junto al proyecto.
