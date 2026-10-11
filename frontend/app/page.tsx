@@ -285,7 +285,7 @@ export default function Page() {
   if (loading) return <div className="loading">Preparando el portal profesional…</div>;
   if (!user) return <Login onLogin={login} error={error} />;
 
-  return <main className={`shell ${kioskMode?"kiosk-mode":""} ${keyboardOpen?"keyboard-open":""}`}>
+  return <main className={`shell ${isOperator?"operator-shell":""} ${kioskMode?"kiosk-mode":""} ${keyboardOpen?"keyboard-open":""}`}>
     <header className="header">
       <div className="head">
         <button className="brand" onClick={() => setView(isOperator ? "ops" : "home")} aria-label="Inicio"><img src="/bermudez-ulloa-logo.jpg" alt="Bermúdez Ulloa · 25 aniversario" /></button>
