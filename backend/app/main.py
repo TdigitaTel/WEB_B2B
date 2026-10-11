@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from .auth import audit, create_access_token, current_user, hash_password, require_roles, verify_password
 from .category_import import router as category_import_router
-from .category_visibility import router as category_visibility_router, hidden_areas, hidden_codes
+from .category_visibility import router as category_visibility_router, image_router as category_image_router, image_urls, hidden_areas, hidden_codes
 from .config import settings
 from .db import get_db
 from .exit_orders import upsert_exit_order
@@ -44,6 +44,7 @@ from .services import PostgresCatalogService, ensure_catalog_products, product_v
 app = FastAPI(title="Bermúdez B2B API", version="1.0.0", openapi_url="/api/v1/openapi.json", docs_url="/docs")
 app.include_router(category_import_router)
 app.include_router(category_visibility_router)
+app.include_router(category_image_router)
 app.include_router(image_admin_router)
 logger = logging.getLogger(__name__)
 
@@ -387,8 +388,9 @@ def catalog_classification(user: User = Depends(current_user), db: Session = Dep
         .order_by(MaterialArea.name, MaterialFamily.name, MaterialSubfamily.name, MaterialProductType.name)
     ).all()
     areas: dict[int, dict] = {}
+    category_images = image_urls(db)
     for area_id, area_code, area_name, family_id, family_code, family_name, subfamily_id, subfamily_code, subfamily_name, type_id, type_code, type_name, count in rows:
-        area = areas.setdefault(area_id, {"id": area_id, "code": area_code, "name": area_name, "count": 0, "families": {}})
+        area = areas.setdefault(area_id, {"id": area_id, "code": area_code, "name": area_name, "image_url": category_images.get(area_id), "count": 0, "families": {}})
         family = area["families"].setdefault(family_id, {"id": family_id, "code": family_code, "name": family_name, "count": 0, "subfamilies": {}})
         subfamily = family["subfamilies"].setdefault(subfamily_id, {"id": subfamily_id, "code": subfamily_code, "name": subfamily_name, "count": 0, "product_types": []})
         subfamily["product_types"].append({"id": type_id, "code": type_code, "name": type_name, "count": count})

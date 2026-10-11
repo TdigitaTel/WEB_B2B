@@ -109,6 +109,15 @@ class MaterialArea(Base, TimestampMixin):
     name: Mapped[str] = mapped_column(String(160), unique=True)
 
 
+class MaterialAreaImage(Base, TimestampMixin):
+    __tablename__ = "material_area_images"
+    area_id: Mapped[int] = mapped_column(ForeignKey("material_areas.id"), primary_key=True)
+    filename: Mapped[str] = mapped_column(String(200))
+    mime_type: Mapped[str] = mapped_column(String(40))
+    image_data: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)
+    sha256: Mapped[str] = mapped_column(String(64))
+
+
 class MaterialFamily(Base, TimestampMixin):
     __tablename__ = "material_families"
     id: Mapped[int] = mapped_column(primary_key=True)
