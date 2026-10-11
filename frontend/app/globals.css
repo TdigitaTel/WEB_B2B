@@ -332,3 +332,11 @@ body{background:linear-gradient(180deg,#f6f9fb 0,#f1f5f7 420px,#f5f6f7 100%)}.se
 .operator-shell .page input.input,.operator-shell .ops-date-filters input,.operator-shell .ops-date-filters select{min-height:44px;border:1px solid #789fb8;border-radius:8px}
 .operator-shell .category-image-upload.disabled{opacity:.5}
 @media(max-width:720px){.operator-shell .desktop-nav{display:flex;padding:10px 12px;white-space:normal;overflow:visible}.operator-shell .desktop-nav button{flex:1 1 140px;white-space:normal}.operator-shell .page .primary,.operator-shell .page .secondary,.operator-shell .page .ghost{white-space:normal}}
+
+/* Compact operator buttons aligned with the filter fields. */
+.operator-shell .desktop-nav button,.operator-shell .page .primary,.operator-shell .page .secondary,.operator-shell .page .ghost,.operator-shell .ops-toolbar-row .ops-filters button,.operator-shell .ops-date-filters>button,.operator-shell .attended-sort>button{min-height:34px;height:auto;padding:7px 12px;border-radius:6px;font-size:12px;line-height:18px;box-shadow:none}
+.operator-shell .page input.input,.operator-shell .ops-date-filters input,.operator-shell .ops-date-filters select{min-height:34px;height:34px;border-radius:6px;padding-top:5px;padding-bottom:5px}
+.operator-shell .ops-date-filters,.operator-shell .attended-sort,.operator-shell .ops-toolbar-row .ops-filters{align-items:flex-end;gap:7px}
+.operator-shell .desktop-nav{padding-top:6px;padding-bottom:6px;gap:7px}
+.operator-shell .desktop-nav button.active,.operator-shell .ops-toolbar-row .ops-filters button.active,.operator-shell .attended-sort>button.active{box-shadow:inset 0 -2px 0 #c59636}
+@media(max-width:720px){.operator-shell .ops-toolbar-row .ops-filters button{padding:7px 10px;min-height:34px}.operator-shell .desktop-nav{padding:6px 12px}.operator-shell .desktop-nav button{flex:0 1 auto}.operator-shell .attended-sort>button{padding:7px 10px;min-height:34px}}
