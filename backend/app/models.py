@@ -255,6 +255,7 @@ class Order(Base, TimestampMixin):
     store_id = synonym("delegation_code")
     nro_pedido_exit: Mapped[str | None] = mapped_column(String(80), index=True)
     fecha_registro_exit: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     origen_pedido: Mapped[str] = mapped_column(String(20), default="B2B", index=True)
     estado_registro_exit: Mapped[str] = mapped_column(String(80), default="PENDIENTE", index=True)
     customer_reference: Mapped[str | None] = mapped_column(String(100))
