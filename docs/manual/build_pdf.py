@@ -15,8 +15,10 @@ root = Path(__file__).resolve().parent
 output = root.parents[1] / 'frontend/public/manual-guia-tareas.pdf'
 styles=getSampleStyleSheet()
 styles.add(ParagraphStyle(name='BodyManual',fontName='Helvetica',fontSize=10,leading=14,spaceAfter=7,textColor=colors.HexColor('#233744')))
-styles['Heading1'].textColor=colors.HexColor('#195b87')
-styles['Heading1'].fontSize=21
+styles['Heading1'].textColor=colors.HexColor('#233744')
+styles['Heading1'].fontName='Helvetica-Bold'
+styles['Heading1'].spaceAfter=18
+styles['Heading1'].fontSize=23
 styles['Heading1'].leading=26
 styles['Heading2'].fontSize=13
 styles['Heading2'].leading=18
@@ -27,15 +29,19 @@ def inline(text):
     text=re.sub(r'`([^`]+)`',r'\1',text)
     return text
 
-def illustration(path):
+def illustration(path, compact=False):
     height=float(ET.parse(path).getroot().attrib["height"])
-    drawing=Drawing(1000,height)
+    drawing=Drawing(622 if compact else 1000,height)
     for node in ET.parse(path).getroot():
-        a=node.attrib; tag=node.tag.split('}')[-1]; fill=colors.toColor(a.get('fill','#000000'))
+        a=node.attrib; tag=node.tag.split('}')[-1]
+        if compact and (float(a.get('x',a.get('cx',0)))>=622 or (tag=='rect' and float(a.get('width',0))>622)):
+            continue
+        fill=colors.toColor(a.get('fill','#000000'))
         if tag=='rect': drawing.add(Rect(float(a.get('x',0)),height-float(a.get('y',0))-float(a['height']),float(a['width']),float(a['height']),rx=float(a.get('rx',0)),fillColor=fill,strokeColor=None))
         elif tag=='circle':drawing.add(Circle(float(a['cx']),height-float(a['cy']),float(a['r']),fillColor=fill,strokeColor=None))
         elif tag=='text':drawing.add(String(float(a['x']),height-float(a['y']),''.join(node.itertext()),fontName='Helvetica-Bold' if a.get('font-weight')=='bold' else 'Helvetica',fontSize=float(a.get('font-size',16)),fillColor=fill,textAnchor=a.get('text-anchor','start')))
-    drawing.scale(.49,.49);drawing.width=490;drawing.height=height*.49
+    scale=190/622 if compact else .49
+    drawing.scale(scale,scale);drawing.width=190 if compact else 490;drawing.height=height*scale
     return drawing
 
 source=(root/'README.md').read_text().split('## Cómo mantener este manual')[0]
@@ -60,12 +66,18 @@ for index,section in enumerate(sections):
         if line.startswith('### '):story.append(Paragraph(inline(line[4:]),styles['Heading2']));continue
         if line.startswith('- '):line='• '+line[2:]
         if re.match(r'^\d+\. ',line):
-            step=[Paragraph(inline(line),styles['BodyManual'])]
+            number,text=line.split('. ',1)
+            badge=Drawing(24,26)
+            badge.add(Circle(11,14,10,fillColor=colors.HexColor('#195b87'),strokeColor=None))
+            badge.add(String(11,10,number,fontName='Helvetica-Bold',fontSize=11,fillColor=colors.white,textAnchor='middle'))
+            step=[Paragraph(inline(text),styles['BodyManual'])]
             j=i
             while j<len(lines) and not lines[j].strip():j+=1
             if j<len(lines) and lines[j].strip().startswith('!['):
                 path=re.search(r'\]\((.*?)\)',lines[j]).group(1)
-                step.extend([illustration(root/path),Spacer(1,14)])
+                row=Table([[badge,step[0],illustration(root/path,compact=True)]],colWidths=[28,269,198],hAlign='LEFT')
+                row.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'MIDDLE'),('LEFTPADDING',(0,0),(-1,-1),0),('RIGHTPADDING',(0,0),(0,0),4),('RIGHTPADDING',(1,0),(1,0),16),('RIGHTPADDING',(2,0),(2,0),0),('TOPPADDING',(0,0),(-1,-1),0),('BOTTOMPADDING',(0,0),(-1,-1),0)]))
+                step=[row,Spacer(1,8)]
                 i=j+1
             story.append(KeepTogether(step))
         else:story.append(Paragraph(inline(line),styles['BodyManual']))

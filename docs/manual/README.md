@@ -2,7 +2,7 @@
 
 **Guía práctica para clientes · 11 de octubre de 2026**
 
-Elige la tarea que necesitas. Cada apartado indica dónde entrar, qué pulsar y qué resultado esperar. Las ilustraciones explican los pasos; no son capturas de una cuenta real.
+Elige la tarea que necesitas. Cada apartado indica dónde entrar, qué pulsar y qué resultado esperar. Cada paso lleva una imagen referencial pequeña a su derecha en el PDF. Las ilustraciones explican los pasos; no son capturas de una cuenta real.
 
 ## 1. Quiero entrar en la web
 
