@@ -375,3 +375,8 @@ body{background:linear-gradient(180deg,#f6f9fb 0,#f1f5f7 420px,#f5f6f7 100%)}.se
  .products .product .product-actions .qty{height:38px;padding:6px 4px;font-size:14px}
  .products .product .product-actions .secondary{height:38px;min-height:38px;padding:5px 3px;font-size:10px;line-height:12px;white-space:normal}
 }
+
+/* Customer access administration */
+.access-search{display:flex;align-items:end;gap:12px;margin:20px 0}.access-search label{flex:1;max-width:550px}.access-search input{display:block;width:100%;margin-top:6px}.access-search button,.access-actions button{min-height:40px;padding:8px 16px}.access-layout{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(280px,1fr);gap:20px;align-items:start}.access-layout .visibility-table{min-width:0}.access-selected{background:#e7f2fa}.access-actions{display:flex;gap:10px;flex-wrap:wrap}.access-credentials{margin-top:22px;padding-top:16px;border-top:1px solid #dfe5e9}.access-credentials code{font-size:16px;overflow-wrap:anywhere;user-select:all}.access-credentials label{display:block;margin:16px 0 8px}.access-credentials p{overflow-wrap:anywhere}.initial-password{max-width:640px;margin:auto}.initial-password>img{width:230px;max-width:100%;margin:16px 0}.operator-shell .desktop-nav{display:flex;flex-wrap:wrap}
+@media(max-width:900px){.access-layout{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:550px){.access-search{flex-wrap:wrap}.access-search label{flex-basis:100%}.customer-access table th,.customer-access table td{padding:8px;font-size:13px}.access-detail{padding:16px}}

@@ -56,6 +56,8 @@ def ensure_demo_access(db) -> None:
     """Mantiene la credencial de prueba; los datos comerciales viven en EXITERP."""
     email = "pumaresdavid@gmail.com"
     user = db.scalar(select(User).where(func.lower(User.email) == email))
+    if user:
+        return  # Preserve passwords and rollout decisions across restarts.
     if not user:
         user = User(email=email, full_name="DAVID PUMARES FERNANDEZ", role="CLIENTE_ADMIN")
         db.add(user)
@@ -72,7 +74,8 @@ def seed():
     rng = random.Random(20260920)
     db = SessionLocal()
     try:
-        ensure_demo_access(db)
+        if settings.seed_products > 0:
+            ensure_demo_access(db)
         if (db.scalar(select(func.count()).select_from(Product)) or 0) >= settings.seed_products:
             return
 

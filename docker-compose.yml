@@ -19,6 +19,14 @@ services:
     build: ./backend
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-bermudez}:${POSTGRES_PASSWORD:-cambia_esta_clave}@db:5432/${POSTGRES_DB:-bermudez_b2b}
+      INITIAL_PASSWORD_TTL_HOURS: ${INITIAL_PASSWORD_TTL_HOURS:-72}
+      CUSTOMER_PORTAL_URL: ${CUSTOMER_PORTAL_URL:-https://extranet.bermudezulloa.es/}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SENDER: ${SMTP_SENDER:-}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_SSL: ${SMTP_SSL:-false}
       SESSION_IDLE_TIMEOUT_MINUTES: ${SESSION_IDLE_TIMEOUT_MINUTES:-15}
       JWT_SECRET: ${JWT_SECRET:-desarrollo_local_cambiar}
       INTEGRATION_API_KEY: ${INTEGRATION_API_KEY:-}

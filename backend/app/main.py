@@ -11,7 +11,7 @@ from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, update
 from sqlalchemy.orm import Session
 
 from .auth import audit, create_access_token, current_user, hash_password, require_roles, verify_password
@@ -34,7 +34,7 @@ from .exit_db import fetch_customer_exit_orders, fetch_exit_orders_live
 from .image_admin import router as image_admin_router
 from .image_missing import record_missing_product_image
 from .models import (
-    Cart, CartItem, Customer, IntegrationOutbox, Notification,
+    AuthSession, Cart, CartItem, Customer, IntegrationOutbox, Notification,
     MaterialArea, MaterialFamily, MaterialProductType, MaterialSubfamily, Order, OrderItem,
     OrderStatusHistory, Product, ProfessionalRegistrationRequest, SyncStatus, User,
 )
@@ -46,6 +46,8 @@ app.include_router(category_import_router)
 app.include_router(category_visibility_router)
 app.include_router(category_image_router)
 app.include_router(image_admin_router)
+from .customer_access import router as customer_access_router
+app.include_router(customer_access_router)
 logger = logging.getLogger(__name__)
 
 @lru_cache(maxsize=2000)
@@ -233,6 +235,8 @@ def login(data: LoginIn, response: Response, db: Session = Depends(get_db)):
     user = db.scalar(select(User).where(func.lower(User.email) == data.email.strip().lower()))
     if not user or not user.active or not verify_password(data.password, user.password_hash):
         raise HTTPException(401, "Usuario o contraseña incorrectos")
+    if user.must_change_password and user.initial_password_expires_at and user.initial_password_expires_at.replace(tzinfo=timezone.utc) <= datetime.now(timezone.utc):
+        raise HTTPException(401, "La clave inicial ha caducado. Contacta con Bermúdez Ulloa")
     customer = None
     if user.role not in {"OPERADOR_TIENDA", "ADMIN"}:
         customer = customer_for(user, db)
@@ -242,7 +246,7 @@ def login(data: LoginIn, response: Response, db: Session = Depends(get_db)):
     response.set_cookie("b2b_access", token, httponly=True, samesite="lax", secure=False)
     db.commit()
     display_name = (customer or {}).get("trade_name") or (customer or {}).get("legal_name") or user.full_name
-    return {"user": {"id": user.public_id, "name": display_name, "email": user.email, "role": user.role, "idle_timeout_seconds": settings.session_idle_timeout_minutes * 60}, "access_token": token}
+    return {"user": {"id": user.public_id, "name": display_name, "email": user.email, "role": user.role, "idle_timeout_seconds": settings.session_idle_timeout_minutes * 60, "must_change_password": user.must_change_password}, "access_token": token}
 
 
 @app.post("/api/v1/auth/logout")
@@ -263,17 +267,22 @@ def session_activity(request: Request, user: User = Depends(current_user), db: S
 def account(user: User = Depends(current_user), db: Session = Depends(get_db)):
     customer = None if user.role in {"OPERADOR_TIENDA", "ADMIN"} else customer_for(user, db)
     display_name = (customer or {}).get("trade_name") or (customer or {}).get("legal_name") or user.full_name
-    return {"user": {"id": user.public_id, "name": display_name, "email": user.email, "role": user.role, "idle_timeout_seconds": settings.session_idle_timeout_minutes * 60},
+    return {"user": {"id": user.public_id, "name": display_name, "email": user.email, "role": user.role, "idle_timeout_seconds": settings.session_idle_timeout_minutes * 60, "must_change_password": user.must_change_password},
             "customer": customer}
 
 
 @app.patch("/api/v1/account/password")
-def change_password(data: PasswordChange, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def change_password(data: PasswordChange, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
     if not verify_password(data.current_password, user.password_hash):
         raise HTTPException(400, "La contraseña actual no es correcta")
     if data.current_password == data.new_password:
         raise HTTPException(400, "La contraseña nueva debe ser diferente")
+    if user.must_change_password and len(data.new_password) < 12:
+        raise HTTPException(422, "Utiliza al menos 12 caracteres para la nueva contraseña")
     user.password_hash = hash_password(data.new_password)
+    user.must_change_password = False
+    user.initial_password_expires_at = None
+    db.execute(update(AuthSession).where(AuthSession.user_id == user.id, AuthSession.id != request.state.auth_session.id).values(revoked=True))
     audit(db, user, "PASSWORD_CHANGED", "USER", user.public_id)
     db.commit()
     return {"ok": True}

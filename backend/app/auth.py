@@ -66,6 +66,13 @@ def current_user(
         last_activity = last_activity.replace(tzinfo=timezone.utc)
     if datetime.now(timezone.utc) - last_activity >= timedelta(minutes=settings.session_idle_timeout_minutes):
         raise HTTPException(401, "La sesión ha caducado por inactividad")
+    if user.must_change_password:
+        deadline = user.initial_password_expires_at
+        if deadline and deadline.replace(tzinfo=timezone.utc) <= datetime.now(timezone.utc):
+            raise HTTPException(401, "La clave inicial ha caducado. Contacta con Bermúdez Ulloa")
+        allowed = {"/api/v1/account", "/api/v1/account/password", "/api/v1/auth/logout", "/api/v1/auth/activity"}
+        if request.url.path not in allowed:
+            raise HTTPException(403, "Debes cambiar tu contraseña inicial antes de continuar")
     request.state.auth_session = session
     return user
 

@@ -1,11 +1,12 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import CustomerAccess, {InitialPassword} from "./CustomerAccess";
 import CategoryUpload from "./CategoryUpload";
 import CategoryVisibility from "./CategoryVisibility";
 
-type View = "home" | "catalog" | "orders" | "documents" | "ops" | "category-upload" | "category-visibility" | "account";
-type User = { id: string; name: string; email: string; role: string; idle_timeout_seconds: number };
+type View = "home" | "catalog" | "orders" | "documents" | "ops" | "category-upload" | "category-visibility" | "customer-access" | "account";
+type User = { id: string; name: string; email: string; role: string; idle_timeout_seconds: number; must_change_password: boolean };
 type AccountCustomer = { trade_name: string; legal_name: string; erp_id: string; tax_id: string; email: string; phone: string; billing_address: string; price_list: string; discount_pct: number };
 type Store = { id: string; code: string; name: string; address: string; company_code: number; warehouse_code: string; warehouse_name: string };
 type Stock = { store_code: string; store: string; available: number };
@@ -155,7 +156,7 @@ export default function Page() {
   }, []);
 
   const refreshCustomerData = useCallback(async () => {
-    if (!user || isOperator) return;
+    if (!user || user.must_change_password || isOperator) return;
     const [storeData, cartData, orderData, classificationData, favoriteData] = await Promise.all([
       api<Store[]>("/api/v1/stores"), api<Cart>("/api/v1/cart"), api<Order[]>("/api/v1/orders"),
       api<AreaNode[]>("/api/v1/catalog/classification"),
@@ -166,7 +167,7 @@ export default function Page() {
 
   const lastOrdersQuery = useRef({from:madridDate(new Date()),to:madridDate(new Date()),state:"PENDIENTE"});
   const refreshOrders = useCallback(async (from = madridDate(new Date()), to = madridDate(new Date()), state = "PENDIENTE") => {
-    if (!user || isOperator) return;
+    if (!user || user.must_change_password || isOperator) return;
     lastOrdersQuery.current={from,to,state};
     setRefreshingOrders(true);
     try { const params=new URLSearchParams({date_from:from,date_to:to,state});setOrders(await api<Order[]>(`/api/v1/orders?${params}`)); setError(""); }
@@ -186,18 +187,18 @@ export default function Page() {
   useEffect(() => { refreshCustomerData().catch(e => setError(e.message)); }, [refreshCustomerData]);
 
   useEffect(() => {
-    if (view !== "orders" || !user || isOperator) return;
+    if (view !== "orders" || !user || user.must_change_password || isOperator) return;
     refreshOrders();
   }, [view, user, isOperator, refreshOrders]);
 
   const searchProducts = useCallback(async (text = query, filters = catalogFilters) => {
-    if (!user || isOperator) return;
+    if (!user || user.must_change_password || isOperator) return;
     const result = await api<{ items: Product[]; total: number }>(productsUrl(text, filters));
     setProducts(result.items); setTotalProducts(result.total); setCatalogPage(1);
   }, [query, catalogFilters, user, isOperator]);
 
   useEffect(() => {
-    if (!user || isOperator) return;
+    if (!user || user.must_change_password || isOperator) return;
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       try {
@@ -209,7 +210,7 @@ export default function Page() {
   }, [query, catalogFilters, user, isOperator]);
 
   const loadMoreProducts = useCallback(async () => {
-    if (!user || isOperator || loadingMoreProducts || products.length >= totalProducts) return;
+    if (!user || user.must_change_password || isOperator || loadingMoreProducts || products.length >= totalProducts) return;
     const nextPage = catalogPage + 1;
     setLoadingMoreProducts(true);
     try {
@@ -224,14 +225,14 @@ export default function Page() {
   }, [user, isOperator, loadingMoreProducts, products.length, totalProducts, catalogPage, query, catalogFilters]);
 
   useEffect(() => {
-    if (!suggestionsEnabled || query.trim().length < 2 || isOperator) { setSuggestions([]); return; }
+    if (!user || user.must_change_password || !suggestionsEnabled || query.trim().length < 2 || isOperator) { setSuggestions([]); return; }
     let cancelled = false;
     const timer = window.setTimeout(() => api<Suggestion[]>(`/api/v1/search/suggestions?q=${encodeURIComponent(query)}`).then(items => { if (!cancelled) setSuggestions(items); }).catch(() => { if (!cancelled) setSuggestions([]); }), 180);
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [query, isOperator, suggestionsEnabled]);
+  }, [query, user, isOperator, suggestionsEnabled]);
 
   useEffect(() => {
-    if (view === "documents" && user && !isOperator) Promise.all([api<DocumentRow[]>("/api/v1/delivery-notes"), api<DocumentRow[]>("/api/v1/invoices")]).then(([a, b]) => { setDeliveryNotes(a); setInvoices(b); });
+    if (view === "documents" && user && !user.must_change_password && !isOperator) Promise.all([api<DocumentRow[]>("/api/v1/delivery-notes"), api<DocumentRow[]>("/api/v1/invoices")]).then(([a, b]) => { setDeliveryNotes(a); setInvoices(b); });
     if (view === "ops" && isOperator) refreshOperations().catch(e => setError(e.message));
   }, [view, user, isOperator, refreshOperations]);
 
@@ -285,6 +286,8 @@ export default function Page() {
   if (loading) return <div className="loading">Preparando el portal profesional…</div>;
   if (!user) return <Login onLogin={login} error={error} />;
 
+  if (user.must_change_password) return <InitialPassword onChanged={loadAccount} onLogout={logout}/>;
+
   return <main className={`shell ${isOperator?"operator-shell":""} ${kioskMode?"kiosk-mode":""} ${keyboardOpen?"keyboard-open":""}`}>
     <header className="header">
       <div className="head">
@@ -303,7 +306,7 @@ export default function Page() {
         <button className="account-button" onClick={()=>setView("account")}><small>Hola, {user.name.split(" ")[0]}</small><b>Mi cuenta</b></button><button className="logout-button" onClick={logout}>Salir</button>
         {!isOperator && <button className="cart-button" onClick={() => setCartOpen(true)}>▤ <span>Mi carrito</span> {cart?.line_count || 0}</button>}
       </div>
-      <nav className="desktop-nav">{(isOperator ? [["ops","Operaciones"],["category-upload","Carga de categorías"],["category-visibility","Categorías e imágenes"]] : [["home","Inicio"],["catalog","Catálogo"],["orders","Mis pedidos"],["documents","Albaranes y facturas"],["account","Mi cuenta"]]).map(([id,label]) => <button key={id} className={view===id?"active":""} onClick={() => setView(id as View)}>{label}</button>)}</nav>
+      <nav className="desktop-nav">{(isOperator ? [["ops","Operaciones"],["customer-access","Accesos de clientes"],["category-upload","Carga de categorías"],["category-visibility","Categorías e imágenes"]] : [["home","Inicio"],["catalog","Catálogo"],["orders","Mis pedidos"],["documents","Albaranes y facturas"],["account","Mi cuenta"]]).map(([id,label]) => <button key={id} className={view===id?"active":""} onClick={() => setView(id as View)}>{label}</button>)}</nav>
     </header>
     <div className="service-strip"><span>ÁREA PROFESIONAL · Compra a tu ritmo</span><span>Almeiras · Recogida en tienda</span></div>{error && <div className="page error" role="alert">{error}</div>}
     {view === "home" && <Home customer={customer} orders={orders} products={favoriteProducts} classification={classification} onNavigate={setView} onSelectArea={areaId=>{setCatalogFilters({areaId:String(areaId),familyId:"",subfamilyId:"",productTypeId:""});setView("catalog")}} onAdd={addProduct} />}
@@ -312,6 +315,7 @@ export default function Page() {
     {view === "documents" && <Documents notes={deliveryNotes} invoices={invoices} />}
     {view === "account" && <Account user={user} customer={customer} />}
     {view === "ops" && <Operations orders={opsOrders} onRefresh={refreshOperations} />}
+    {view === "customer-access" && isOperator && <CustomerAccess />}
     {view === "category-upload" && isOperator && <CategoryUpload />}
     {view === "category-visibility" && isOperator && <CategoryVisibility />}
     {!isOperator && <nav className="mobile-nav">{[["home","Inicio"],["catalog","Buscar"],["orders","Pedidos"],["account","Cuenta"]].map(([id,label]) => <button key={id} className={view===id?"active":""} onClick={() => setView(id as View)}>{label}</button>)}</nav>}

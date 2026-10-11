@@ -265,6 +265,28 @@ def fetch_customer(customer_code: str) -> dict | None:
     }
 
 
+def fetch_access_customers(query: str = "", after_code: str = "", limit: int = 51) -> list[dict]:
+    """Search EXIT by code/name with a bounded, deterministic cursor."""
+    schema, table = _identifier(CUSTOMER["schema"]), _identifier(CUSTOMER["table"])
+    with connect_sqlserver() as connection:
+        columns = _customer_columns(connection)
+        expressions = {field: _article_text(columns.get(field), alias="c", length=200)
+                       for field in ("code", "legal_name", "trade_name", "email")}
+        selections = ', '.join(f"{expression} AS [{field}]" for field, expression in expressions.items())
+        conditions = [f"{expressions['code']} > %s"]
+        params = [after_code]
+        if query:
+            pattern = '%' + query.replace('[', '[[]').replace('%', '[%]').replace('_', '[_]') + '%'
+            conditions.append('(' + ' OR '.join(f"{expressions[field]} LIKE %s" for field in ('code', 'legal_name', 'trade_name')) + ')')
+            params.extend([pattern] * 3)
+        with connection.cursor() as cursor:
+            cursor.execute(f"SELECT DISTINCT TOP {max(1,min(int(limit),100))} {selections} FROM {schema}.{table} c WHERE {' AND '.join(conditions)} ORDER BY [code]", tuple(params))
+            rows = cursor.fetchall()
+    return [{"erp_id": str(row["code"]).strip(), "legal_name": str(row.get("legal_name") or '').strip(),
+             "trade_name": str(row.get("trade_name") or row.get("legal_name") or '').strip(),
+             "email": str(row.get("email") or '').strip()} for row in rows]
+
+
 def fetch_customer_codes(after_code: str = "", limit: int = 30) -> list[str]:
     """Devuelve una página de códigos EXIT, sin cargar la maestra completa."""
     schema = _identifier(CUSTOMER["schema"])
