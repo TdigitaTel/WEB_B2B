@@ -1,4 +1,8 @@
 services:
+  db:
+    ports:
+      - "${POSTGRES_DEV_BIND:-192.168.0.117}:${POSTGRES_DEV_PORT:-5434}:5432"
+
   api:
     environment:
       APP_ENV: development
