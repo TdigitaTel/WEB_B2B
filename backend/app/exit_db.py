@@ -175,13 +175,6 @@ def fetch_exit_orders_live(view: str = "active_kardex", date_from: date | None =
                 f"CONVERT(date,h.{hs['recorded_date']})=CONVERT(date,GETDATE())",
             ))
             header_parameters.append("S")
-        if view == "web" and not customer_code:
-            _required(header, ("auxiliary_reference",), header_table)
-            web_reference = f"UPPER(CONVERT(nvarchar(max),h.{hs['auxiliary_reference']}))"
-            for whitespace in ("N' '", "NCHAR(9)", "NCHAR(10)", "NCHAR(13)"):
-                web_reference = f"REPLACE({web_reference},{whitespace},N'')"
-            header_where.append(f"{web_reference} LIKE %s")
-            header_parameters.append("%PEDIDOGENERADOWEBB2B%")
         header_sql = (
             f"SELECT TOP {max(1, min(limit, 1000))} {', '.join(_select('h', header, f) for f in header_fields)} "
             f"FROM {schema}.{_identifier(header_table)} h "

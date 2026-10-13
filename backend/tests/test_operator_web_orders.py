@@ -14,14 +14,21 @@ def test_pending_registered_and_deduplication(monkeypatch):
     with SessionLocal() as db:
         user = db.scalar(select(User).where(User.role == "OPERADOR_TIENDA"))
         for number, exit_number in [("WEB-BOARD-PENDING", None), ("WEB-BOARD-LINKED", "2026/AL/987")]:
-            db.add(Order(order_number=number, customer_code="CLI00001", company_code=user.company_code, delegation_code=user.delegation_code, origen_pedido="B2B", estado_registro_exit="PENDIENTE", nro_pedido_exit=exit_number, subtotal=0, tax_total=0, total=0))
+            db.add(Order(order_number=number, customer_code="CLI00001", company_code=user.company_code, delegation_code=user.delegation_code, origen_pedido="B2B", estado_registro_exit="REGISTRADO" if exit_number else "PENDIENTE", nro_pedido_exit=exit_number, subtotal=0, tax_total=0, total=0))
+        db.add(Order(order_number="EXIT-NON-WEB-TEST", customer_code="CLI00001", company_code=user.company_code, delegation_code=user.delegation_code, origen_pedido="EXIT", estado_registro_exit="REGISTRADO", subtotal=0, tax_total=0, total=0))
+        db.add(Order(order_number="WEB-BOARD-DRAFT", customer_code="CLI00001", company_code=user.company_code, delegation_code=user.delegation_code, origen_pedido="B2B", estado_registro_exit="BORRADOR", subtotal=0, tax_total=0, total=0))
         db.commit()
         record = ExitOrderInput(exit_order_id="2026/AL/987", order_number="987", customer_code="CLI00001", store_code=user.delegation_code, company_code=user.company_code, estado_registro_exit="REGISTRADO", source_updated_at=stamp, recorded_at=stamp, customer_reference="WEB-BOARD-LINKED", auxiliary_reference="PEDIDO GENERADO WEB B2B", lines=[])
         monkeypatch.setattr(module, "fetch_exit_orders_live", lambda *args: [record])
+        monkeypatch.setattr(module, "fetch_customer_exit_orders", lambda *args: [record])
         monkeypatch.setattr(module, "fetch_kardex_timings", lambda *args: {})
         all_rows = store_orders(view="web", state="TODOS", user=user, db=db)
         assert sum(row["nro_pedido_exit"] == "2026/AL/987" for row in all_rows) == 1
         assert any(row["number"] == "WEB-BOARD-PENDING" for row in all_rows)
+        assert all(row["origen_pedido"] == "B2B" for row in all_rows)
+        assert any(row["number"] == "WEB-BOARD-DRAFT" for row in all_rows)
+        drafts = store_orders(view="web", state="BORRADOR", user=user, db=db)
+        assert drafts and all(row["estado_registro_exit"] == "BORRADOR" for row in drafts)
         pending = store_orders(view="web", state="PENDIENTE", user=user, db=db)
         assert any(row["number"] == "WEB-BOARD-PENDING" for row in pending)
         assert not any(row["nro_pedido_exit"] for row in pending)

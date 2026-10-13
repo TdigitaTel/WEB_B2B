@@ -1092,11 +1092,52 @@ ALLOWED_TRANSITIONS = {
 }
 
 
+def web_store_orders(db: Session, user: User, date_from: date | None, date_to: date | None, state: str) -> list[dict]:
+    if date_from and date_to and date_from > date_to:
+        raise HTTPException(422, "La fecha desde no puede ser posterior a la fecha hasta")
+    query = select(Order).where(Order.origen_pedido == "B2B")
+    if user.role == "OPERADOR_TIENDA":
+        query = query.where(Order.company_code == user.company_code, Order.delegation_code == user.delegation_code)
+    if date_from:
+        query = query.where(func.date(Order.created_at) >= date_from.isoformat())
+    if date_to:
+        query = query.where(func.date(Order.created_at) <= date_to.isoformat())
+    rows = list(db.scalars(query.order_by(Order.created_at.desc(), Order.id.desc())).all())
+    linked = [row for row in rows if row.nro_pedido_exit and row.customer_code]
+    exit_by_key = {}
+    for code in dict.fromkeys(row.customer_code for row in linked):
+        customer_rows = [row for row in linked if row.customer_code == code]
+        try:
+            records = fetch_customer_exit_orders(code, min(row.created_at.date() for row in customer_rows), datetime.now(timezone.utc).date())
+            for record in records:
+                exit_by_key[(code, record.exit_order_id.replace("~", "/").upper())] = record
+        except Exception:
+            logger.exception("No se pudieron enriquecer los pedidos WEB del cliente %s", code)
+    requested = state.strip().upper()
+    groups = {"EN_PROCESAMIENTO": {"REGISTRADO", "EN_PROCESO", "EN_PREPARACION"}, "PENDIENTE_RECOJO": {"ATENDIDO"}}
+    result = []
+    for row in rows:
+        payload = order_payload(row, db, include_items=True)
+        record = exit_by_key.get((row.customer_code, (row.nro_pedido_exit or "").replace("~", "/").upper()))
+        if record and (record.company_code, record.store_code) == (row.company_code, row.delegation_code):
+            payload["fecha_registro_exit"] = record.recorded_at
+            payload["auxiliary_reference"] = record.auxiliary_reference
+        if row.delivered_at and row.estado_registro_exit != "FACTURADO":
+            payload["estado_registro_exit"] = "ENTREGADO"
+        actual = payload["estado_registro_exit"]
+        if requested not in {"", "TODOS"} and actual not in groups.get(requested, {requested}):
+            continue
+        result.append(payload)
+    return result
+
+
 @app.get("/api/v1/store/orders")
 def store_orders(view: str = Query("active_kardex", pattern="^(active_kardex|active_sga|attended|web)$"),
                  date_from: date | None = None, date_to: date | None = None,
                  state: str = Query("TODOS"),
                  user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
+    if view == "web":
+        return web_store_orders(db, user, date_from, date_to, state)
     try:
         records = fetch_exit_orders_live(view, date_from, date_to)
     except Exception:
@@ -1178,28 +1219,6 @@ def store_orders(view: str = Query("active_kardex", pattern="^(active_kardex|act
     } for record in records]
 
 
-    if view == "web":
-        statement = select(Order).where(Order.origen_pedido == "B2B", Order.estado_registro_exit != "BORRADOR")
-        if user.role == "OPERADOR_TIENDA":
-            statement = statement.where(Order.company_code == user.company_code, Order.delegation_code == user.delegation_code)
-        if date_from:
-            statement = statement.where(func.date(Order.created_at) >= date_from.isoformat())
-        if date_to:
-            statement = statement.where(func.date(Order.created_at) <= date_to.isoformat())
-        requested = state.strip().upper()
-        for row in db.scalars(statement.order_by(Order.created_at.desc())).all():
-            if any(key and key.upper() in web_keys for key in (row.order_number, row.nro_pedido_exit)):
-                continue
-            registered = bool(row.nro_pedido_exit)
-            if requested == "REGISTRADO" and not registered:
-                continue
-            if requested == "PENDIENTE" and registered:
-                continue
-            if requested not in {"", "TODOS", "PENDIENTE", "REGISTRADO"}:
-                accepted = {"EN_PROCESAMIENTO": {"REGISTRADO", "EN_PROCESO", "EN_PREPARACION"}, "PENDIENTE_RECOJO": {"ATENDIDO"}}.get(requested, {requested})
-                if row.estado_registro_exit not in accepted:
-                    continue
-            result.append(order_payload(row, db, include_items=True))
     return result
 
 
