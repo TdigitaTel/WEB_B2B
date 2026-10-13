@@ -1092,12 +1092,12 @@ ALLOWED_TRANSITIONS = {
 }
 
 
-def web_store_orders(db: Session, user: User, date_from: date | None, date_to: date | None, state: str) -> list[dict]:
+def web_store_orders(db: Session, user: User, date_from: date | None, date_to: date | None, state: str, delegation: str = "00") -> list[dict]:
     if date_from and date_to and date_from > date_to:
         raise HTTPException(422, "La fecha desde no puede ser posterior a la fecha hasta")
     query = select(Order).where(Order.origen_pedido == "B2B")
-    if user.role == "OPERADOR_TIENDA":
-        query = query.where(Order.company_code == user.company_code, Order.delegation_code == user.delegation_code)
+    if delegation.strip().upper() != "TODAS":
+        query = query.where(Order.delegation_code == delegation.strip())
     if date_from:
         query = query.where(func.date(Order.created_at) >= date_from)
     if date_to:
@@ -1135,9 +1135,10 @@ def web_store_orders(db: Session, user: User, date_from: date | None, date_to: d
 def store_orders(view: str = Query("active_kardex", pattern="^(active_kardex|active_sga|attended|web)$"),
                  date_from: date | None = None, date_to: date | None = None,
                  state: str = Query("TODOS"),
+                 delegation: str = Query("00", min_length=1, max_length=40),
                  user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
     if view == "web":
-        return web_store_orders(db, user, date_from, date_to, state)
+        return web_store_orders(db, user, date_from, date_to, state, delegation)
     try:
         records = fetch_exit_orders_live(view, date_from, date_to)
     except Exception:
