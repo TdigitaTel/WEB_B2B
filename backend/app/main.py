@@ -1335,8 +1335,8 @@ def confirm_delivery(data: DeliveryConfirmation, user: User = Depends(require_ro
         raise HTTPException(404, "Pedido no encontrado")
     if order.delivered_at:
         return order_payload(order, db, True)
-    if order.estado_registro_exit == "BORRADOR":
-        raise HTTPException(409, "Un borrador no puede marcarse como entregado")
+    if order.estado_registro_exit != "ATENDIDO":
+        raise HTTPException(409, "Solo se puede entregar un pedido en estado ATENDIDO")
     stamp = datetime.now(timezone.utc)
     order.delivered_at = stamp
     if order.estado_registro_exit != "FACTURADO":
