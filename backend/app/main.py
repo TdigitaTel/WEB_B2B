@@ -19,7 +19,7 @@ from .category_import import router as category_import_router
 from .category_visibility import router as category_visibility_router, image_router as category_image_router, image_urls, hidden_areas, hidden_codes
 from .config import settings
 from .db import get_db
-from .schemas import DeliveryConfirmation
+from .schemas import DeliveryConfirmation, WebOrderRegistrationChange
 from .exit_orders import upsert_exit_order
 from .kardex_timing import fetch_kardex_timings, sales_order_number
 from .order_timeline import exit_events, sync_history, instant, dispatch_timing
@@ -1221,6 +1221,71 @@ def store_orders(view: str = Query("active_kardex", pattern="^(active_kardex|act
 
 
     return result
+
+
+def operator_web_order(db: Session, order_id: str) -> Order:
+    order = db.scalar(select(Order).where(Order.public_id == order_id, Order.origen_pedido == "B2B").with_for_update())
+    if not order:
+        raise HTTPException(404, "Pedido WEB no encontrado")
+    return order
+
+
+@app.patch("/api/v1/store/orders/{order_id}/registration")
+def change_web_registration(order_id: str, data: WebOrderRegistrationChange,
+                            user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
+    order = operator_web_order(db, order_id)
+    previous = {"state": order.estado_registro_exit, "exit_order_number": order.nro_pedido_exit}
+    number = (data.exit_order_number or "").strip().replace("~", "/").upper()
+    if data.state == "REGISTRADO":
+        if not number:
+            raise HTTPException(422, "Introduce el número de pedido EXIT")
+        duplicate = db.scalar(select(Order.id).where(Order.id != order.id, func.upper(func.replace(Order.nro_pedido_exit, "~", "/")) == number))
+        if duplicate:
+            raise HTTPException(409, "Ese número EXIT ya está vinculado a otro pedido")
+        order.nro_pedido_exit = number
+        order.fecha_registro_exit = datetime.now(timezone.utc)
+        order.sync_status = SyncStatus.synced
+    else:
+        order.nro_pedido_exit = None
+        order.fecha_registro_exit = None
+        order.sync_status = SyncStatus.pending
+        for item in db.scalars(select(OrderItem).where(OrderItem.order_id == order.id)).all():
+            item.served_quantity = Decimal("0")
+            item.pending_quantity = item.quantity
+    order.delivered_at = None
+    order.estado_registro_exit = data.state
+    for event in db.scalars(select(IntegrationOutbox).where(IntegrationOutbox.aggregate_type == "ORDER", IntegrationOutbox.aggregate_id == order.public_id)).all():
+        event.sync_status = order.sync_status
+        event.last_error = None
+    db.add(OrderStatusHistory(order_id=order.id, estado_registro_exit=data.state, changed_by_user_id=user.id, source="WEB", note=f"Vínculo EXIT actualizado manualmente: {previous['exit_order_number'] or 'sin vínculo'} → {number if data.state == 'REGISTRADO' else 'sin vínculo'}"))
+    audit(db, user, "ORDER_REGISTRATION_CHANGED", "ORDER", order.public_id, {"previous": previous, "state": data.state, "exit_order_number": order.nro_pedido_exit})
+    from sqlalchemy.exc import IntegrityError
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "No se pudo guardar el vínculo; comprueba que el número EXIT no esté duplicado")
+    return order_payload(order, db, True)
+
+
+@app.delete("/api/v1/store/orders/{order_id}")
+def delete_operator_web_order(order_id: str, user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
+    order = operator_web_order(db, order_id)
+    if order.estado_registro_exit != "PENDIENTE" or order.nro_pedido_exit:
+        raise HTTPException(409, "Solo se pueden eliminar pedidos WEB pendientes sin vínculo EXIT")
+    number = order.order_number
+    audit(db, user, "ORDER_DELETED_BY_OPERATOR", "ORDER", order.public_id, {"number": number})
+    for model, condition in (
+        (IntegrationOutbox, (IntegrationOutbox.aggregate_type == "ORDER") & (IntegrationOutbox.aggregate_id == order.public_id)),
+        (OrderItem, OrderItem.order_id == order.id),
+        (OrderStatusHistory, OrderStatusHistory.order_id == order.id),
+    ):
+        for row in db.scalars(select(model).where(condition)).all():
+            db.delete(row)
+    db.flush()
+    db.delete(order)
+    db.commit()
+    return {"ok": True, "number": number}
 
 
 @app.post("/api/v1/store/orders/{order_id}/retry")
