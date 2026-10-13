@@ -1099,9 +1099,9 @@ def web_store_orders(db: Session, user: User, date_from: date | None, date_to: d
     if user.role == "OPERADOR_TIENDA":
         query = query.where(Order.company_code == user.company_code, Order.delegation_code == user.delegation_code)
     if date_from:
-        query = query.where(func.date(Order.created_at) >= date_from.isoformat())
+        query = query.where(func.date(Order.created_at) >= date_from)
     if date_to:
-        query = query.where(func.date(Order.created_at) <= date_to.isoformat())
+        query = query.where(func.date(Order.created_at) <= date_to)
     rows = list(db.scalars(query.order_by(Order.created_at.desc(), Order.id.desc())).all())
     linked = [row for row in rows if row.nro_pedido_exit and row.customer_code]
     exit_by_key = {}

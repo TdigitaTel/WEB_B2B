@@ -69,3 +69,27 @@ def test_retry_pending_order_permissions_and_registration(monkeypatch):
         assert len(db.scalars(select(IntegrationOutbox).where(IntegrationOutbox.aggregate_id==public_id)).all())==1
         order.nro_pedido_exit='2026/AL/123';db.commit()
     assert operator.post(url).status_code==409
+
+
+def test_web_date_filters_bind_postgresql_dates():
+    from datetime import date
+    from types import SimpleNamespace
+    from sqlalchemy import Date
+    from sqlalchemy.dialects import postgresql
+    from app.main import web_store_orders
+
+    class ReadSession:
+        statement = None
+        def scalars(self, statement):
+            self.statement = statement
+            return self
+        def all(self):
+            return []
+
+    db = ReadSession()
+    start, end = date(2026, 9, 13), date(2026, 10, 13)
+    assert web_store_orders(db, SimpleNamespace(role="ADMIN"), start, end, "TODOS") == []
+    compiled = db.statement.compile(dialect=postgresql.dialect())
+    date_binds = [bind for bind in compiled.binds.values() if isinstance(bind.value, date)]
+    assert {bind.value for bind in date_binds} == {start, end}
+    assert all(isinstance(bind.type, Date) for bind in date_binds)
