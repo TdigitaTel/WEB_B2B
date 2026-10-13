@@ -22,26 +22,26 @@ def test_pending_registered_and_deduplication(monkeypatch):
         monkeypatch.setattr(module, "fetch_exit_orders_live", lambda *args: [record])
         monkeypatch.setattr(module, "fetch_customer_exit_orders", lambda *args: [record])
         monkeypatch.setattr(module, "fetch_kardex_timings", lambda *args: {})
-        all_rows = store_orders(view="web", state="TODOS", user=user, db=db)
+        all_rows = store_orders(view="web", state="TODOS", user=user, db=db, delegation="TODAS")
         assert sum(row["nro_pedido_exit"] == "2026/AL/987" for row in all_rows) == 1
         assert any(row["number"] == "WEB-BOARD-PENDING" for row in all_rows)
         assert all(row["origen_pedido"] == "B2B" for row in all_rows)
         assert any(row["number"] == "WEB-BOARD-DRAFT" for row in all_rows)
-        drafts = store_orders(view="web", state="BORRADOR", user=user, db=db)
+        drafts = store_orders(view="web", state="BORRADOR", user=user, db=db, delegation="TODAS")
         assert drafts and all(row["estado_registro_exit"] == "BORRADOR" for row in drafts)
-        pending = store_orders(view="web", state="PENDIENTE", user=user, db=db)
+        pending = store_orders(view="web", state="PENDIENTE", user=user, db=db, delegation="TODAS")
         assert any(row["number"] == "WEB-BOARD-PENDING" for row in pending)
         assert not any(row["nro_pedido_exit"] for row in pending)
-        registered = store_orders(view="web", state="REGISTRADO", user=user, db=db)
+        registered = store_orders(view="web", state="REGISTRADO", user=user, db=db, delegation="TODAS")
         assert any(row["nro_pedido_exit"] == "2026/AL/987" for row in registered)
-        assert all(row["nro_pedido_exit"] for row in registered)
+        assert all(row["estado_registro_exit"] == "REGISTRADO" for row in registered)
         monkeypatch.setattr(module, "fetch_exit_orders_live", lambda *args: [])
-        fallback = store_orders(view="web", state="TODOS", user=user, db=db)
+        fallback = store_orders(view="web", state="TODOS", user=user, db=db, delegation="TODAS")
         assert any(row["number"] == "WEB-BOARD-LINKED" for row in fallback)
         def unavailable(*args):
             raise RuntimeError("EXIT no disponible")
         monkeypatch.setattr(module, "fetch_exit_orders_live", unavailable)
-        assert any(row["number"] == "WEB-BOARD-PENDING" for row in store_orders(view="web", state="TODOS", user=user, db=db))
+        assert any(row["number"] == "WEB-BOARD-PENDING" for row in store_orders(view="web", state="TODOS", user=user, db=db, delegation="TODAS"))
 
 
 def test_retry_pending_order_permissions_and_registration(monkeypatch):
@@ -88,8 +88,27 @@ def test_web_date_filters_bind_postgresql_dates():
 
     db = ReadSession()
     start, end = date(2026, 9, 13), date(2026, 10, 13)
-    assert web_store_orders(db, SimpleNamespace(role="ADMIN"), start, end, "TODOS") == []
+    assert web_store_orders(db, SimpleNamespace(role="ADMIN"), start, end, "TODOS", "TODAS") == []
     compiled = db.statement.compile(dialect=postgresql.dialect())
     date_binds = [bind for bind in compiled.binds.values() if isinstance(bind.value, date)]
     assert {bind.value for bind in date_binds} == {start, end}
     assert all(isinstance(bind.type, Date) for bind in date_binds)
+
+
+def test_operator_can_read_other_delegations_and_default_is_almeiras(monkeypatch):
+    from app import main as module
+    from app.main import web_store_orders
+    bootstrap()
+    monkeypatch.setattr(module, "fetch_customer_exit_orders", lambda *args: [])
+    with SessionLocal() as db:
+        user = db.scalar(select(User).where(User.email == "operador@bermudez.test"))
+        for code in ("00", "01"):
+            db.add(Order(order_number=f"WEB-DELEGATION-{code}", customer_code="CLI00001", company_code=user.company_code, delegation_code=code, origen_pedido="B2B", estado_registro_exit="PENDIENTE", subtotal=0, tax_total=0, total=0))
+        db.commit()
+        default = web_store_orders(db, user, None, None, "TODOS")
+        assert default and all(row["delegation_code"] == "00" for row in default)
+        assert any(row["number"] == "WEB-DELEGATION-00" for row in default)
+        all_rows = web_store_orders(db, user, None, None, "TODOS", "TODAS")
+        assert {"WEB-DELEGATION-00", "WEB-DELEGATION-01"}.issubset({row["number"] for row in all_rows})
+        coruna = web_store_orders(db, user, None, None, "TODOS", "01")
+        assert coruna and all(row["delegation_code"] == "01" for row in coruna)
