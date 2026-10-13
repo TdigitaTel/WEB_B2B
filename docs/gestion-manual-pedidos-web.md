@@ -22,4 +22,4 @@ DELETE /api/v1/store/orders/{id}
 
 El identificador es el `public_id` del pedido WEB. No requiere cambios de esquema PostgreSQL.
 
-La pantalla muestra Registrar si está Pendiente y Pendiente en los demás estados. El número EXIT se introduce en una ventana propia de la aplicación. Entregar solo aparece en estado ATENDIDO; la API también exige ese estado.
+La pantalla muestra «Cambiar a: Registrado» si está Pendiente y «Cambiar a: Pendiente» en los demás estados. No hay botón Reintentar: al pasar a Pendiente se habilita el procesamiento del robot y se crea el evento si falta. El número EXIT se introduce en una ventana propia de la aplicación. Entregar solo aparece en estado ATENDIDO; la API también exige ese estado.

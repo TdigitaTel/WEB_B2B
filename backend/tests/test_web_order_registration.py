@@ -60,3 +60,19 @@ def test_duplicate_exit_link_and_non_web_are_rejected():
     assert operator.patch(f'/api/v1/store/orders/{ids[1]}/registration',json={'state':'REGISTRADO','exit_order_number':'2026~AL~DUP'}).status_code==409
     assert operator.patch(f'/api/v1/store/orders/{ids[2]}/registration',json={'state':'PENDIENTE'}).status_code==404
     assert operator.delete(f'/api/v1/store/orders/{ids[2]}').status_code==404
+
+
+def test_pending_creates_missing_robot_event_once():
+    operator=TestClient(app)
+    operator.post('/api/v1/auth/login',json={'email':'operador@bermudez.test','password':'123456'})
+    with SessionLocal() as db:
+        user=db.scalar(select(User).where(User.role=='OPERADOR_TIENDA'))
+        order=Order(order_number='WEB-PENDING-NO-EVENT',company_code=user.company_code,delegation_code='00',origen_pedido='B2B',estado_registro_exit='REGISTRADO',nro_pedido_exit='2026/AL/NOEVENT',subtotal=0,tax_total=0,total=0)
+        db.add(order);db.commit();oid=order.public_id
+    for _ in range(2):
+        assert operator.patch(f'/api/v1/store/orders/{oid}/registration',json={'state':'PENDIENTE'}).status_code==200
+    with SessionLocal() as db:
+        events=db.scalars(select(IntegrationOutbox).where(IntegrationOutbox.aggregate_id==oid)).all()
+        assert len(events)==1 and events[0].sync_status==SyncStatus.pending
+        assert events[0].event_type=='ORDER_CREATED'
+        assert db.scalar(select(Order).where(Order.public_id==oid)).nro_pedido_exit is None

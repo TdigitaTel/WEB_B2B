@@ -1254,9 +1254,12 @@ def change_web_registration(order_id: str, data: WebOrderRegistrationChange,
             item.pending_quantity = item.quantity
     order.delivered_at = None
     order.estado_registro_exit = data.state
-    for event in db.scalars(select(IntegrationOutbox).where(IntegrationOutbox.aggregate_type == "ORDER", IntegrationOutbox.aggregate_id == order.public_id)).all():
+    events = list(db.scalars(select(IntegrationOutbox).where(IntegrationOutbox.aggregate_type == "ORDER", IntegrationOutbox.aggregate_id == order.public_id)).all())
+    for event in events:
         event.sync_status = order.sync_status
         event.last_error = None
+    if data.state == "PENDIENTE" and not any(event.event_type == "ORDER_CREATED" for event in events):
+        db.add(IntegrationOutbox(aggregate_type="ORDER", aggregate_id=order.public_id, event_type="ORDER_CREATED", payload={"order_number": order.order_number, "customer_erp_id": order.customer_code, "store": order.delegation_code}, sync_status=SyncStatus.pending))
     db.add(OrderStatusHistory(order_id=order.id, estado_registro_exit=data.state, changed_by_user_id=user.id, source="WEB", note=f"Vínculo EXIT actualizado manualmente: {previous['exit_order_number'] or 'sin vínculo'} → {number if data.state == 'REGISTRADO' else 'sin vínculo'}"))
     audit(db, user, "ORDER_REGISTRATION_CHANGED", "ORDER", order.public_id, {"previous": previous, "state": data.state, "exit_order_number": order.nro_pedido_exit})
     from sqlalchemy.exc import IntegrityError
