@@ -76,3 +76,20 @@ def test_live_web_delivery_creates_local_record_once(monkeypatch):
         rows=db.scalars(select(Order).where(Order.nro_pedido_exit==record.exit_order_id)).all()
         assert len(rows)==1 and rows[0].delivered_at is not None
     assert operator.post('/api/v1/store/orders/delivery',json={'order_id':'missing','order_date':'2026-10-11'}).status_code==404
+
+
+def test_delivery_requires_attended_state():
+    operator=TestClient(app)
+    operator.post('/api/v1/auth/login',json={'email':'operador@bermudez.test','password':'123456'})
+    with SessionLocal() as db:
+        user=db.scalar(select(User).where(User.email=='operador@bermudez.test'))
+        ids=[]
+        for state in ('PENDIENTE','REGISTRADO','EN_PROCESO','EN_PREPARACION','FACTURADO'):
+            order=Order(order_number=f'WEB-DELIVERY-BLOCK-{state}', company_code=user.company_code,delegation_code=user.delegation_code,origen_pedido='B2B',estado_registro_exit=state,subtotal=0,tax_total=0,total=0)
+            db.add(order);db.flush();ids.append(order.public_id)
+        db.commit()
+    for oid in ids:
+        response=operator.post('/api/v1/store/orders/delivery',json={'order_id':oid,'order_date':'2026-10-13'})
+        assert response.status_code==409,response.text
+        with SessionLocal() as db:
+            assert db.scalar(select(Order).where(Order.public_id==oid)).delivered_at is None
