@@ -61,3 +61,8 @@ class ExternalStatusChange(BaseModel):
         if not self.order_id and not self.order_number:
             raise ValueError("Debes indicar order_id u order_number")
         return self
+
+
+class WebOrderRegistrationChange(BaseModel):
+    state: str = Field(pattern="^(PENDIENTE|REGISTRADO)$")
+    exit_order_number: str | None = Field(default=None, max_length=80)
