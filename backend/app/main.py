@@ -1095,9 +1095,15 @@ ALLOWED_TRANSITIONS = {
 @app.get("/api/v1/store/orders")
 def store_orders(view: str = Query("active_kardex", pattern="^(active_kardex|active_sga|attended|web)$"),
                  date_from: date | None = None, date_to: date | None = None,
-                 state: str = Query("PENDIENTE"),
+                 state: str = Query("TODOS"),
                  user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
-    records = fetch_exit_orders_live(view, date_from, date_to)
+    try:
+        records = fetch_exit_orders_live(view, date_from, date_to)
+    except Exception:
+        if view != "web":
+            raise
+        logger.exception("No se pudo consultar EXIT; mostrando los pedidos WEB guardados")
+        records = []
     kardex_timings = fetch_kardex_timings([sales_order_number(record.exit_order_id) for record in records])
     delivery_by_order: dict[str, dict] = {}
     if records:
@@ -1136,18 +1142,19 @@ def store_orders(view: str = Query("active_kardex", pattern="^(active_kardex|act
                 kardex_started_at=kardex_timings.get(sales_order_number(record.exit_order_id), {}).get("kardex_started_at"),
             )["operational_workflow"]
         )]
+    web_keys = {key.upper() for record in records for key in (record.exit_order_id, record.customer_reference or "") if key}
     if view == "web" and state.strip().upper() not in {"", "TODOS"}:
         requested = state.strip().upper()
         groups = {"EN_PROCESAMIENTO": {"EN_PROCESO"}, "PENDIENTE_RECOJO": {"ATENDIDO"}}
         accepted = groups.get(requested, {requested})
-        records = [record for record in records if operational_state(record) in accepted]
+        records = [record for record in records if requested != "PENDIENTE" and (requested == "REGISTRADO" or operational_state(record) in accepted)]
     customer_names: dict[str, str] = {}
     for code in dict.fromkeys(record.customer_code for record in records):
         try:
             customer_names[code] = exit_customer_name(code)
         except Exception:
             customer_names[code] = code
-    return [{
+    result = [{
         "id": record.exit_order_id, "number": record.order_number,
         "store": delegation_name(record.store_code, record.company_code), "store_code": record.store_code, "company_code": record.company_code, "delegation_code": record.store_code, "customer_code": record.customer_code,
         "customer": customer_names.get(record.customer_code, record.customer_code),
@@ -1169,6 +1176,59 @@ def store_orders(view: str = Query("active_kardex", pattern="^(active_kardex|act
                    "unit_price": float(line.unit_price), "line_total": float(line.line_total or 0),
                    "fulfillment_zone": line.fulfillment_zone} for line in record.lines],
     } for record in records]
+
+
+    if view == "web":
+        statement = select(Order).where(Order.origen_pedido == "B2B", Order.estado_registro_exit != "BORRADOR")
+        if user.role == "OPERADOR_TIENDA":
+            statement = statement.where(Order.company_code == user.company_code, Order.delegation_code == user.delegation_code)
+        if date_from:
+            statement = statement.where(func.date(Order.created_at) >= date_from.isoformat())
+        if date_to:
+            statement = statement.where(func.date(Order.created_at) <= date_to.isoformat())
+        requested = state.strip().upper()
+        for row in db.scalars(statement.order_by(Order.created_at.desc())).all():
+            if any(key and key.upper() in web_keys for key in (row.order_number, row.nro_pedido_exit)):
+                continue
+            registered = bool(row.nro_pedido_exit)
+            if requested == "REGISTRADO" and not registered:
+                continue
+            if requested == "PENDIENTE" and registered:
+                continue
+            if requested not in {"", "TODOS", "PENDIENTE", "REGISTRADO"}:
+                accepted = {"EN_PROCESAMIENTO": {"REGISTRADO", "EN_PROCESO", "EN_PREPARACION"}, "PENDIENTE_RECOJO": {"ATENDIDO"}}.get(requested, {requested})
+                if row.estado_registro_exit not in accepted:
+                    continue
+            result.append(order_payload(row, db, include_items=True))
+    return result
+
+
+@app.post("/api/v1/store/orders/{order_id}/retry")
+def retry_web_order(order_id: str, user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
+    order = db.scalar(select(Order).where(Order.public_id == order_id).with_for_update())
+    if not order or (user.role == "OPERADOR_TIENDA" and (order.company_code, order.delegation_code) != (user.company_code, user.delegation_code)):
+        raise HTTPException(404, "Pedido no encontrado")
+    if order.origen_pedido != "B2B" or order.nro_pedido_exit or order.delivered_at or order.estado_registro_exit not in {"PENDIENTE", "REGISTRADO", "EN_PROCESO"}:
+        raise HTTPException(409, "Solo se pueden reactivar pedidos WEB sin registro en EXIT")
+    try:
+        records = fetch_exit_orders_live("web", order.created_at.date(), date.today(), customer_code=order.customer_code)
+    except Exception:
+        raise HTTPException(503, "No se pudo verificar EXIT. Reintenta cuando esté disponible para evitar duplicar el pedido")
+    if any((record.customer_reference or "").strip().upper() == order.order_number.upper() for record in records):
+        raise HTTPException(409, "El pedido ya existe en EXIT. Actualiza el listado antes de continuar")
+    previous = order.estado_registro_exit
+    order.estado_registro_exit = "PENDIENTE"
+    order.sync_status = SyncStatus.pending
+    event = db.scalar(select(IntegrationOutbox).where(IntegrationOutbox.aggregate_type == "ORDER", IntegrationOutbox.aggregate_id == order.public_id, IntegrationOutbox.event_type == "ORDER_CREATED").order_by(IntegrationOutbox.id.desc()).with_for_update())
+    if event:
+        event.sync_status = SyncStatus.pending
+        event.last_error = None
+    else:
+        db.add(IntegrationOutbox(aggregate_type="ORDER", aggregate_id=order.public_id, event_type="ORDER_CREATED", payload={"order_number": order.order_number, "customer_erp_id": order.customer_code, "store": order.delegation_code}, sync_status=SyncStatus.pending))
+    db.add(OrderStatusHistory(order_id=order.id, estado_registro_exit="PENDIENTE", changed_by_user_id=user.id, source="WEB", note="Procesamiento del robot habilitado nuevamente por operaciones"))
+    audit(db, user, "ORDER_RETRY_REQUESTED", "ORDER", order.public_id, {"previous_state": previous})
+    db.commit()
+    return order_payload(order, db, True)
 
 
 @app.post("/api/v1/store/orders/delivery")

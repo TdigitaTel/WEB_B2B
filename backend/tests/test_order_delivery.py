@@ -38,9 +38,10 @@ def test_delivery_is_persisted_and_survives_refresh(monkeypatch):
         db.commit()
     monkeypatch.setattr(module,'fetch_exit_orders_live',lambda *args:[record])
     monkeypatch.setattr(module,'fetch_delivery_statuses_for_orders',lambda *args:[])
-    assert operator.get('/api/v1/store/orders?view=web&state=PENDIENTE').json()==[]
+    assert not any(row['nro_pedido_exit'] == record.exit_order_id for row in operator.get('/api/v1/store/orders?view=web&state=PENDIENTE').json())
     listed=operator.get('/api/v1/store/orders?view=web&state=ENTREGADO').json()
-    assert len(listed)==1 and same_time(listed[0]['delivered_at'],stamp)
+    delivered = [row for row in listed if row['nro_pedido_exit'] == record.exit_order_id]
+    assert len(delivered)==1 and same_time(delivered[0]['delivered_at'],stamp)
     monkeypatch.setattr(module,'fetch_customer_exit_orders',lambda *args:[record])
     monkeypatch.setattr(module,'fetch_customer_delivery_statuses',lambda *args:[])
     visible=customer.get('/api/v1/orders?state=ENTREGADO&date_from=2026-01-01&date_to=2027-01-01')
