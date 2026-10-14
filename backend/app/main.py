@@ -233,8 +233,11 @@ def health():
 
 @app.post("/api/v1/auth/login")
 def login(data: LoginIn, response: Response, db: Session = Depends(get_db)):
-    user = db.scalar(select(User).where(func.lower(User.email) == data.email.strip().lower()))
-    if not user or not user.active or not verify_password(data.password, user.password_hash):
+    identifier = data.email.strip().lower()
+    candidates = db.scalars(select(User).where((func.lower(User.email) == identifier) | ((func.lower(User.erp_customer_code) == identifier) & User.role.in_(["CLIENTE", "CLIENTE_ADMIN"])))).all()
+    valid = [candidate for candidate in candidates if candidate.active and verify_password(data.password, candidate.password_hash)]
+    user = valid[0] if len(valid) == 1 else None
+    if not user:
         raise HTTPException(401, "Usuario o contraseña incorrectos")
     if user.must_change_password and user.initial_password_expires_at and user.initial_password_expires_at.replace(tzinfo=timezone.utc) <= datetime.now(timezone.utc):
         raise HTTPException(401, "La clave inicial ha caducado. Contacta con Bermúdez Ulloa")
@@ -283,6 +286,7 @@ def change_password(data: PasswordChange, request: Request, user: User = Depends
     user.password_hash = hash_password(data.new_password)
     user.must_change_password = False
     user.initial_password_expires_at = None
+    user.initial_password_ciphertext = None
     db.execute(update(AuthSession).where(AuthSession.user_id == user.id, AuthSession.id != request.state.auth_session.id).values(revoked=True))
     audit(db, user, "PASSWORD_CHANGED", "USER", user.public_id)
     db.commit()

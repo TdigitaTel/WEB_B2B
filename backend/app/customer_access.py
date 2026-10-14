@@ -17,6 +17,7 @@ from .config import settings
 from .db import get_db
 from .erp_db import fetch_access_customers, fetch_customer
 from .models import AuthSession, Customer, User
+from .initial_credentials import encrypt_initial, decrypt_initial
 
 router = APIRouter(prefix="/api/v1/store/customer-access", tags=["Accesos de clientes"])
 operator = require_roles("OPERADOR_TIENDA", "ADMIN")
@@ -111,6 +112,7 @@ def enable(data: AccessAction, user: User = Depends(operator), db: Session = Dep
         db.add(account)
     password = secrets.token_urlsafe(15)
     account.password_hash = hash_password(password)
+    account.initial_password_ciphertext = encrypt_initial(password)
     account.erp_customer_code = data.customer_code
     account.active = True
     account.must_change_password = True
@@ -128,6 +130,48 @@ def enable(data: AccessAction, user: User = Depends(operator), db: Session = Dep
             "email": customer.get("email", ""), "email_available": mail_ready(), "url": settings.customer_portal_url}
 
 
+def credentials_payload(account, customer):
+    return {"customer_code": account.erp_customer_code, "customer_name": customer["legal_name"], "username": account.email,
+            "initial_password": decrypt_initial(account.initial_password_ciphertext), "expires_at": account.initial_password_expires_at,
+            "email": customer.get("email", ""), "email_available": mail_ready(), "url": settings.customer_portal_url}
+
+
+@router.post("/initial")
+def reveal_initial(data: AccessAction, user: User = Depends(operator), db: Session = Depends(get_db)):
+    customer = customer_lookup(data.customer_code)
+    account = next((a for a in accounts_for(db, data.customer_code) if a.active and a.role in CUSTOMER_ROLES), None)
+    if not account or not account.must_change_password:
+        return {"credentials": None, "message": "No hay una clave inicial pendiente"}
+    expires = account.initial_password_expires_at
+    if not expires or expires.replace(tzinfo=timezone.utc) <= datetime.now(timezone.utc):
+        account.initial_password_ciphertext = None
+        db.commit()
+        return {"credentials": None, "message": "La clave inicial ha caducado. Genera una nueva"}
+    payload = credentials_payload(account, customer)
+    if not payload["initial_password"] or not verify_password(payload["initial_password"], account.password_hash):
+        return {"credentials": None, "message": "La clave anterior no puede recuperarse. Genera una nueva clave inicial"}
+    audit(db, user, "CUSTOMER_INITIAL_PASSWORD_VIEWED", "USER", account.public_id, {"customer_code": data.customer_code})
+    db.commit()
+    return {"credentials": payload, "message": "Clave inicial disponible hasta que el cliente la cambie"}
+
+
+@router.post("/regenerate")
+def regenerate_initial(data: AccessAction, user: User = Depends(operator), db: Session = Depends(get_db)):
+    customer = customer_lookup(data.customer_code)
+    accounts = accounts_for(db, data.customer_code)
+    account = next((a for a in accounts if a.active and a.must_change_password and a.role in CUSTOMER_ROLES), None)
+    if not account:
+        raise HTTPException(409, "Solo se puede regenerar una clave inicial pendiente de cambio")
+    password = secrets.token_urlsafe(15)
+    account.password_hash = hash_password(password)
+    account.initial_password_ciphertext = encrypt_initial(password)
+    account.initial_password_expires_at = datetime.now(timezone.utc) + timedelta(hours=settings.initial_password_ttl_hours)
+    revoke_sessions(db, [account])
+    audit(db, user, "CUSTOMER_INITIAL_PASSWORD_REGENERATED", "USER", account.public_id, {"customer_code": data.customer_code})
+    db.commit()
+    return credentials_payload(account, customer)
+
+
 @router.post("/disable")
 def disable(data: AccessAction, user: User = Depends(operator), db: Session = Depends(get_db)):
     customer_lookup(data.customer_code)
@@ -136,6 +180,7 @@ def disable(data: AccessAction, user: User = Depends(operator), db: Session = De
         raise HTTPException(409, "Este código está asociado a una cuenta de operaciones")
     for account in accounts:
         account.active = False
+        account.initial_password_ciphertext = None
     revoke_sessions(db, accounts)
     audit(db, user, "CUSTOMER_ACCESS_DISABLED", "CUSTOMER", data.customer_code)
     db.commit()

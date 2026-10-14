@@ -109,3 +109,49 @@ def test_startup_preserves_disabled_demo_and_changed_password():
         ensure_demo_access(db)
         assert not user.active and user.password_hash==previous_hash
         user.active=previous_active;db.commit()
+
+
+def test_initial_password_reveal_regenerate_and_clear(monkeypatch):
+    monkeypatch.setattr(customer_access,'fetch_customer',fake_customer)
+    client=operator()
+    credentials=client.post('/api/v1/store/customer-access/enable',json={'customer_code':'NEW-REVEAL'}).json()
+    body={'customer_code':'NEW-REVEAL'}
+    revealed=client.post('/api/v1/store/customer-access/initial',json=body)
+    assert revealed.status_code==200
+    assert revealed.json()['credentials']['initial_password']==credentials['initial_password']
+    with SessionLocal() as db:
+        account=db.scalar(select(User).where(User.erp_customer_code=='NEW-REVEAL'))
+        assert account.initial_password_ciphertext and credentials['initial_password'] not in account.initial_password_ciphertext
+        account.email='existing-email@example.test'
+        db.commit()
+    customer=TestClient(app)
+    assert customer.post('/api/v1/auth/login',json={'email':'NEW-REVEAL','password':credentials['initial_password']}).status_code==200
+    assert customer.post('/api/v1/store/customer-access/initial',json=body).status_code==403
+    regenerated=client.post('/api/v1/store/customer-access/regenerate',json=body).json()
+    assert regenerated['initial_password']!=credentials['initial_password']
+    assert customer.post('/api/v1/auth/login',json={'email':'NEW-REVEAL','password':credentials['initial_password']}).status_code==401
+    assert customer.post('/api/v1/auth/login',json={'email':'NEW-REVEAL','password':regenerated['initial_password']}).status_code==200
+    assert customer.patch('/api/v1/account/password',json={'current_password':regenerated['initial_password'],'new_password':'personal-safe-password-2026'}).status_code==200
+    assert client.post('/api/v1/store/customer-access/initial',json=body).json()['credentials'] is None
+    assert client.post('/api/v1/store/customer-access/regenerate',json=body).status_code==409
+    with SessionLocal() as db:
+        account=db.scalar(select(User).where(User.erp_customer_code=='NEW-REVEAL'))
+        assert account.initial_password_ciphertext is None
+
+
+def test_legacy_and_expired_initial_password_are_not_revealed(monkeypatch):
+    monkeypatch.setattr(customer_access,'fetch_customer',fake_customer)
+    client=operator();body={'customer_code':'NEW-LEGACY-KEY'}
+    client.post('/api/v1/store/customer-access/enable',json=body)
+    with SessionLocal() as db:
+        account=db.scalar(select(User).where(User.erp_customer_code==body['customer_code']))
+        account.initial_password_ciphertext=None;db.commit()
+    assert client.post('/api/v1/store/customer-access/initial',json=body).json()['credentials'] is None
+    assert client.post('/api/v1/store/customer-access/regenerate',json=body).status_code==200
+    with SessionLocal() as db:
+        account=db.scalar(select(User).where(User.erp_customer_code==body['customer_code']))
+        account.initial_password_expires_at=datetime.now(timezone.utc)-timedelta(seconds=1);db.commit()
+    assert client.post('/api/v1/store/customer-access/initial',json=body).json()['credentials'] is None
+    with SessionLocal() as db:
+        account=db.scalar(select(User).where(User.erp_customer_code==body['customer_code']))
+        assert account.initial_password_ciphertext is None
