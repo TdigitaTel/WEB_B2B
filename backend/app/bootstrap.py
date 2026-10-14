@@ -34,6 +34,7 @@ def main():
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS erp_customer_code VARCHAR(40)",
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE",
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS initial_password_expires_at TIMESTAMPTZ",
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS initial_password_ciphertext TEXT",
                 "CREATE INDEX IF NOT EXISTS ix_users_erp_customer_code ON users(erp_customer_code)",
                 "UPDATE users u SET erp_customer_code = c.erp_id FROM customers c WHERE u.customer_id = c.id AND u.erp_customer_code IS NULL",
                 "ALTER TABLE carts ADD COLUMN IF NOT EXISTS customer_code VARCHAR(40)",
