@@ -41,3 +41,25 @@ def test_blocked_order_cannot_skip_registration(monkeypatch):
     client=TestClient(app)
     response=client.patch("/api/v1/integrations/orders/estado",headers={"X-Integration-Key":"blocked-test-key"},json={"order_id":oid,"estado_registro_exit":"ENTREGADO","source":"RPA"})
     assert response.status_code==409
+
+
+def test_pending_blocked_registered_history_and_workflow(monkeypatch):
+    monkeypatch.setattr(settings,'integration_api_key','blocked-test-key')
+    client=TestClient(app);headers={'X-Integration-Key':'blocked-test-key'}
+    with SessionLocal() as db:
+        order=Order(order_number='WEB-RPA-PENDING-BLOCK',company_code=0,delegation_code='00',origen_pedido='B2B',estado_registro_exit='PENDIENTE',subtotal=0,tax_total=0,total=0)
+        db.add(order);db.commit();oid=order.public_id;local_id=order.id
+    body={'order_id':oid,'estado_registro_exit':'BLOQUEADO','source':'RPA'}
+    response=client.patch('/api/v1/integrations/orders/estado',headers=headers,json=body)
+    assert response.status_code==200,response.text
+    assert response.json()['recorded_statuses']==['BLOQUEADO']
+    stage=next(step for step in response.json()['order']['workflow'] if step['etapa']=='EN_PROCESAMIENTO')
+    assert stage['completed_at']
+    assert client.patch('/api/v1/integrations/orders/estado',headers=headers,json=body).json()['changed'] is False
+    listed=client.get('/api/v1/integrations/orders?estado_registro_exit=BLOQUEADO',headers=headers)
+    assert listed.status_code==200 and any(row['id']==oid for row in listed.json()['items'])
+    assert client.patch('/api/v1/integrations/orders/estado',headers=headers,json={**body,'estado_registro_exit':'REGISTRADO','nro_pedido_exit':'2026/AL/PENDINGBLOCK'}).status_code==200
+    assert client.patch('/api/v1/integrations/orders/estado',headers=headers,json=body).status_code==409
+    with SessionLocal() as db:
+        history=db.scalars(select(OrderStatusHistory).where(OrderStatusHistory.order_id==local_id).order_by(OrderStatusHistory.id)).all()
+        assert [event.estado_registro_exit for event in history]==['BLOQUEADO','REGISTRADO']
