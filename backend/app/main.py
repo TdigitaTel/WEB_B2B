@@ -204,13 +204,13 @@ def order_payload(order: Order, db: Session, include_items: bool = False) -> dic
         current_state = order.estado_registro_exit.strip().upper()
         visible_stage = {
             "BORRADOR": "BORRADOR", "PENDIENTE": "PENDIENTE",
-            "REGISTRADO": "EN_PROCESAMIENTO", "EN_PROCESO": "EN_PROCESAMIENTO", "EN_PREPARACION": "EN_PROCESAMIENTO",
+            "BLOQUEADO": "EN_PROCESAMIENTO", "REGISTRADO": "EN_PROCESAMIENTO", "EN_PROCESO": "EN_PROCESAMIENTO", "EN_PREPARACION": "EN_PROCESAMIENTO",
             "ATENDIDO": "PENDIENTE_RECOJO", "ENTREGADO": "ENTREGADO", "FACTURADO": "FACTURADO",
         }.get(current_state, "PENDIENTE")
         stage_position = {"BORRADOR": 0, "PENDIENTE": 0, "EN_PROCESAMIENTO": 1, "PENDIENTE_RECOJO": 2, "ENTREGADO": 3, "FACTURADO": 4}
         pending_dates = [event.created_at for event in history if event.estado_registro_exit == "PENDIENTE"]
         draft_dates = [event.created_at for event in history if event.estado_registro_exit == "BORRADOR"]
-        processing_dates = [event.created_at for event in history if event.estado_registro_exit in {"REGISTRADO", "EN_PROCESO", "EN_PREPARACION"}]
+        processing_dates = [event.created_at for event in history if event.estado_registro_exit in {"BLOQUEADO", "REGISTRADO", "EN_PROCESO", "EN_PREPARACION"}]
         pickup_dates = [event.created_at for event in history if event.estado_registro_exit == "ATENDIDO"]
         delivered_dates = [event.created_at for event in history if event.estado_registro_exit == "ENTREGADO"]
         invoice_dates = [event.created_at for event in history if event.estado_registro_exit == "FACTURADO"]
@@ -683,7 +683,7 @@ def orders(date_from: date | None = None, date_to: date | None = None,
     result: list[dict] = []
     def exit_workflow(record, current: str | None = None, delivery: dict | None = None) -> list[dict]:
         current = current or record.estado_registro_exit
-        positions = {"PENDIENTE": 0, "REGISTRADO": 1, "EN_PROCESO": 1, "EN_PREPARACION": 1, "ATENDIDO": 2, "ENTREGADO": 3, "FACTURADO": 4}
+        positions = {"PENDIENTE": 0, "BLOQUEADO": 1, "REGISTRADO": 1, "EN_PROCESO": 1, "EN_PREPARACION": 1, "ATENDIDO": 2, "ENTREGADO": 3, "FACTURADO": 4}
         position = positions.get(current, 0)
         event_dates = {state: stamp for state, stamp, _ in exit_events(record, delivery)}
         processing = [event_dates[state] for state in ('REGISTRADO', 'EN_PREPARACION') if state in event_dates]
@@ -799,7 +799,7 @@ def orders(date_from: date | None = None, date_to: date | None = None,
     db.commit()
     requested = state.strip().upper()
     groups = {"BORRADOR": {"BORRADOR"}, "PENDIENTE": {"BORRADOR", "PENDIENTE"},
-              "EN_PROCESAMIENTO": {"REGISTRADO", "EN_PROCESO", "EN_PREPARACION"},
+              "EN_PROCESAMIENTO": {"BLOQUEADO", "REGISTRADO", "EN_PROCESO", "EN_PREPARACION"},
               "PENDIENTE_RECOJO": {"ATENDIDO"}, "ENTREGADO": {"ENTREGADO"}, "FACTURADO": {"FACTURADO"}}
     if requested not in {"", "TODOS"}:
         accepted = groups.get(requested, {requested})
@@ -1012,7 +1012,7 @@ def integration_orders(
     db: Session = Depends(get_db),
 ):
     requested = {value.strip().upper() for value in estado_registro_exit.split(",") if value.strip()}
-    valid = {"BORRADOR", *INTEGRATION_STATUS_SEQUENCE}
+    valid = {"BORRADOR", "BLOQUEADO", *INTEGRATION_STATUS_SEQUENCE}
     if "TODOS" in requested:
         requested = set()
     invalid = requested - valid
@@ -1044,28 +1044,40 @@ def update_order_status_from_integration(
     if not order:
         raise HTTPException(404, "Pedido no encontrado")
     requested = data.estado_registro_exit.strip().upper()
-    if requested not in INTEGRATION_STATUS_SEQUENCE:
+    if requested not in {"BLOQUEADO", *INTEGRATION_STATUS_SEQUENCE}:
         allowed = ", ".join(INTEGRATION_STATUS_SEQUENCE)
         raise HTTPException(422, f"Estado no válido. Valores admitidos: {allowed}")
     source = data.source.strip().upper()
     if not source:
         raise HTTPException(422, "El origen de la actualización es obligatorio")
 
-    current = order.estado_registro_exit
-    if current == "BORRADOR":
-        current_index = -1
-    elif current in INTEGRATION_STATUS_SEQUENCE:
-        current_index = INTEGRATION_STATUS_SEQUENCE.index(current)
+    current = order.estado_registro_exit.strip().upper()
+    if requested == "BLOQUEADO":
+        if current == "BLOQUEADO":
+            return {"changed": False, "order": order_payload(order, db, True)}
+        if current != "PENDIENTE":
+            raise HTTPException(409, "Solo se puede bloquear un pedido PENDIENTE")
+        statuses = ["BLOQUEADO"]
     else:
-        raise HTTPException(409, f"El pedido está en un estado no actualizable: {current}")
-    requested_index = INTEGRATION_STATUS_SEQUENCE.index(requested)
-    if requested_index < current_index:
-        raise HTTPException(409, f"No se puede retroceder de {current} a {requested}")
-    if requested_index == current_index:
-        return {"changed": False, "order": order_payload(order, db, True)}
+        if current == "BLOQUEADO":
+            if requested != "REGISTRADO":
+                raise HTTPException(409, "Un pedido BLOQUEADO solo puede recuperarse como REGISTRADO por esta API")
+            current_index = INTEGRATION_STATUS_SEQUENCE.index("PENDIENTE")
+        elif current == "BORRADOR":
+            current_index = -1
+        elif current in INTEGRATION_STATUS_SEQUENCE:
+            current_index = INTEGRATION_STATUS_SEQUENCE.index(current)
+        else:
+            raise HTTPException(409, f"El pedido está en un estado no actualizable: {current}")
+        requested_index = INTEGRATION_STATUS_SEQUENCE.index(requested)
+        if requested_index < current_index:
+            raise HTTPException(409, f"No se puede retroceder de {current} a {requested}")
+        if requested_index == current_index:
+            return {"changed": False, "order": order_payload(order, db, True)}
+        statuses = INTEGRATION_STATUS_SEQUENCE[current_index + 1:requested_index + 1]
 
     recorded = []
-    for status in INTEGRATION_STATUS_SEQUENCE[current_index + 1:requested_index + 1]:
+    for status in statuses:
         db.add(OrderStatusHistory(
             order_id=order.id,
             estado_registro_exit=status,
@@ -1118,7 +1130,7 @@ def web_store_orders(db: Session, user: User, date_from: date | None, date_to: d
         except Exception:
             logger.exception("No se pudieron enriquecer los pedidos WEB del cliente %s", code)
     requested = state.strip().upper()
-    groups = {"EN_PROCESAMIENTO": {"REGISTRADO", "EN_PROCESO", "EN_PREPARACION"}, "PENDIENTE_RECOJO": {"ATENDIDO"}}
+    groups = {"EN_PROCESAMIENTO": {"BLOQUEADO", "REGISTRADO", "EN_PROCESO", "EN_PREPARACION"}, "PENDIENTE_RECOJO": {"ATENDIDO"}}
     result = []
     for row in rows:
         payload = order_payload(row, db, include_items=True)
