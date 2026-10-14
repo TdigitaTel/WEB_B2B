@@ -1051,8 +1051,12 @@ def update_order_status_from_integration(
     if not source:
         raise HTTPException(422, "El origen de la actualización es obligatorio")
 
-    current = order.estado_registro_exit
-    if current == "BORRADOR":
+    current = order.estado_registro_exit.strip().upper()
+    if current == "BLOQUEADO":
+        if requested != "REGISTRADO":
+            raise HTTPException(409, "Un pedido BLOQUEADO solo puede recuperarse como REGISTRADO por esta API")
+        current_index = INTEGRATION_STATUS_SEQUENCE.index("PENDIENTE")
+    elif current == "BORRADOR":
         current_index = -1
     elif current in INTEGRATION_STATUS_SEQUENCE:
         current_index = INTEGRATION_STATUS_SEQUENCE.index(current)
