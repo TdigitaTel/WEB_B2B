@@ -394,3 +394,5 @@ body{background:linear-gradient(180deg,#f6f9fb 0,#f1f5f7 420px,#f5f6f7 100%)}.se
  .products .product h3{min-height:33px;margin:0}
  .products .product .price-block{margin-top:0}
 }
+
+.cart-additional{margin:14px 0;border:1px solid var(--line);border-radius:9px;background:#fff}.cart-additional>summary{padding:12px 14px;color:var(--navy);font-weight:750;cursor:pointer}.cart-additional>summary span{font-weight:400;color:var(--muted)}.cart-additional>summary:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:8px}.cart-additional-fields{padding:0 14px 14px}.cart-additional-fields>.label:first-child{margin-top:0}.cart-additional-fields textarea{min-height:88px}
