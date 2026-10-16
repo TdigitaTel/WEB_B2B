@@ -27,7 +27,12 @@ class CartItemUpdate(BaseModel):
     quantity: Decimal = Field(gt=0, le=99999)
 
 
+class PickupSettingsIn(BaseModel):
+    preparation_minutes: int = Field(ge=1, le=10080)
+
+
 class OrderCreate(BaseModel):
+    pickup_date: date | None = None
     store_id: str | None = None
     company_code: int | None = None
     delegation_code: str | None = Field(default=None, max_length=40)
