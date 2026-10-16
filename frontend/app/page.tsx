@@ -204,6 +204,15 @@ export default function Page() {
     refreshOrders();
   }, [view, user, isOperator, refreshOrders]);
 
+  const selectCatalogCategory = useCallback((filters:CatalogFilters)=>{
+    setQuery("");
+    setSuggestionsEnabled(false);
+    setSuggestions([]);
+    setCatalogPage(1);
+    setCatalogFilters(filters);
+    setView("catalog");
+  },[]);
+
   const searchProducts = useCallback(async (text = query, filters = catalogFilters) => {
     if (!user || user.must_change_password || isOperator) return;
     const result = await api<{ items: Product[]; total: number }>(productsUrl(text, filters));
@@ -308,7 +317,7 @@ export default function Page() {
         {!isOperator&&<button className="menu-button" onClick={()=>setMenuOpen(true)}><span aria-hidden="true">☰</span> Menú</button>}
         {!isOperator && <div className="global-search">
           <form className="search-form" onSubmit={e => { e.preventDefault(); setView("catalog"); setSuggestionsEnabled(false); setSuggestions([]); searchProducts().catch(e=>setError(e.message)); }}>
-            <select aria-label="Departamento" value={catalogFilters.areaId} onChange={e=>{setCatalogFilters({areaId:e.target.value,familyId:"",subfamilyId:"",productTypeId:""});setView("catalog")}}><option value="">Todos los departamentos</option>{classification.map(area=><option key={area.id} value={area.id}>{area.name}</option>)}</select>
+            <select aria-label="Departamento" value={catalogFilters.areaId} onChange={e=>selectCatalogCategory({areaId:e.target.value,familyId:"",subfamilyId:"",productTypeId:""})}><option value="">Todos los departamentos</option>{classification.map(area=><option key={area.id} value={area.id}>{area.name}</option>)}</select>
             <input aria-label="Buscar productos" value={query} onChange={e => {setQuery(e.target.value);setSuggestionsEnabled(true);setCatalogFilters(emptyCatalogFilters);setView("catalog")}} onKeyDown={e=>{if(e.key==="Escape"){setSuggestionsEnabled(false);setSuggestions([])}}} placeholder="Busca por producto, referencia o medida" />
             {!!query && <button className="search-clear" aria-label="Limpiar búsqueda" type="button" onClick={()=>{setQuery("");setCatalogFilters(emptyCatalogFilters);setSuggestionsEnabled(false);setSuggestions([]);setView("catalog")}}>×</button>}
             {kioskMode&&<button className="keyboard-toggle" aria-label="Abrir teclado en pantalla" type="button" onClick={()=>setKeyboardOpen(value=>!value)}>⌨</button>}
@@ -322,8 +331,8 @@ export default function Page() {
       <nav className="desktop-nav">{(isOperator ? [["ops","Operaciones"],["customer-access","Accesos de clientes"],["category-upload","Carga de categorías"],["category-visibility","Categorías e imágenes"]] : [["home","Inicio"],["catalog","Catálogo"],["orders","Mis pedidos"],["documents","Albaranes y facturas"],["account","Mi cuenta"]]).map(([id,label]) => <button key={id} className={view===id?"active":""} onClick={() => setView(id as View)}>{label}</button>)}</nav>
     </header>
     <div className="service-strip"><span>ÁREA PROFESIONAL · Compra a tu ritmo</span><span>Almeiras · Recogida en tienda</span></div>{error && <div className="page error" role="alert">{error}</div>}
-    {view === "home" && <Home customer={customer} orders={orders} products={favoriteProducts} classification={classification} onNavigate={setView} onSelectArea={areaId=>{setCatalogFilters({areaId:String(areaId),familyId:"",subfamilyId:"",productTypeId:""});setView("catalog")}} onAdd={addProduct} />}
-    {view === "catalog" && <Catalog products={products} total={totalProducts} classification={classification} filters={catalogFilters} setFilters={setCatalogFilters} onAdd={addProduct} onLoadMore={loadMoreProducts} loadingMore={loadingMoreProducts} />}
+    {view === "home" && <Home customer={customer} orders={orders} products={favoriteProducts} classification={classification} onNavigate={setView} onSelectArea={areaId=>selectCatalogCategory({areaId:String(areaId),familyId:"",subfamilyId:"",productTypeId:""})} onAdd={addProduct} />}
+    {view === "catalog" && <Catalog products={products} total={totalProducts} classification={classification} filters={catalogFilters} setFilters={selectCatalogCategory} onAdd={addProduct} onLoadMore={loadMoreProducts} loadingMore={loadingMoreProducts} />}
     {view === "orders" && <Orders showImages={!!user.show_order_images} orders={orders} refreshing={refreshingOrders} onRefresh={refreshOrders} onRepeat={repeatOrder} onSubmitDraft={submitDraft} onDelete={deleteOrder} />}
     {view === "documents" && <Documents showImages={!!user.show_delivery_note_images} notes={deliveryNotes} invoices={invoices} />}
     {view === "account" && <Account user={user} customer={customer} onPreferences={preferences=>setUser(previous=>previous?{...previous,...preferences}:previous)} />}
@@ -335,7 +344,7 @@ export default function Page() {
     {cartOpen && cart && <CartDrawer cart={cart} stores={stores} onClose={() => setCartOpen(false)} onContinue={()=>{setCartOpen(false);setView("catalog")}} onUpdate={updateCart} onRemove={removeCart} onCheckout={checkout} />}
     {orderConfirmation && <OrderConfirmation order={orderConfirmation} onClose={()=>setOrderConfirmation(null)} onViewOrders={()=>{setOrderConfirmation(null);setView("orders")}} />}
     {menuOpen&&!isOperator&&<SiteMenu onClose={()=>setMenuOpen(false)} onNavigate={next=>{setView(next);setMenuOpen(false)}} onCatalog={()=>{setMenuOpen(false);setCatalogMenuOpen(true);setView("catalog")}}/>}
-    {catalogMenuOpen&&!isOperator&&<CatalogMenu classification={classification} onClose={()=>setCatalogMenuOpen(false)} onSelect={filters=>{setCatalogFilters(filters);setCatalogMenuOpen(false);setView("catalog")}} />}
+    {catalogMenuOpen&&!isOperator&&<CatalogMenu classification={classification} onClose={()=>setCatalogMenuOpen(false)} onSelect={filters=>{selectCatalogCategory(filters);setCatalogMenuOpen(false)}} />}
     {kioskMode&&keyboardOpen&&<KioskKeyboard onKey={key=>{if(key==="BACKSPACE")setQuery(value=>Array.from(value).slice(0,-1).join(""));else if(key==="CLEAR")setQuery("");else if(key==="SPACE")setQuery(value=>value+" ");else setQuery(value=>value+key);setSuggestionsEnabled(true);setCatalogFilters(emptyCatalogFilters);setView("catalog")}} onSearch={()=>{setKeyboardOpen(false);setSuggestionsEnabled(false);setSuggestions([]);searchProducts().catch(e=>setError(e.message))}} onClose={()=>setKeyboardOpen(false)}/>}
   </main>;
 }
