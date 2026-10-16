@@ -71,6 +71,7 @@ trap rollback ERR
 for _ in $(seq 1 36); do
   if curl --fail --silent "http://127.0.0.1:${API_PORT}/health" >/dev/null \
     && curl --fail --silent "http://127.0.0.1:${WEB_PORT}/" >/dev/null; then
+    "${compose[@]}" exec -T api python -m scripts.cleanup_test_customers --apply
     "${compose[@]}" exec -T api python -m app.reclassify_materials
     if [[ "$target" == "dev" ]]; then
       "${compose[@]}" exec -T api python -m app.import_category_images /app/data/category-images-initial.zip

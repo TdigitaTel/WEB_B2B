@@ -287,6 +287,27 @@ def fetch_access_customers(query: str = "", after_code: str = "", limit: int = 5
              "email": str(row.get("email") or '').strip()} for row in rows]
 
 
+def fetch_access_customers_by_codes(codes: list[str]) -> dict[str, dict]:
+    codes = list(dict.fromkeys(str(code).strip() for code in codes if str(code).strip()))
+    if not codes:
+        return {}
+    result = {}
+    schema, table = _identifier(CUSTOMER["schema"]), _identifier(CUSTOMER["table"])
+    with connect_sqlserver() as connection:
+        columns = _customer_columns(connection)
+        expressions = {field: _article_text(columns.get(field), alias="c", length=200) for field in ("code", "legal_name", "trade_name", "email")}
+        selections = ', '.join(f"{expression} AS [{field}]" for field, expression in expressions.items())
+        for start in range(0, len(codes), 200):
+            batch = codes[start:start+200]
+            placeholders = ','.join(['%s'] * len(batch))
+            with connection.cursor() as cursor:
+                cursor.execute(f"SELECT {selections} FROM {schema}.{table} c WHERE {expressions['code']} IN ({placeholders})", tuple(batch))
+                for row in cursor.fetchall():
+                    code = str(row['code']).strip()
+                    result[code] = {"legal_name": str(row.get('legal_name') or '').strip(), "trade_name": str(row.get('trade_name') or row.get('legal_name') or '').strip(), "email": str(row.get('email') or '').strip()}
+    return result
+
+
 def fetch_customer_codes(after_code: str = "", limit: int = 30) -> list[str]:
     """Devuelve una página de códigos EXIT, sin cargar la maestra completa."""
     schema = _identifier(CUSTOMER["schema"])
