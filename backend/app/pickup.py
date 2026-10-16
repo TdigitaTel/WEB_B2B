@@ -21,3 +21,26 @@ def immediate_available(db, company, delegation, now=None):
             if opening <= now and ready <= closing:
                 return True
     return False
+
+
+def next_open_date(db, company, delegation, now=None):
+    now = now or datetime.now(ZoneInfo("Europe/Madrid"))
+    config = db.get(PickupSettings, 1)
+    days = (config.schedules or {}).get(f"{company}:{delegation}") if config else None
+    if not days:
+        return None
+    for offset in range(1, 8):
+        candidate = now.date() + timedelta(days=offset)
+        day = days[candidate.weekday()]
+        if any(day.get(period+"_from") and day.get(period+"_to") for period in ("morning", "afternoon")):
+            return candidate
+    return None
+
+
+def scheduled_date_open(db, company, delegation, day):
+    config = db.get(PickupSettings, 1)
+    days = (config.schedules or {}).get(f"{company}:{delegation}") if config else None
+    if not days:
+        return False
+    hours = days[day.weekday()]
+    return any(hours.get(period+"_from") and hours.get(period+"_to") for period in ("morning", "afternoon"))

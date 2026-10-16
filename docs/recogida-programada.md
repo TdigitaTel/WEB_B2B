@@ -17,3 +17,5 @@ La recogida inmediata requiere que la hora actual del servidor (Europe/Madrid) e
 El carrito consulta disponibilidad por sede cada 30 segundos y al cambiar de sede. La API comprueba de nuevo al enviar el pedido o un borrador. Si inmediata no está disponible, se oculta y se selecciona programada.
 
 El arranque añade pickup_settings.schedules JSON de forma idempotente. Deben configurarse los horarios reales de las cinco sedes después de desplegar; no se inventan horarios iniciales.
+
+La fecha programada mínima se calcula como el siguiente día con algún turno abierto en la sede, desde mañana. Salta fines de semana u otros días semanales cerrados; sin turnos configurados no propone fecha. La API rechaza programaciones en días cerrados. Ejemplo: viernes 18:01 + 60 minutos, cierre 19:00 y fin de semana cerrado -> lunes.

@@ -43,3 +43,14 @@ def test_customer_cannot_edit_hours_and_immediate_is_checked_on_submit():
     response=client.post('/api/v1/orders',json={'company_code':store['company_code'],'delegation_code':store['code']})
     assert response.status_code==409
     assert 'inmediata' in response.json()['detail']
+
+
+def test_next_business_day_after_friday_closing():
+    from app.pickup import next_open_date, scheduled_date_open
+    days=[dict(morning_from='08:00',morning_to='13:00',afternoon_from='16:00',afternoon_to='19:00') for _ in range(5)]+[{},{}]
+    db=SimpleNamespace(get=lambda *args: SimpleNamespace(preparation_minutes=60,schedules={'1:00':days}))
+    now=datetime(2026,10,16,18,1,tzinfo=ZoneInfo('Europe/Madrid'))
+    assert not immediate_available(db,1,'00',now)
+    assert next_open_date(db,1,'00',now).isoformat()=='2026-10-19'
+    assert not scheduled_date_open(db,1,'00',now.date().replace(day=17))
+    assert scheduled_date_open(db,1,'00',now.date().replace(day=19))

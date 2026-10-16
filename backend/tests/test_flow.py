@@ -16,7 +16,8 @@ def login(email="compras001@cliente.test"):
     assert response.status_code == 200
 
 
-def test_customer_can_search_add_and_order():
+def test_customer_can_search_add_and_order(monkeypatch):
+    monkeypatch.setattr("app.main.scheduled_date_open", lambda *args: True)
     login()
     stores = client.get("/api/v1/stores").json()
     products = client.get("/api/v1/products?q=machon&page_size=3").json()["items"]
