@@ -75,7 +75,32 @@ def mail_ready():
 
 @router.get("")
 def list_access(q: str = Query("", max_length=200), after: str = Query("", max_length=40),
+                enabled_only: bool = False,
                 user: User = Depends(operator), db: Session = Depends(get_db)):
+    if enabled_only:
+        code = func.coalesce(func.nullif(func.trim(User.erp_customer_code), ""), Customer.erp_id)
+        conditions = [User.active.is_(True), User.role.in_(CUSTOMER_ROLES), code.is_not(None)]
+        if q.strip():
+            term = q.strip().lower()
+            conditions.append(func.lower(code).contains(term, autoescape=True) | func.lower(User.full_name).contains(term, autoescape=True) | func.lower(User.email).contains(term, autoescape=True) | func.lower(Customer.legal_name).contains(term, autoescape=True) | func.lower(Customer.trade_name).contains(term, autoescape=True))
+        codes_query = select(code.label("code")).select_from(User).outerjoin(Customer, User.customer_id == Customer.id).where(*conditions).distinct()
+        total = db.scalar(select(func.count()).select_from(codes_query.subquery())) or 0
+        if after.strip():
+            codes_query = codes_query.where(code > after.strip())
+        codes = list(db.scalars(codes_query.order_by(code).limit(51)).all())
+        has_more = len(codes) > 50
+        codes = codes[:50]
+        accounts = db.execute(select(User, Customer).outerjoin(Customer, User.customer_id == Customer.id).where(User.active.is_(True), User.role.in_(CUSTOMER_ROLES), code.in_(codes)).order_by(User.id)).all() if codes else []
+        rows = []
+        for customer_code in codes:
+            matches = [(account, customer) for account, customer in accounts if ((account.erp_customer_code or "").strip() or (customer.erp_id if customer else None)) == customer_code]
+            account, customer = matches[0]
+            rows.append({"erp_id": customer_code, "legal_name": customer.legal_name if customer else account.full_name,
+                         "trade_name": customer.trade_name if customer else account.full_name,
+                         "email": customer.email if customer else (account.email if "@" in account.email else ""),
+                         "enabled": True, "username": account.email,
+                         "status": "Pendiente de cambiar contraseña" if all(a.must_change_password for a, _ in matches) else "Habilitado"})
+        return {"items": rows, "total": total, "next_after": codes[-1] if has_more else None, "email_available": mail_ready()}
     try:
         customers = fetch_access_customers(q.strip(), after.strip(), limit=51)
     except Exception as exc:
