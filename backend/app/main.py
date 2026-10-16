@@ -475,6 +475,13 @@ def product_detail(product_id: str, user: User = Depends(current_user), db: Sess
     return product_view(product, customer_for(user, db), db, stock, None, article)
 
 
+@app.get("/api/v1/products/by-sku/{sku}/visual")
+def product_visual_by_sku(sku: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    customer_for(user, db)
+    product = db.scalar(select(Product).where(Product.sku == sku))
+    return {"family": (product.family if product else None) or "Sin clasificar"}
+
+
 @app.get("/api/v1/products/by-sku/{sku}/image")
 def product_image_by_sku(sku: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
     customer_for(user, db)
