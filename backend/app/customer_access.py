@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from .auth import audit, hash_password, require_roles, verify_password
 from .config import settings
 from .db import get_db
-from .erp_db import fetch_access_customers, fetch_customer
+from .erp_db import fetch_access_customers, fetch_customer, fetch_access_customers_by_codes
 from .models import AuthSession, Customer, User
 from .initial_credentials import encrypt_initial, decrypt_initial
 
@@ -79,7 +79,7 @@ def list_access(q: str = Query("", max_length=200), after: str = Query("", max_l
                 user: User = Depends(operator), db: Session = Depends(get_db)):
     if enabled_only:
         code = func.coalesce(func.nullif(func.trim(User.erp_customer_code), ""), Customer.erp_id)
-        conditions = [User.active.is_(True), User.role.in_(CUSTOMER_ROLES), code.is_not(None)]
+        conditions = [User.active.is_(True), User.role.in_(CUSTOMER_ROLES), code.is_not(None), ~func.lower(User.email).endswith("@cliente.test")]
         if q.strip():
             term = q.strip().lower()
             conditions.append(func.lower(code).contains(term, autoescape=True) | func.lower(User.full_name).contains(term, autoescape=True) | func.lower(User.email).contains(term, autoescape=True) | func.lower(Customer.legal_name).contains(term, autoescape=True) | func.lower(Customer.trade_name).contains(term, autoescape=True))
@@ -91,6 +91,10 @@ def list_access(q: str = Query("", max_length=200), after: str = Query("", max_l
         has_more = len(codes) > 50
         codes = codes[:50]
         accounts = db.execute(select(User, Customer).outerjoin(Customer, User.customer_id == Customer.id).where(User.active.is_(True), User.role.in_(CUSTOMER_ROLES), code.in_(codes)).order_by(User.id)).all() if codes else []
+        try:
+            exit_customers = fetch_access_customers_by_codes(codes)
+        except Exception:
+            exit_customers = {}
         rows = []
         for customer_code in codes:
             matches = [(account, customer) for account, customer in accounts if ((account.erp_customer_code or "").strip() or (customer.erp_id if customer else None)) == customer_code]
@@ -100,6 +104,10 @@ def list_access(q: str = Query("", max_length=200), after: str = Query("", max_l
                          "email": customer.email if customer else (account.email if "@" in account.email else ""),
                          "enabled": True, "username": account.email,
                          "status": "Pendiente de cambiar contraseña" if all(a.must_change_password for a, _ in matches) else "Habilitado"})
+        for row in rows:
+            external = exit_customers.get(row["erp_id"])
+            if external:
+                row.update(external)
         return {"items": rows, "total": total, "next_after": codes[-1] if has_more else None, "email_available": mail_ready()}
     try:
         customers = fetch_access_customers(q.strip(), after.strip(), limit=51)

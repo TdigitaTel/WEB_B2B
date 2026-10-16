@@ -19,8 +19,8 @@ class Settings(BaseSettings):
     show_order_status_history: bool = True
     customer_sync_interval_seconds: int = 10
     customer_sync_batch_size: int = 30
-    seed_products: int = 15000
-    seed_customers: int = 100
+    seed_products: int = 0
+    seed_customers: int = 0
     sqlserver_host: str = ""
     sqlserver_port: int = 1433
     sqlserver_database: str = ""

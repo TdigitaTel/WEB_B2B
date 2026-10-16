@@ -179,3 +179,13 @@ def test_enabled_customers_list_is_local_searchable_and_paginated(monkeypatch):
     assert len({row['erp_id'] for row in data['items']+second['items']})==53
     named=client.get('/api/v1/store/customer-access?enabled_only=true&q=Listado%20habilitado%2052').json()
     assert named['total']==1 and named['items'][0]['erp_id']=='ZZ-LIST-052'
+
+
+def test_enabled_list_enriches_exit_customer_name(monkeypatch):
+    monkeypatch.setattr(customer_access,'fetch_access_customers_by_codes',lambda codes:{'11511':{'legal_name':'GARCIA CANCELA, JESUS MANUEL','trade_name':'GARCIA CANCELA, JESUS MANUEL','email':'real@example.com'}})
+    with SessionLocal() as db:
+        db.add(User(email='name-11511@example.com',full_name='11511',role='CLIENTE_ADMIN',erp_customer_code='11511',password_hash='unused',active=True));db.commit()
+    response=operator().get('/api/v1/store/customer-access?enabled_only=true&q=11511')
+    assert response.status_code==200
+    row=response.json()['items'][0]
+    assert row['legal_name']=='GARCIA CANCELA, JESUS MANUEL' and row['email']=='real@example.com'
