@@ -19,3 +19,7 @@ El carrito consulta disponibilidad por sede cada 30 segundos y al cambiar de sed
 El arranque añade pickup_settings.schedules JSON de forma idempotente. Deben configurarse los horarios reales de las cinco sedes después de desplegar; no se inventan horarios iniciales.
 
 La fecha programada mínima se calcula como el siguiente día con algún turno abierto en la sede, desde mañana. Salta fines de semana u otros días semanales cerrados; sin turnos configurados no propone fecha. La API rechaza programaciones en días cerrados. Ejemplo: viernes 18:01 + 60 minutos, cierre 19:00 y fin de semana cerrado -> lunes.
+
+## Excepción del operador
+
+Pedidos WEB muestra Recogida: Inmediata o Programada y su fecha. Cambiar recogida permite al operador atender un pedido como inmediato aunque exceda el horario. El cliente no puede usar esta excepción. Cambiar a programada exige una fecha futura abierta. No se modifica un pedido entregado/facturado. Cada modificación se registra con actor, fecha y valores anterior/nuevo en auditoría e historial.
