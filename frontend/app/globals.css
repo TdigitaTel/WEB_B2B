@@ -385,4 +385,15 @@ body{background:linear-gradient(180deg,#f6f9fb 0,#f1f5f7 420px,#f5f6f7 100%)}.se
 
 .web-order-change{display:inline-flex;align-items:center;gap:10px;flex-wrap:wrap}.web-order-change>span{font-weight:700;color:#426174}
 
+/* Keep the material name, brand and price together without truncating text. */
+.products .product h3{min-height:37px;margin:6px 0 3px}
+.products .product .sku{margin-bottom:0;line-height:1.4}
+.products .product .price-block{margin-top:6px}
+@media(max-width:720px){
+ .products .product .product-body{grid-template-rows:36px minmax(33px,auto) minmax(14px,auto) minmax(82px,auto) minmax(44px,auto) auto;gap:4px}
+ .products .product h3{min-height:33px;margin:0}
+ .products .product .price-block{margin-top:0}
+}
+
+.cart-additional{margin:14px 0;border:1px solid var(--line);border-radius:9px;background:#fff}.cart-additional>summary{padding:12px 14px;color:var(--navy);font-weight:750;cursor:pointer}.cart-additional>summary span{font-weight:400;color:var(--muted)}.cart-additional>summary:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:8px}.cart-additional-fields{padding:0 14px 14px}.cart-additional-fields>.label:first-child{margin-top:0}.cart-additional-fields textarea{min-height:88px}
 .material-with-thumbnail{display:flex!important;align-items:center;gap:10px;min-width:0}.material-with-thumbnail>span{min-width:0}.material-thumbnail{width:48px;height:48px;flex:0 0 48px;object-fit:contain;border:1px solid #d8e3e9;border-radius:7px;background:#fff}.material-thumbnail.empty{display:grid;place-items:center;color:#7b929f}.display-preferences label{display:flex;align-items:center;gap:10px;margin:16px 0}.display-preferences input[type=checkbox]{width:20px;height:20px;flex:0 0 20px}.display-preferences p{line-height:1.5}@media(max-width:480px){.material-thumbnail{width:38px;height:38px;flex-basis:38px}}
