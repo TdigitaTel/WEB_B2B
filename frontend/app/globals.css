@@ -418,3 +418,6 @@ body{background:linear-gradient(180deg,#f6f9fb 0,#f1f5f7 420px,#f5f6f7 100%)}.se
 .opening-hours-table input.opening-hour-input{display:block;box-sizing:border-box;width:112px!important;min-width:112px;height:42px;padding:8px 12px;border:1px solid #93b3c8;border-radius:7px;background:#fff;color:var(--ink);font-size:16px;font-variant-numeric:tabular-nums;text-align:left}
 .opening-hours-table input.opening-hour-input::placeholder{color:#647f90;opacity:1}
 .opening-hours-table input.opening-hour-input:focus{outline:2px solid var(--blue);outline-offset:2px}
+
+.opening-hours-table input.opening-day-check{appearance:auto;width:22px!important;min-width:22px;height:22px;margin:0;accent-color:var(--blue);cursor:pointer}
+.opening-hours-table input.opening-hour-input:disabled{background:#eef2f5;color:#7b8c97;cursor:not-allowed}
