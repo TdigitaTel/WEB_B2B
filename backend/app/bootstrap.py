@@ -49,6 +49,7 @@ def main():
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS fecha_registro_exit TIMESTAMPTZ",
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ",
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS pickup_date DATE",
+                "ALTER TABLE pickup_settings ADD COLUMN IF NOT EXISTS schedules JSON",
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS origen_pedido VARCHAR(20) DEFAULT 'B2B' NOT NULL",
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS estado_registro_exit VARCHAR(80)",
                 """DO $$ BEGIN

@@ -27,7 +27,40 @@ class CartItemUpdate(BaseModel):
     quantity: Decimal = Field(gt=0, le=99999)
 
 
+class OpeningDay(BaseModel):
+    morning_from: str = ""
+    morning_to: str = ""
+    afternoon_from: str = ""
+    afternoon_to: str = ""
+
+    @model_validator(mode="after")
+    def validate_hours(self):
+        from datetime import time
+        windows = []
+        for start, end in [(self.morning_from, self.morning_to), (self.afternoon_from, self.afternoon_to)]:
+            if bool(start) != bool(end):
+                raise ValueError("Indica apertura y cierre de cada turno")
+            if start:
+                if len(start) != 5 or len(end) != 5:
+                    raise ValueError("Usa horas HH:MM")
+                first, last = time.fromisoformat(start), time.fromisoformat(end)
+                if first >= last:
+                    raise ValueError("El cierre debe ser posterior a la apertura")
+                windows.append((first, last))
+        if len(windows) == 2 and windows[0][1] > windows[1][0]:
+            raise ValueError("Los turnos no pueden solaparse")
+        return self
+
+
 class PickupSettingsIn(BaseModel):
+    schedules: dict[str, list[OpeningDay]] | None = None
+
+    @model_validator(mode="after")
+    def validate_days(self):
+        if self.schedules is not None and any(len(days) != 7 for days in self.schedules.values()):
+            raise ValueError("Configura los siete días de cada sede")
+        return self
+
     preparation_minutes: int = Field(ge=1, le=10080)
 
 
