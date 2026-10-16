@@ -75,6 +75,10 @@ class OrderCreate(BaseModel):
     notes: str | None = Field(default=None, max_length=1000)
 
 
+class PickupChange(BaseModel):
+    pickup_date: date | None
+
+
 class DeliveryConfirmation(BaseModel):
     order_id: str = Field(min_length=1, max_length=80)
     order_date: date
