@@ -70,6 +70,8 @@ class User(Base, TimestampMixin):
     delegation_code: Mapped[str | None] = mapped_column(String(40))
     store_id = synonym("delegation_code")
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    show_delivery_note_images: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    show_order_images: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     initial_password_ciphertext: Mapped[str | None] = mapped_column(Text)
     initial_password_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

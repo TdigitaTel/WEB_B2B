@@ -19,7 +19,7 @@ from .category_import import router as category_import_router
 from .category_visibility import router as category_visibility_router, image_router as category_image_router, image_urls, hidden_areas, hidden_codes
 from .config import settings
 from .db import get_db
-from .schemas import DeliveryConfirmation, WebOrderRegistrationChange
+from .schemas import DeliveryConfirmation, WebOrderRegistrationChange, UserDisplayPreferences
 from .exit_orders import upsert_exit_order
 from .kardex_timing import fetch_kardex_timings, sales_order_number
 from .order_timeline import exit_events, sync_history, instant, dispatch_timing
@@ -250,7 +250,7 @@ def login(data: LoginIn, response: Response, db: Session = Depends(get_db)):
     response.set_cookie("b2b_access", token, httponly=True, samesite="lax", secure=False)
     db.commit()
     display_name = (customer or {}).get("trade_name") or (customer or {}).get("legal_name") or user.full_name
-    return {"user": {"id": user.public_id, "name": display_name, "email": user.email, "role": user.role, "idle_timeout_seconds": settings.session_idle_timeout_minutes * 60, "must_change_password": user.must_change_password}, "access_token": token}
+    return {"user": {"id": user.public_id, "name": display_name, "email": user.email, "role": user.role, "idle_timeout_seconds": settings.session_idle_timeout_minutes * 60, "must_change_password": user.must_change_password, "show_delivery_note_images": user.show_delivery_note_images, "show_order_images": user.show_order_images}, "access_token": token}
 
 
 @app.post("/api/v1/auth/logout")
@@ -271,8 +271,17 @@ def session_activity(request: Request, user: User = Depends(current_user), db: S
 def account(user: User = Depends(current_user), db: Session = Depends(get_db)):
     customer = None if user.role in {"OPERADOR_TIENDA", "ADMIN"} else customer_for(user, db)
     display_name = (customer or {}).get("trade_name") or (customer or {}).get("legal_name") or user.full_name
-    return {"user": {"id": user.public_id, "name": display_name, "email": user.email, "role": user.role, "idle_timeout_seconds": settings.session_idle_timeout_minutes * 60, "must_change_password": user.must_change_password},
+    return {"user": {"id": user.public_id, "name": display_name, "email": user.email, "role": user.role, "idle_timeout_seconds": settings.session_idle_timeout_minutes * 60, "must_change_password": user.must_change_password, "show_delivery_note_images": user.show_delivery_note_images, "show_order_images": user.show_order_images},
             "customer": customer}
+
+
+@app.patch("/api/v1/account/preferences")
+def update_display_preferences(data: UserDisplayPreferences, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    user.show_delivery_note_images = data.show_delivery_note_images
+    user.show_order_images = data.show_order_images
+    audit(db, user, "USER_DISPLAY_PREFERENCES_CHANGED", "USER", user.public_id, data.model_dump())
+    db.commit()
+    return data.model_dump()
 
 
 @app.patch("/api/v1/account/password")
@@ -464,6 +473,15 @@ def product_detail(product_id: str, user: User = Depends(current_user), db: Sess
         logger.exception("Error consultando stock ERP para SKU %s", product.sku)
         raise HTTPException(503, "No se pudo consultar el stock en el ERP")
     return product_view(product, customer_for(user, db), db, stock, None, article)
+
+
+@app.get("/api/v1/products/by-sku/{sku}/image")
+def product_image_by_sku(sku: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    customer_for(user, db)
+    product = db.scalar(select(Product).where(Product.sku == sku))
+    if not product:
+        raise HTTPException(404, "Imagen no disponible")
+    return product_image(product.public_id, user, db)
 
 
 @app.get("/api/v1/products/{product_id}/image")
