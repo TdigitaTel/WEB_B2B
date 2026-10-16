@@ -28,6 +28,7 @@ class CartItemUpdate(BaseModel):
 
 
 class OpeningDay(BaseModel):
+    enabled: bool = True
     morning_from: str = ""
     morning_to: str = ""
     afternoon_from: str = ""
@@ -35,6 +36,8 @@ class OpeningDay(BaseModel):
 
     @model_validator(mode="after")
     def validate_hours(self):
+        if not self.enabled:
+            return self
         from datetime import time
         windows = []
         for start, end in [(self.morning_from, self.morning_to), (self.afternoon_from, self.afternoon_to)]:

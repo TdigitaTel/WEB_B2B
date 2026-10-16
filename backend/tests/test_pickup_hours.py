@@ -54,3 +54,16 @@ def test_next_business_day_after_friday_closing():
     assert next_open_date(db,1,'00',now).isoformat()=='2026-10-19'
     assert not scheduled_date_open(db,1,'00',now.date().replace(day=17))
     assert scheduled_date_open(db,1,'00',now.date().replace(day=19))
+
+
+def test_day_unchecked_and_empty_hours_mean_no_service():
+    from app.pickup import next_open_date, scheduled_date_open
+    days=[dict(enabled=True,morning_from='08:00',morning_to='13:00',afternoon_from='',afternoon_to='') for _ in range(7)]
+    now=datetime(2026,10,16,10,0,tzinfo=ZoneInfo('Europe/Madrid'))
+    days[4]['enabled']=False
+    days[5]=dict(enabled=True,morning_from='',morning_to='',afternoon_from='',afternoon_to='')
+    db=SimpleNamespace(get=lambda *args:SimpleNamespace(preparation_minutes=60,schedules={'1:00':days}))
+    assert not immediate_available(db,1,'00',now)
+    assert not scheduled_date_open(db,1,'00',now.date())
+    assert not scheduled_date_open(db,1,'00',now.date().replace(day=17))
+    assert next_open_date(db,1,'00',now).isoformat()=='2026-10-18'

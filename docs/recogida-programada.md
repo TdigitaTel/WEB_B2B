@@ -23,3 +23,5 @@ La fecha programada mínima se calcula como el siguiente día con algún turno a
 ## Excepción del operador
 
 Pedidos WEB muestra Recogida: Inmediata o Programada y su fecha. Cambiar recogida permite al operador atender un pedido como inmediato aunque exceda el horario. El cliente no puede usar esta excepción. Cambiar a programada exige una fecha futura abierta. No se modifica un pedido entregado/facturado. Cada modificación se registra con actor, fecha y valores anterior/nuevo en auditoría e historial.
+
+Cada día tiene un check Con atención. Desmarcarlo cierra el día sin perder las horas guardadas. Un día marcado pero sin ningún turno completo también se considera cerrado. Los horarios anteriores con horas se mantienen abiertos por compatibilidad.

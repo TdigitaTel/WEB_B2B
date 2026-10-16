@@ -12,6 +12,8 @@ def immediate_available(db, company, delegation, now=None):
     if not days:
         return False
     day = days[now.weekday()]
+    if not day.get("enabled", True):
+        return False
     ready = now + timedelta(minutes=config.preparation_minutes)
     for period in ("morning", "afternoon"):
         start, end = day.get(period+"_from"), day.get(period+"_to")
@@ -32,7 +34,7 @@ def next_open_date(db, company, delegation, now=None):
     for offset in range(1, 8):
         candidate = now.date() + timedelta(days=offset)
         day = days[candidate.weekday()]
-        if any(day.get(period+"_from") and day.get(period+"_to") for period in ("morning", "afternoon")):
+        if day.get("enabled", True) and any(day.get(period+"_from") and day.get(period+"_to") for period in ("morning", "afternoon")):
             return candidate
     return None
 
@@ -43,4 +45,4 @@ def scheduled_date_open(db, company, delegation, day):
     if not days:
         return False
     hours = days[day.weekday()]
-    return any(hours.get(period+"_from") and hours.get(period+"_to") for period in ("morning", "afternoon"))
+    return hours.get("enabled", True) and any(hours.get(period+"_from") and hours.get(period+"_to") for period in ("morning", "afternoon"))
