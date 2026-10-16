@@ -407,3 +407,8 @@ body{background:linear-gradient(180deg,#f6f9fb 0,#f1f5f7 420px,#f5f6f7 100%)}.se
 .thumbnail-placeholder>span{font-size:23px;font-weight:300;line-height:1}
 .thumbnail-placeholder>small{font-size:6px;line-height:1.2;text-transform:uppercase;letter-spacing:.4px;color:#7597aa;text-align:center}
 @media(max-width:480px){.material-with-thumbnail>.catalog-thumbnail{width:80px;height:70px;flex-basis:80px}}
+
+/* Keep the article visual and its description in one left-aligned row. */
+.order-line>span.material-with-thumbnail,.delivery-item>span.material-with-thumbnail{display:flex!important;flex-direction:row!important;justify-content:flex-start!important;align-items:center!important;text-align:left!important;justify-self:stretch;align-self:center;width:100%;gap:10px}
+.order-line>span.material-with-thumbnail>span:not(.material-thumbnail),.delivery-item>span.material-with-thumbnail>span:not(.material-thumbnail){display:block;flex:1;min-width:0;text-align:left!important}
+.order-line .material-thumbnail,.delivery-item .material-thumbnail{margin:0!important;align-self:center;flex-shrink:0}
