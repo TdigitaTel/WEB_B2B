@@ -398,7 +398,13 @@ const matchesOrderOrigin=(order:Order,origin:OrderOriginFilter)=>origin==="ALL"|
 
 function MaterialThumbnail({sku}:{sku:string}){
   const [failed,setFailed]=useState(false);
-  return failed?<span className="material-thumbnail empty" aria-label="Sin imagen disponible">—</span>:<img className="material-thumbnail" src={`/api/v1/products/by-sku/${encodeURIComponent(sku)}/image`} alt={`Material ${sku}`} loading="lazy" decoding="async" onError={()=>setFailed(true)}/>;
+  const [family,setFamily]=useState("Sin clasificar");
+  useEffect(()=>{setFailed(false);setFamily("Sin clasificar")},[sku]);
+  async function missing(){setFailed(true);try{const response=await fetch(`/api/v1/products/by-sku/${encodeURIComponent(sku)}/visual`,{credentials:"include"});if(response.ok){const data=await response.json();setFamily(data.family||"Sin clasificar")}}catch{}}
+  return <span className={`material-thumbnail catalog-thumbnail ${failed?"image-missing":""}`}>
+    <span className="thumbnail-reference">Ref. {sku}</span>
+    {failed?<span className="thumbnail-placeholder" aria-label={`Sin imagen: ${family}`}><span aria-hidden="true">{family.slice(0,2).toUpperCase()}</span><small>{family}</small></span>:<img src={`/api/v1/products/by-sku/${encodeURIComponent(sku)}/image`} alt={`Material ${sku}`} loading="lazy" decoding="async" onError={()=>void missing()}/>}
+  </span>;
 }
 
 function Orders({showImages,orders,refreshing,onRefresh,onRepeat,onSubmitDraft,onDelete}:{showImages:boolean;orders:Order[];refreshing:boolean;onRefresh:(from?:string,to?:string,state?:string)=>void;onRepeat:(id:string)=>void;onSubmitDraft:(id:string)=>void;onDelete:(id:string)=>void}) {
