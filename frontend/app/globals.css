@@ -412,3 +412,9 @@ body{background:linear-gradient(180deg,#f6f9fb 0,#f1f5f7 420px,#f5f6f7 100%)}.se
 .order-line>span.material-with-thumbnail,.delivery-item>span.material-with-thumbnail{display:flex!important;flex-direction:row!important;justify-content:flex-start!important;align-items:center!important;text-align:left!important;justify-self:stretch;align-self:center;width:100%;gap:10px}
 .order-line>span.material-with-thumbnail>span:not(.material-thumbnail),.delivery-item>span.material-with-thumbnail>span:not(.material-thumbnail){display:block;flex:1;min-width:0;text-align:left!important}
 .order-line .material-thumbnail,.delivery-item .material-thumbnail{margin:0!important;align-self:center;flex-shrink:0}
+
+.opening-hours-table{overflow-x:auto}
+.opening-hours-table table{min-width:660px}
+.opening-hours-table input.opening-hour-input{display:block;box-sizing:border-box;width:112px!important;min-width:112px;height:42px;padding:8px 12px;border:1px solid #93b3c8;border-radius:7px;background:#fff;color:var(--ink);font-size:16px;font-variant-numeric:tabular-nums;text-align:left}
+.opening-hours-table input.opening-hour-input::placeholder{color:#647f90;opacity:1}
+.opening-hours-table input.opening-hour-input:focus{outline:2px solid var(--blue);outline-offset:2px}
