@@ -155,3 +155,27 @@ def test_legacy_and_expired_initial_password_are_not_revealed(monkeypatch):
     with SessionLocal() as db:
         account=db.scalar(select(User).where(User.erp_customer_code==body['customer_code']))
         assert account.initial_password_ciphertext is None
+
+
+def test_enabled_customers_list_is_local_searchable_and_paginated(monkeypatch):
+    def unavailable(*args, **kwargs):
+        raise RuntimeError('EXIT fuera de servicio')
+    monkeypatch.setattr(customer_access,'fetch_access_customers',unavailable)
+    client=operator()
+    with SessionLocal() as db:
+        for index in range(53):
+            db.add(User(email=f'list-{index}@example.test',full_name=f'Listado habilitado {index}',role='CLIENTE_ADMIN',erp_customer_code=f'ZZ-LIST-{index:03}',active=True,password_hash='unused',must_change_password=index%2==0))
+        db.add(User(email='list-disabled@example.test',full_name='Inactivo listado',role='CLIENTE_ADMIN',erp_customer_code='ZZ-LIST-DISABLED',active=False,password_hash='unused'))
+        db.add(User(email='list-duplicate@example.test',full_name='Listado habilitado duplicado',role='CLIENTE',erp_customer_code='ZZ-LIST-000',active=True,password_hash='unused',must_change_password=True))
+        db.commit()
+    first=client.get('/api/v1/store/customer-access?enabled_only=true&q=ZZ-LIST-')
+    assert first.status_code==200,first.text
+    data=first.json()
+    assert data['total']==53 and len(data['items'])==50 and data['next_after']
+    assert all(row['enabled'] for row in data['items'])
+    assert not any('password' in key for row in data['items'] for key in row)
+    second=client.get('/api/v1/store/customer-access',params={'enabled_only':'true','q':'ZZ-LIST-','after':data['next_after']}).json()
+    assert len(second['items'])==3 and second['next_after'] is None
+    assert len({row['erp_id'] for row in data['items']+second['items']})==53
+    named=client.get('/api/v1/store/customer-access?enabled_only=true&q=Listado%20habilitado%2052').json()
+    assert named['total']==1 and named['items'][0]['erp_id']=='ZZ-LIST-052'
