@@ -1,9 +1,10 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 from decimal import Decimal
 from functools import lru_cache
 from io import BytesIO
 import logging
 import secrets
+from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,7 +20,7 @@ from .category_import import router as category_import_router
 from .category_visibility import router as category_visibility_router, image_router as category_image_router, image_urls, hidden_areas, hidden_codes
 from .config import settings
 from .db import get_db
-from .schemas import DeliveryConfirmation, WebOrderRegistrationChange, UserDisplayPreferences
+from .schemas import PickupSettingsIn, DeliveryConfirmation, WebOrderRegistrationChange, UserDisplayPreferences
 from .exit_orders import upsert_exit_order
 from .kardex_timing import fetch_kardex_timings, sales_order_number
 from .order_timeline import exit_events, sync_history, instant, dispatch_timing
@@ -35,7 +36,7 @@ from .exit_db import fetch_customer_exit_orders, fetch_exit_orders_live
 from .image_admin import router as image_admin_router
 from .image_missing import record_missing_product_image
 from .models import (
-    AuthSession, Cart, CartItem, Customer, IntegrationOutbox, Notification,
+    PickupSettings, AuthSession, Cart, CartItem, Customer, IntegrationOutbox, Notification,
     MaterialArea, MaterialFamily, MaterialProductType, MaterialSubfamily, Order, OrderItem,
     OrderStatusHistory, Product, ProfessionalRegistrationRequest, SyncStatus, User,
 )
@@ -178,7 +179,7 @@ def order_payload(order: Order, db: Session, include_items: bool = False) -> dic
     creator = db.get(User, order.user_id)
     result = {"id": order.public_id, "number": order.order_number,
               "store": store.name if store else order.store_id, "store_code": store.code if store else order.delegation_code, "company_code": order.company_code, "delegation_code": order.delegation_code, "customer_code": order.customer_code, "customer_reference": order.customer_reference,
-              "job_name": order.job_name, "notes": order.notes, "subtotal": float(order.subtotal),
+              "pickup_date": order.pickup_date, "job_name": order.job_name, "notes": order.notes, "subtotal": float(order.subtotal),
               "tax_total": float(order.tax_total), "total": float(order.total), "created_at": order.created_at,
               "customer": customer_name, "created_by": creator.full_name if creator else "Integración EXIT",
               "nro_pedido_exit": order.nro_pedido_exit, "fecha_registro_exit": order.fecha_registro_exit, "delivered_at": order.delivered_at,
@@ -475,6 +476,25 @@ def product_detail(product_id: str, user: User = Depends(current_user), db: Sess
     return product_view(product, customer_for(user, db), db, stock, None, article)
 
 
+@app.get("/api/v1/pickup-settings")
+def pickup_settings(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    config = db.get(PickupSettings, 1)
+    tomorrow = datetime.now(ZoneInfo("Europe/Madrid")).date() + timedelta(days=1)
+    return {"preparation_minutes": config.preparation_minutes if config else 60, "minimum_date": tomorrow.isoformat()}
+
+
+@app.patch("/api/v1/pickup-settings")
+def update_pickup_settings(data: PickupSettingsIn, user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
+    config = db.get(PickupSettings, 1)
+    if not config:
+        config = PickupSettings(id=1)
+        db.add(config)
+    config.preparation_minutes = data.preparation_minutes
+    audit(db, user, "PICKUP_SETTINGS_UPDATED", "SETTINGS", "pickup", {"preparation_minutes": data.preparation_minutes})
+    db.commit()
+    return pickup_settings(user, db)
+
+
 @app.get("/api/v1/products/by-sku/{sku}/visual")
 def product_visual_by_sku(sku: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
     customer_for(user, db)
@@ -559,6 +579,8 @@ def delete_cart_item(item_id: int, user: User = Depends(current_user), db: Sessi
 
 @app.post("/api/v1/orders", status_code=201)
 def create_order(data: OrderCreate, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    if data.pickup_date and data.pickup_date < datetime.now(ZoneInfo("Europe/Madrid")).date() + timedelta(days=1):
+        raise HTTPException(422, "La recogida programada debe ser a partir de mañana")
     customer = customer_for(user, db); customer_code = customer_code_for(user, db); cart = active_cart(user, db)
     if data.delegation_code is not None and data.company_code is None:
         raise HTTPException(422, "Indica CodigoEmpresa junto a IdDelegacion")
@@ -588,7 +610,7 @@ def create_order(data: OrderCreate, user: User = Depends(current_user), db: Sess
     initial_status = "BORRADOR" if data.draft else "PENDIENTE"
     order = Order(order_number=f"TMP-{cart.public_id[:20]}", customer_id=legacy_customer_id(user), customer_code=customer_code, user_id=user.id, company_code=store.company, delegation_code=store.code,
                   origen_pedido="B2B", estado_registro_exit=initial_status,
-                  customer_reference=data.customer_reference, job_name=data.job_name, notes=data.notes,
+                  pickup_date=data.pickup_date, customer_reference=data.customer_reference, job_name=data.job_name, notes=data.notes,
                   subtotal=0, tax_total=0, total=0, sync_status=SyncStatus.pending)
     db.add(order); db.flush(); order.order_number = f"WEB-{datetime.now().year}-{order.id:07d}"
     subtotal = Decimal("0")

@@ -1,6 +1,6 @@
 import enum
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, Enum, ForeignKey, Index, Integer, JSON, LargeBinary, Numeric, String, Text, UniqueConstraint, func
@@ -258,6 +258,7 @@ class Order(Base, TimestampMixin):
     store_id = synonym("delegation_code")
     nro_pedido_exit: Mapped[str | None] = mapped_column(String(80), index=True)
     fecha_registro_exit: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    pickup_date: Mapped[date | None] = mapped_column(Date)
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     origen_pedido: Mapped[str] = mapped_column(String(20), default="B2B", index=True)
     estado_registro_exit: Mapped[str] = mapped_column(String(80), default="PENDIENTE", index=True)
@@ -345,3 +346,8 @@ class CatalogAreaVisibility(Base):
     code: Mapped[str] = mapped_column(String(20))
     name: Mapped[str] = mapped_column(String(160))
     visible: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+
+class PickupSettings(Base):
+    __tablename__ = "pickup_settings"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    preparation_minutes: Mapped[int] = mapped_column(Integer, default=60)
