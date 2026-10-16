@@ -21,7 +21,7 @@ from .category_visibility import router as category_visibility_router, image_rou
 from .config import settings
 from .pickup import immediate_available, next_open_date, scheduled_date_open
 from .db import get_db
-from .schemas import PickupSettingsIn, DeliveryConfirmation, WebOrderRegistrationChange, UserDisplayPreferences
+from .schemas import PickupChange, PickupSettingsIn, DeliveryConfirmation, WebOrderRegistrationChange, UserDisplayPreferences
 from .exit_orders import upsert_exit_order
 from .kardex_timing import fetch_kardex_timings, sales_order_number
 from .order_timeline import exit_events, sync_history, instant, dispatch_timing
@@ -1315,6 +1315,29 @@ def operator_web_order(db: Session, order_id: str) -> Order:
     if not order:
         raise HTTPException(404, "Pedido WEB no encontrado")
     return order
+
+
+@app.patch("/api/v1/store/orders/{order_id}/pickup")
+def change_web_pickup(order_id: str, data: PickupChange,
+                      user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
+    order = db.scalar(select(Order).where(Order.public_id == order_id, Order.origen_pedido == "B2B").with_for_update())
+    if not order:
+        raise HTTPException(404, "Pedido WEB no encontrado")
+    if order.delivered_at or order.estado_registro_exit in {"ENTREGADO", "FACTURADO"}:
+        raise HTTPException(409, "No se puede cambiar la recogida de un pedido ya entregado")
+    if data.pickup_date and data.pickup_date <= datetime.now(ZoneInfo("Europe/Madrid")).date():
+        raise HTTPException(422, "La fecha programada debe ser desde mañana")
+    if data.pickup_date and not scheduled_date_open(db, order.company_code, order.delegation_code, data.pickup_date):
+        raise HTTPException(422, "La sede está cerrada en esa fecha")
+    before = order.pickup_date.isoformat() if order.pickup_date else "Inmediata"
+    after = data.pickup_date.isoformat() if data.pickup_date else "Inmediata"
+    if before != after:
+        order.pickup_date = data.pickup_date
+        note = f"Recogida cambiada por operador: {before} → {after}"
+        db.add(OrderStatusHistory(order_id=order.id, estado_registro_exit=order.estado_registro_exit, changed_by_user_id=user.id, source="WEB", note=note))
+        audit(db, user, "ORDER_PICKUP_CHANGED", "ORDER", order.public_id, {"previous": before, "pickup": after})
+        db.commit()
+    return order_payload(order, db, True)
 
 
 @app.patch("/api/v1/store/orders/{order_id}/registration")
