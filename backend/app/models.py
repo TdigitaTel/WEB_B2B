@@ -351,3 +351,4 @@ class PickupSettings(Base):
     __tablename__ = "pickup_settings"
     id: Mapped[int] = mapped_column(primary_key=True)
     preparation_minutes: Mapped[int] = mapped_column(Integer, default=60)
+    schedules: Mapped[dict | None] = mapped_column(JSON)

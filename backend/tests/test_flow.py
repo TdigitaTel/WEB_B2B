@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from fastapi.testclient import TestClient
 
 from app.bootstrap import main as bootstrap
@@ -21,7 +23,7 @@ def test_customer_can_search_add_and_order():
     assert stores and products
     response = client.post("/api/v1/cart/items", json={"product_id": products[0]["id"], "quantity": 3})
     assert response.status_code == 201
-    order = client.post("/api/v1/orders", json={"company_code": stores[0]["company_code"], "delegation_code": stores[0]["code"], "job_name": "Prueba automática"})
+    order = client.post("/api/v1/orders", json={"company_code": stores[0]["company_code"], "delegation_code": stores[0]["code"], "job_name": "Prueba automática", "pickup_date": (datetime.now(ZoneInfo("Europe/Madrid")).date()+timedelta(days=1)).isoformat()})
     assert order.status_code == 201
     assert order.json()["estado_registro_exit"] == "PENDIENTE"
     assert order.json()["company_code"] == stores[0]["company_code"]
