@@ -19,6 +19,7 @@ from .auth import audit, create_access_token, current_user, hash_password, requi
 from .category_import import router as category_import_router
 from .category_visibility import router as category_visibility_router, image_router as category_image_router, image_urls, hidden_areas, hidden_codes
 from .config import settings
+from .pickup import immediate_available, next_open_date, scheduled_date_open
 from .db import get_db
 from .schemas import PickupSettingsIn, DeliveryConfirmation, WebOrderRegistrationChange, UserDisplayPreferences
 from .exit_orders import upsert_exit_order
@@ -480,7 +481,14 @@ def product_detail(product_id: str, user: User = Depends(current_user), db: Sess
 def pickup_settings(user: User = Depends(current_user), db: Session = Depends(get_db)):
     config = db.get(PickupSettings, 1)
     tomorrow = datetime.now(ZoneInfo("Europe/Madrid")).date() + timedelta(days=1)
-    return {"preparation_minutes": config.preparation_minutes if config else 60, "minimum_date": tomorrow.isoformat()}
+    return {"preparation_minutes": config.preparation_minutes if config else 60, "minimum_date": tomorrow.isoformat(), "schedules": config.schedules or {} if config else {}}
+
+
+@app.get("/api/v1/pickup-availability")
+def pickup_availability(company: int, delegation: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    config = pickup_settings(user, db)
+    following = next_open_date(db, company, delegation)
+    return {**config, "immediate_available": immediate_available(db, company, delegation), "minimum_date": following.isoformat() if following else None}
 
 
 @app.patch("/api/v1/pickup-settings")
@@ -489,6 +497,11 @@ def update_pickup_settings(data: PickupSettingsIn, user: User = Depends(require_
     if not config:
         config = PickupSettings(id=1)
         db.add(config)
+    if data.schedules is not None:
+        allowed = {row.id for row in fetch_delegations()}
+        if set(data.schedules) - allowed:
+            raise HTTPException(422, "Sede no válida")
+        config.schedules = {key: [day.model_dump() for day in days] for key, days in data.schedules.items()}
     config.preparation_minutes = data.preparation_minutes
     audit(db, user, "PICKUP_SETTINGS_UPDATED", "SETTINGS", "pickup", {"preparation_minutes": data.preparation_minutes})
     db.commit()
@@ -586,6 +599,10 @@ def create_order(data: OrderCreate, user: User = Depends(current_user), db: Sess
         raise HTTPException(422, "Indica CodigoEmpresa junto a IdDelegacion")
     store = get_delegation(data.delegation_code or data.store_id, data.company_code)
     if not store: raise HTTPException(404, "Tienda no encontrada")
+    if not data.draft and data.pickup_date and not scheduled_date_open(db, store.company, store.code, data.pickup_date):
+        raise HTTPException(409, "La sede está cerrada en la fecha seleccionada")
+    if not data.draft and not data.pickup_date and not immediate_available(db, store.company, store.code):
+        raise HTTPException(409, "Recogida inmediata no disponible: selecciona una fecha programada")
     rows = db.execute(select(CartItem, Product).join(Product, Product.id == CartItem.product_id).where(CartItem.cart_id == cart.id)).all()
     if not rows: raise HTTPException(400, "El pedido está vacío")
     articles = _erp_articles([product for _, product in rows])
@@ -657,6 +674,13 @@ def submit_draft_order(order_id: str, user: User = Depends(current_user), db: Se
     order = customer_order(order_id, user, db)
     if order.estado_registro_exit != "BORRADOR":
         raise HTTPException(409, "Solo se puede enviar un pedido que esté en borrador")
+    if order.pickup_date:
+        if not scheduled_date_open(db, order.company_code, order.delegation_code, order.pickup_date):
+            raise HTTPException(409, "La sede está cerrada en la fecha seleccionada")
+        if order.pickup_date <= datetime.now(ZoneInfo("Europe/Madrid")).date():
+            raise HTTPException(409, "Actualiza la fecha de recogida antes de enviar el borrador")
+    elif not immediate_available(db, order.company_code, order.delegation_code):
+        raise HTTPException(409, "Recogida inmediata no disponible en el horario actual")
     order.estado_registro_exit = "PENDIENTE"
     order.sync_status = SyncStatus.pending
     store = get_delegation(order.delegation_code, order.company_code)
