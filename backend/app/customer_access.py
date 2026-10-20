@@ -16,7 +16,7 @@ from .auth import audit, hash_password, require_roles, verify_password
 from .config import settings
 from .db import get_db
 from .erp_db import fetch_access_customers, fetch_customer, fetch_access_customers_by_codes
-from .models import AuthSession, Customer, User
+from .models import CustomerQrAccess, AuthSession, Customer, User
 from .initial_credentials import encrypt_initial, decrypt_initial
 
 router = APIRouter(prefix="/api/v1/store/customer-access", tags=["Accesos de clientes"])
@@ -212,6 +212,7 @@ def disable(data: AccessAction, user: User = Depends(operator), db: Session = De
     if any(account.role not in CUSTOMER_ROLES for account in accounts):
         raise HTTPException(409, "Este código está asociado a una cuenta de operaciones")
     for account in accounts:
+        db.execute(update(CustomerQrAccess).where(CustomerQrAccess.user_id == account.id).values(active=False))
         account.active = False
         account.initial_password_ciphertext = None
     revoke_sessions(db, accounts)
