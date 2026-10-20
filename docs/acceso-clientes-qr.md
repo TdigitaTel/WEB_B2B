@@ -8,7 +8,7 @@ Cada QR corresponde a una cuenta de cliente activa. No se crean accesos QR para 
 
 ## Cliente
 
-En la pantalla de ingreso pulsa Acceder con QR y utiliza Abrir cámara, Leer imagen del QR o el enlace de acceso. También puedes escanear el QR con la cámara habitual del teléfono: el enlace abre la web e inicia la sesión. La cámara dentro de la web requiere HTTPS; por HTTP interno se puede cargar la imagen o utilizar el enlace.
+En la pantalla de ingreso aparece Escanea tu QR. Pulsa Escanear QR para abrir la cámara. La carga de imagen y el enlace de acceso están en Avanzado, cerrado por defecto. También puedes escanear el QR con la cámara habitual del teléfono: el enlace abre la web e inicia la sesión. La cámara dentro de la web requiere HTTPS; por HTTP interno se puede cargar la imagen o utilizar el enlace.
 
 El acceso con usuario y contraseña permanece disponible. El QR no omite la obligación de cambiar la contraseña inicial: si está pendiente o caducada se aplican las mismas reglas. La sesión tiene la misma duración e inactividad que una sesión con contraseña.
 
