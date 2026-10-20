@@ -1,28 +1,37 @@
-"""Preparation must fit completely within the current opening shift."""
+"""Find a preparation window today, including the next afternoon shift."""
 from datetime import datetime, timedelta, time
 from zoneinfo import ZoneInfo
 from .models import PickupSettings
 
 
-def immediate_available(db, company, delegation, now=None):
+def immediate_ready_at(db, company, delegation, now=None):
     now = now or datetime.now(ZoneInfo("Europe/Madrid"))
     config = db.get(PickupSettings, 1)
-    schedules = config.schedules if config and config.schedules else {}
-    days = schedules.get(f"{company}:{delegation}")
+    days = (config.schedules or {}).get(f"{company}:{delegation}") if config else None
     if not days:
-        return False
+        return None
     day = days[now.weekday()]
     if not day.get("enabled", True):
-        return False
-    ready = now + timedelta(minutes=config.preparation_minutes)
+        return None
+    windows = []
     for period in ("morning", "afternoon"):
         start, end = day.get(period+"_from"), day.get(period+"_to")
         if start and end:
             opening = datetime.combine(now.date(), time.fromisoformat(start), now.tzinfo)
             closing = datetime.combine(now.date(), time.fromisoformat(end), now.tzinfo)
-            if opening <= now and ready <= closing:
-                return True
-    return False
+            if windows and opening <= windows[-1][1]:
+                windows[-1] = (windows[-1][0], max(closing, windows[-1][1]))
+            else:
+                windows.append((opening, closing))
+    for opening, closing in windows:
+        ready = max(now, opening) + timedelta(minutes=config.preparation_minutes)
+        if ready <= closing:
+            return ready
+    return None
+
+
+def immediate_available(db, company, delegation, now=None):
+    return immediate_ready_at(db, company, delegation, now) is not None
 
 
 def next_open_date(db, company, delegation, now=None):

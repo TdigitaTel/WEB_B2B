@@ -16,11 +16,11 @@ def test_opening_shifts_and_preparation_deadline():
     def available(hour,minute=0,day=16):
         return immediate_available(db,1,'00',datetime(2026,10,day,hour,minute,tzinfo=ZoneInfo('Europe/Madrid')))
     assert available(12)
-    assert not available(12,1)
-    assert not available(14)
+    assert available(12,1)
+    assert available(14)
     assert available(16)
     assert not available(18,1)
-    assert not available(7)
+    assert available(7)
     assert not available(10,day=18)
     assert not immediate_available(db,1,'01')
 
@@ -67,3 +67,17 @@ def test_day_unchecked_and_empty_hours_mean_no_service():
     assert not scheduled_date_open(db,1,'00',now.date())
     assert not scheduled_date_open(db,1,'00',now.date().replace(day=17))
     assert next_open_date(db,1,'00',now).isoformat()=='2026-10-18'
+
+
+def test_midday_waits_for_afternoon_and_contiguous_shifts_merge():
+    from app.pickup import immediate_ready_at
+    days=[dict(enabled=True,morning_from='08:00',morning_to='13:00',afternoon_from='16:00',afternoon_to='19:00') for _ in range(7)]
+    db=SimpleNamespace(get=lambda *args:SimpleNamespace(preparation_minutes=60,schedules={'1:00':days}))
+    now=datetime(2026,10,20,13,0,tzinfo=ZoneInfo('Europe/Madrid'))
+    assert immediate_available(db,1,'00',now)
+    assert immediate_ready_at(db,1,'00',now).hour==17
+    days[1]['afternoon_from']='13:00'
+    assert immediate_ready_at(db,1,'00',now).hour==14
+    earlier=now.replace(hour=12,minute=30)
+    assert immediate_ready_at(db,1,'00',earlier).strftime('%H:%M')=='13:30'
+    assert not immediate_available(db,1,'00',now.replace(hour=18,minute=1))
