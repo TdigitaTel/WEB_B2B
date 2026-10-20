@@ -468,6 +468,50 @@ def category_template(_: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN"
     )
 
 
+@router.get("/export.csv")
+def export_category_classification(
+    _: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")),
+    db: Session = Depends(get_db),
+):
+    """Una fila por artículo, incluidos inactivos y sin clasificación."""
+    statement = (
+        select(Product, MaterialArea, MaterialFamily, MaterialSubfamily, MaterialProductType)
+        .outerjoin(MaterialArea, Product.material_area_id == MaterialArea.id)
+        .outerjoin(MaterialFamily, Product.material_family_id == MaterialFamily.id)
+        .outerjoin(MaterialSubfamily, Product.material_subfamily_id == MaterialSubfamily.id)
+        .outerjoin(MaterialProductType, Product.material_product_type_id == MaterialProductType.id)
+        .order_by(Product.sku)
+    )
+    output = io.StringIO(newline="")
+    output.write("\ufeff")
+    writer = csv.writer(output, delimiter=";")
+    writer.writerow([
+        "CodigoArticulo", "Descripcion", "Activo", "EstadoClasificacion",
+        "CodigoCategoria", "Categoria", "CodigoFamilia", "Familia",
+        "CodigoSubfamilia", "Subfamilia", "CodigoTipo", "TipoProducto",
+    ])
+
+    def safe(value):
+        text = str(value) if value is not None else ""
+        # Evitar fórmulas al abrir el archivo en una hoja de cálculo.
+        return "'" + text if text.lstrip().startswith(("=", "+", "-", "@")) or text.startswith(("\t", "\r", "\n")) else text
+
+    for product, area, family, subfamily, product_type in db.execute(statement).yield_per(1000):
+        row = [product.sku, product.short_description, "Sí" if product.active else "No",
+               product.classification_status or "SIN_CLASIFICAR"]
+        for level in (area, family, subfamily, product_type):
+            row.extend([level.code if level else "", level.name if level else ""])
+        writer.writerow([safe(value) for value in row])
+    return StreamingResponse(
+        iter([output.getvalue().encode("utf-8")]),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": 'attachment; filename="clasificacion_articulos.csv"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
 @router.get("/missing.csv")
 def missing_category_log(
     _: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")),
