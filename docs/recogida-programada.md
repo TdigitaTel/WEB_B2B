@@ -12,7 +12,7 @@ El aviso indica conservación de 24 horas desde la preparación. Este cambio añ
 
 En Parámetros se edita por sede el horario semanal: apertura/cierre de mañana y tarde, lunes a domingo. Turno vacío = cerrado. No se admiten turnos incompletos, invertidos o solapados. Se identifican las sedes por empresa y delegación de EXIT.
 
-La recogida inmediata requiere que la hora actual del servidor (Europe/Madrid) esté dentro de un turno y que, al sumar los minutos de preparación, no supere su cierre. La igualdad con el cierre sí es válida. No se trasladan minutos al turno siguiente. Una sede sin horario configurado solo ofrece recogida programada. No incluye calendario de festivos.
+La recogida inmediata se ofrece si la preparación cabe hoy en el turno actual o en el siguiente. En una pausa, la preparación empieza al abrir el próximo turno y el carrito muestra la hora estimada de recogida. Los turnos consecutivos sin pausa se unen. La igualdad con el cierre sí es válida. Se usa la hora del servidor Europe/Madrid. Una sede sin horario configurado solo ofrece recogida programada. No incluye calendario de festivos.
 
 El carrito consulta disponibilidad por sede cada 30 segundos y al cambiar de sede. La API comprueba de nuevo al enviar el pedido o un borrador. Si inmediata no está disponible, se oculta y se selecciona programada.
 
@@ -25,3 +25,6 @@ La fecha programada mínima se calcula como el siguiente día con algún turno a
 Pedidos WEB muestra Recogida: Inmediata o Programada y su fecha. Cambiar recogida permite al operador atender un pedido como inmediato aunque exceda el horario. El cliente no puede usar esta excepción. Cambiar a programada exige una fecha futura abierta. No se modifica un pedido entregado/facturado. Cada modificación se registra con actor, fecha y valores anterior/nuevo en auditoría e historial.
 
 Cada día tiene un check Con atención. Desmarcarlo cierra el día sin perder las horas guardadas. Un día marcado pero sin ningún turno completo también se considera cerrado. Los horarios anteriores con horas se mantienen abiertos por compatibilidad.
+
+
+Ejemplo de mediodía: pedido a las 13:00, 60 minutos de preparación y tarde 16:00–19:00 -> inmediata para hoy con recogida estimada 17:00. Si la tarde abre 13:00, recogida estimada 14:00. Después de 18:00 con cierre 19:00 y preparación de 60 minutos -> siguiente día hábil. Esta corrección no cambia automáticamente pedidos ya creados; el operador puede usar Cambiar recogida.

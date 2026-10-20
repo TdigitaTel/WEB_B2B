@@ -19,7 +19,7 @@ from .auth import audit, create_access_token, current_user, hash_password, requi
 from .category_import import router as category_import_router
 from .category_visibility import router as category_visibility_router, image_router as category_image_router, image_urls, hidden_areas, hidden_codes
 from .config import settings
-from .pickup import immediate_available, next_open_date, scheduled_date_open
+from .pickup import immediate_ready_at, immediate_available, next_open_date, scheduled_date_open
 from .db import get_db
 from .schemas import PickupChange, PickupSettingsIn, DeliveryConfirmation, WebOrderRegistrationChange, UserDisplayPreferences
 from .exit_orders import upsert_exit_order
@@ -488,7 +488,8 @@ def pickup_settings(user: User = Depends(current_user), db: Session = Depends(ge
 def pickup_availability(company: int, delegation: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
     config = pickup_settings(user, db)
     following = next_open_date(db, company, delegation)
-    return {**config, "immediate_available": immediate_available(db, company, delegation), "minimum_date": following.isoformat() if following else None}
+    ready = immediate_ready_at(db, company, delegation)
+    return {**config, "immediate_available": ready is not None, "immediate_ready_at": ready.isoformat() if ready else None, "minimum_date": following.isoformat() if following else None}
 
 
 @app.patch("/api/v1/pickup-settings")
