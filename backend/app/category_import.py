@@ -474,7 +474,7 @@ def export_category_classification(
     _: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")),
     db: Session = Depends(get_db),
 ):
-    """Cruza toda la maestra EXIT con la clasificación web, conservando registros solo web."""
+    """Exporta únicamente materiales de EXIT, complementados con la clasificación web."""
     try:
         articles = fetch_all_catalog_articles_for_export()
     except Exception as exc:
@@ -497,7 +497,7 @@ def export_category_classification(
         "CodigoArticulo", "Descripcion", "Activo", "EstadoClasificacion",
         "CodigoCategoria", "Categoria", "CodigoFamilia", "Familia",
         "CodigoSubfamilia", "Subfamilia", "CodigoTipo", "TipoProducto",
-        "ExisteEnEXIT", "ExisteEnWeb", "ActivoEXIT", "VisibleCategoriaWeb",
+        "ExisteEnEXIT", "ExisteEnWeb", "ActivoWeb", "VisibleCategoriaWeb",
         "InactivoEXIT", "SituacionEXIT", "InternetEXIT", "ArticuloWEBEXIT", "InternetB2BEXIT",
         "MarcaEXIT", "ReferenciaFabricanteEXIT", "UnidadMedidaEXIT", "DescripcionWeb",
     ])
@@ -509,35 +509,31 @@ def export_category_classification(
 
     def write_article(code, article, metadata_row):
         product, area, family, subfamily, product_type = metadata_row or (None,) * 5
-        inactive = article.get("inactive") if article else None
+        inactive = article.get("inactive")
         inactive_value = str(inactive).strip().lower()
         exit_active = ""
-        if article and inactive_value in ("1", "true", "si", "sí"):
+        if inactive_value in ("1", "true", "si", "sí"):
             exit_active = "No"
-        elif article and inactive_value in ("0", "false"):
+        elif inactive_value in ("0", "false"):
             exit_active = "Sí"
         web_active = ("Sí" if product.active else "No") if product else ""
         complete = all((area, family, subfamily, product_type))
-        row = [code, article.get("description") if article else product.short_description, web_active,
+        row = [code, article.get("description"), exit_active,
                (product.classification_status or "CLASIFICADO") if complete else "SIN_CLASIFICAR"]
         for level in (area, family, subfamily, product_type):
             row.extend([level.code if level else "", level.name if level else ""])
         row.extend([
-            "Sí" if article else "No", "Sí" if product else "No",
-            exit_active,
+            "Sí", "Sí" if product else "No",
+            web_active,
             ("No" if area.id in hidden else "Sí") if area else "",
-            *[(article or {}).get(field) for field in ("inactive", "situation", "internet", "web", "b2b", "brand_name", "manufacturer_reference", "unit")],
+            *[article.get(field) for field in ("inactive", "situation", "internet", "web", "b2b", "brand_name", "manufacturer_reference", "unit")],
             product.short_description if product else "",
         ])
         writer.writerow([safe(value) for value in row])
 
-    seen = set()
     for article in articles:
         code = str(article["code"]).strip()
-        seen.add(code)
         write_article(code, article, metadata.get(code))
-    for code in sorted(metadata.keys() - seen):
-        write_article(code, None, metadata[code])
     return StreamingResponse(
         iter([output.getvalue().encode("utf-8")]),
         media_type="text/csv; charset=utf-8",
