@@ -352,3 +352,13 @@ class PickupSettings(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     preparation_minutes: Mapped[int] = mapped_column(Integer, default=60)
     schedules: Mapped[dict | None] = mapped_column(JSON)
+
+
+class CustomerQrAccess(Base):
+    __tablename__ = "customer_qr_access"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=public_uuid)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True)
+    secret_hash: Mapped[str] = mapped_column(String(64))
+    secret_ciphertext: Mapped[str] = mapped_column(Text)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

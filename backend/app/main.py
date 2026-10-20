@@ -51,6 +51,8 @@ app.include_router(category_image_router)
 app.include_router(image_admin_router)
 from .customer_access import router as customer_access_router
 app.include_router(customer_access_router)
+from .qr_access import router as qr_access_router
+app.include_router(qr_access_router)
 logger = logging.getLogger(__name__)
 
 @lru_cache(maxsize=2000)
@@ -241,6 +243,10 @@ def login(data: LoginIn, response: Response, db: Session = Depends(get_db)):
     user = valid[0] if len(valid) == 1 else None
     if not user:
         raise HTTPException(401, "Usuario o contraseña incorrectos")
+    return complete_login(user, response, db)
+
+
+def complete_login(user: User, response: Response, db: Session):
     if user.must_change_password and user.initial_password_expires_at and user.initial_password_expires_at.replace(tzinfo=timezone.utc) <= datetime.now(timezone.utc):
         raise HTTPException(401, "La clave inicial ha caducado. Contacta con Bermúdez Ulloa")
     customer = None
