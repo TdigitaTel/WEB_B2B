@@ -12,7 +12,12 @@ bootstrap()
 
 
 def test_export_includes_unclassified_inactive_and_restricts_access(monkeypatch):
-    monkeypatch.setattr("app.category_import.fetch_all_catalog_articles_for_export", lambda: [])
+    def exit_master():
+        with SessionLocal() as db:
+            return [{"code": product.sku, "description": product.short_description,
+                     "inactive": "0" if product.active else "1"}
+                    for product in db.scalars(select(Product)).all()]
+    monkeypatch.setattr("app.category_import.fetch_all_catalog_articles_for_export", exit_master)
     client = TestClient(app)
     path = "/api/v1/store/catalog-categories/export.csv"
     assert client.get(path).status_code == 401
@@ -45,7 +50,7 @@ def test_export_includes_unclassified_inactive_and_restricts_access(monkeypatch)
             db.commit()
 
 
-def test_export_adds_exit_only_inactive_articles_and_retains_web_only(monkeypatch):
+def test_export_adds_exit_only_inactive_articles_and_excludes_web_only(monkeypatch):
     with SessionLocal() as db:
         product = db.scalar(select(Product).order_by(Product.id))
         code = product.sku
@@ -63,14 +68,15 @@ def test_export_adds_exit_only_inactive_articles_and_retains_web_only(monkeypatc
     assert rows[code]["ExisteEnEXIT"] == rows[code]["ExisteEnWeb"] == "Sí"
     assert rows[code]["SituacionEXIT"] == "17"
     assert rows[code]["ArticuloWEBEXIT"] == "0"
-    assert rows["41904"]["ActivoEXIT"] == "No"
-    assert rows["41904"]["Activo"] == ""
+    assert rows["41904"]["Activo"] == "No"
+    assert rows["41904"]["ActivoWeb"] == ""
     assert rows["41904"]["ExisteEnWeb"] == "No"
     assert rows["41904"]["EstadoClasificacion"] == "SIN_CLASIFICAR"
     assert rows["85892"]["Activo"] == ""
     assert rows["85892"]["InactivoEXIT"] == ""
     assert rows["85892"]["InternetB2BEXIT"] == "0"
-    assert any(row["ExisteEnEXIT"] == "No" for row in rows.values())
+    assert set(rows) == {code, "41904", "85892"}
+    assert all(row["ExisteEnEXIT"] == "Sí" for row in rows.values())
 
 
 def test_export_fails_instead_of_returning_partial_postgres_data(monkeypatch):
@@ -105,3 +111,13 @@ def test_total_exit_query_has_no_active_stock_visibility_or_pagination_filters(m
     assert "Inactivo" not in where
     assert not any(word in sql.upper() for word in (" JOIN ", "OFFSET", "FETCH NEXT", " TOP ", "HAVING"))
     assert "NULL AS [web]" in sql
+
+
+def test_empty_exit_master_does_not_export_postgres_products(monkeypatch):
+    monkeypatch.setattr("app.category_import.fetch_all_catalog_articles_for_export", lambda: [])
+    client = TestClient(app)
+    client.post("/api/v1/auth/login", json={"email":"operador@bermudez.test", "password":"123456"})
+    response = client.get("/api/v1/store/catalog-categories/export.csv")
+    assert response.status_code == 200
+    rows = list(csv.DictReader(io.StringIO(response.content.decode("utf-8-sig")), delimiter=";"))
+    assert rows == []
