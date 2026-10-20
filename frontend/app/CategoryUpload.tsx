@@ -64,6 +64,7 @@ export default function CategoryUpload() {
         <p>Actualiza la clasificación y el nombre homologado utilizando el código de material de EXIT.</p>
       </div>
       <div className={styles.headingActions}>
+        <a className="secondary" href="/api/v1/store/catalog-categories/export.csv">Descargar clasificación completa</a>
         <a className="secondary" href="/api/v1/store/catalog-categories/template">Descargar plantilla</a>
         <a className="ghost" href="/api/v1/store/catalog-categories/missing.csv">Artículos sin clasificar</a>
         <a className="ghost" href="/api/v1/store/catalog-images/missing.csv">Preparar fotografías</a>
