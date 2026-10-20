@@ -3,6 +3,7 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import CustomerAccess, {InitialPassword} from "./CustomerAccess";
 import {QrLogin} from "./QrAccess";
+import DeleteOrderDialog from "./DeleteOrderDialog";
 import CategoryUpload from "./CategoryUpload";
 import CategoryVisibility from "./CategoryVisibility";
 
@@ -102,6 +103,7 @@ export default function Page() {
   const [kioskMode, setKioskMode] = useState(false);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [orderConfirmation, setOrderConfirmation] = useState<Order | null>(null);
+  const [deleteCandidate,setDeleteCandidate]=useState<Order|null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [catalogMenuOpen,setCatalogMenuOpen]=useState(false);
 
@@ -302,14 +304,11 @@ export default function Page() {
   }
 
   async function deleteOrder(id: string) {
-    if (!window.confirm("¿Eliminar este pedido? Esta acción no se puede deshacer.")) return;
-    try {
-      await api(`/api/v1/orders/${id}`, { method: "DELETE" });
-      setOrders(current=>current.filter(order=>order.id!==id));
-      setError("");
-      const {from,to,state}=lastOrdersQuery.current;
-      await refreshOrders(from,to,state);
-    } catch (e) { setError((e as Error).message); }
+    await api(`/api/v1/orders/${id}`, { method: "DELETE" });
+    setOrders(current=>current.filter(order=>order.id!==id));
+    setDeleteCandidate(null);setError("");
+    const {from,to,state}=lastOrdersQuery.current;
+    void refreshOrders(from,to,state).catch(e=>setError((e as Error).message));
   }
 
   if (loading) return <div className="loading">Preparando el portal profesional…</div>;
@@ -340,7 +339,7 @@ export default function Page() {
     <div className="service-strip"><span>ÁREA PROFESIONAL · Compra a tu ritmo</span><span>Almeiras · Recogida en tienda</span></div>{error && <div className="page error" role="alert">{error}</div>}
     {view === "home" && <Home customer={customer} orders={orders} products={favoriteProducts} classification={classification} onNavigate={setView} onSelectArea={areaId=>selectCatalogCategory({areaId:String(areaId),familyId:"",subfamilyId:"",productTypeId:""})} onAdd={addProduct} />}
     {view === "catalog" && <Catalog products={products} total={totalProducts} classification={classification} filters={catalogFilters} setFilters={selectCatalogCategory} onAdd={addProduct} onLoadMore={loadMoreProducts} loadingMore={loadingMoreProducts} />}
-    {view === "orders" && <Orders showImages={!!user.show_order_images} orders={orders} refreshing={refreshingOrders} onRefresh={refreshOrders} onRepeat={repeatOrder} onSubmitDraft={submitDraft} onDelete={deleteOrder} />}
+    {view === "orders" && <Orders showImages={!!user.show_order_images} orders={orders} refreshing={refreshingOrders} onRefresh={refreshOrders} onRepeat={repeatOrder} onSubmitDraft={submitDraft} onDelete={id=>{const order=orders.find(row=>row.id===id);if(order)setDeleteCandidate(order)}} />}
     {view === "documents" && <Documents showImages={!!user.show_delivery_note_images} notes={deliveryNotes} invoices={invoices} />}
     {view === "account" && <Account user={user} customer={customer} onPreferences={preferences=>setUser(previous=>previous?{...previous,...preferences}:previous)} />}
     {view === "ops" && <Operations orders={opsOrders} onRefresh={refreshOperations} />}
@@ -350,6 +349,7 @@ export default function Page() {
     {view === "category-visibility" && isOperator && <CategoryVisibility />}
     {!isOperator && <nav className="mobile-nav">{[["home","Inicio"],["catalog","Buscar"],["orders","Pedidos"],["account","Cuenta"]].map(([id,label]) => <button key={id} className={view===id?"active":""} onClick={() => setView(id as View)}>{label}</button>)}</nav>}
     {cartOpen && cart && <CartDrawer cart={cart} stores={stores} onClose={() => setCartOpen(false)} onContinue={()=>{setCartOpen(false);setView("catalog")}} onUpdate={updateCart} onRemove={removeCart} onCheckout={checkout} />}
+    {deleteCandidate&&<DeleteOrderDialog order={deleteCandidate} onCancel={()=>setDeleteCandidate(null)} onConfirm={()=>deleteOrder(deleteCandidate.id)}/>}
     {orderConfirmation && <OrderConfirmation order={orderConfirmation} onClose={()=>setOrderConfirmation(null)} onViewOrders={()=>{setOrderConfirmation(null);setView("orders")}} />}
     {menuOpen&&!isOperator&&<SiteMenu onClose={()=>setMenuOpen(false)} onNavigate={next=>{setView(next);setMenuOpen(false)}} onCatalog={()=>{setMenuOpen(false);setCatalogMenuOpen(true);setView("catalog")}}/>}
     {catalogMenuOpen&&!isOperator&&<CatalogMenu classification={classification} onClose={()=>setCatalogMenuOpen(false)} onSelect={filters=>{selectCatalogCategory(filters);setCatalogMenuOpen(false)}} />}
@@ -492,13 +492,14 @@ function ExitOrderDialog({order,busy,error,onCancel,onSave}:{order:Order;busy:bo
 function OperatorWebOrders({orders,onDelivered}:{orders:Order[];onDelivered:()=>Promise<void>}) {
   const [busy,setBusy]=useState<string|null>(null),[error,setError]=useState("");
   const [registerOrder,setRegisterOrder]=useState<Order|null>(null);
+  const [deleteCandidate,setDeleteCandidate]=useState<Order|null>(null);
   async function registration(order:Order,state:"PENDIENTE"|"REGISTRADO",number:string|null=null){
     if(state==="PENDIENTE"&&!window.confirm(state==="PENDIENTE"?`¿Devolver ${order.number} a Pendiente? Se quitará el vínculo EXIT, la fecha de entrega y las cantidades servidas. El robot podrá procesarlo nuevamente.`:`¿Marcar ${order.number} como Registrado y vincularlo a EXIT ${number}?`))return;
     setBusy(order.id);setError("");try{await api(`/api/v1/store/orders/${order.id}/registration`,{method:"PATCH",body:JSON.stringify({state,exit_order_number:number})});setRegisterOrder(null);await onDelivered()}catch(e){setError((e as Error).message)}finally{setBusy(null)}
   }
-  async function remove(order:Order){if(!window.confirm(`¿Eliminar el pedido WEB ${order.number} y todas sus líneas? Esta acción no elimina pedidos de EXIT y no se puede deshacer.`))return;setBusy(order.id);setError("");try{await api(`/api/v1/store/orders/${order.id}`,{method:"DELETE"});await onDelivered()}catch(e){setError((e as Error).message)}finally{setBusy(null)}}
+  async function remove(order:Order){await api(`/api/v1/store/orders/${order.id}`,{method:"DELETE"});setDeleteCandidate(null);try{await onDelivered()}catch(e){setError((e as Error).message)}}
   async function deliver(order:Order){if(!window.confirm(`¿Confirmar la entrega del pedido ${order.nro_pedido_exit||order.number}? Se guardarán la fecha y hora actuales.`))return;setBusy(order.id);setError("");try{await api("/api/v1/store/orders/delivery",{method:"POST",body:JSON.stringify({order_id:order.delivery_order_id||order.id,order_date:order.created_at.slice(0,10)})});await onDelivered()}catch(e){setError((e as Error).message)}finally{setBusy(null)}}
-  return <>{registerOrder&&<ExitOrderDialog order={registerOrder} busy={busy!==null} error={error} onCancel={()=>{setRegisterOrder(null);setError("")}} onSave={number=>registration(registerOrder,"REGISTRADO",number)}/>}<div className="operator-web-list">{error&&<p className="error" role="alert">{error}</p>}{orders.map(order=><details className="operator-web-order" key={order.id}><summary><span className="order-identifiers"><b>{order.nro_pedido_exit||order.number}</b><small>{new Date(order.created_at).toLocaleString("es-ES")} · {order.store}</small><small>Recogida: {order.pickup_date?`Programada · ${new Date(order.pickup_date+"T12:00:00").toLocaleDateString("es-ES")}`:"Inmediata"}</small></span><span><b>{order.customer}</b><small>Código {order.customer_code||"—"} · {order.created_by||"EXIT"}</small></span><span className={`workflow-badge stage-${visibleOrderStage(order.estado_registro_exit)}`}>{orderStateLabel(order.estado_registro_exit||"PENDIENTE")}</span><span><b>{(order.items||[]).length} líneas</b><small>{new Set((order.items||[]).map(item=>item.sku)).size} referencias</small></span><span className="order-expand">Ver detalle⌄</span></summary><div className="operator-web-detail"><PickupEditor order={order} onSaved={onDelivered}/><div className="web-order-origin"><b>PEDIDO WEB</b><span>{order.auxiliary_reference}</span><span className="web-order-change" role="group" aria-label="Cambiar estado del pedido"><span>Cambiar a:</span>{order.estado_registro_exit!=="PENDIENTE"&&<button className="primary" disabled={busy!==null} onClick={()=>void registration(order,"PENDIENTE")}>Pendiente</button>}{order.estado_registro_exit==="PENDIENTE"&&<button className="primary" disabled={busy!==null} onClick={()=>{setError("");setRegisterOrder(order)}}>Registrado</button>}</span>{order.estado_registro_exit==="PENDIENTE"&&!order.nro_pedido_exit&&<button className="secondary" disabled={busy!==null} onClick={()=>void remove(order)}>Eliminar pedido</button>}{order.delivered_at?<span>Entregado: {new Date(order.delivered_at).toLocaleString("es-ES")}</span>:order.estado_registro_exit==="ATENDIDO"?<button className="primary" disabled={busy!==null} onClick={()=>void deliver(order)}>{busy===order.id?"Guardando…":"Entregar"}</button>:order.estado_registro_exit==="PENDIENTE"?<><span>Pendiente de registro en EXIT.</span></>:null}</div><div className="web-order-lines"><div className="web-order-lines-head"><span>Artículo</span><span>Zona</span><span>Pedida</span><span>Servida</span><span>Estado</span></div>{(order.items||[]).map((item,index)=>{const served=item.served_quantity??Math.max(0,item.quantity-(item.pending_quantity??item.quantity));return <div className="web-order-line" key={`${order.id}-${item.sku}-${index}`}><span><b>{item.description}</b><small>{item.sku}</small></span><span>{item.fulfillment_zone||"SGA"}</span><span>{units(item.quantity)}</span><span>{units(served)}</span><strong>{served>=item.quantity?"SERVIDO":"PENDIENTE"}</strong></div>})}</div></div></details>)}{!orders.length&&<div className="ops-empty"><span>✓</span><h2>No hay pedidos WEB</h2><p>No existen pedidos WEB para las fechas y el estado seleccionados.</p></div>}</div></>
+  return <>{deleteCandidate&&<DeleteOrderDialog order={deleteCandidate} onCancel={()=>setDeleteCandidate(null)} onConfirm={()=>remove(deleteCandidate)}/>} {registerOrder&&<ExitOrderDialog order={registerOrder} busy={busy!==null} error={error} onCancel={()=>{setRegisterOrder(null);setError("")}} onSave={number=>registration(registerOrder,"REGISTRADO",number)}/>}<div className="operator-web-list">{error&&<p className="error" role="alert">{error}</p>}{orders.map(order=><details className="operator-web-order" key={order.id}><summary><span className="order-identifiers"><b>{order.nro_pedido_exit||order.number}</b><small>{new Date(order.created_at).toLocaleString("es-ES")} · {order.store}</small><small>Recogida: {order.pickup_date?`Programada · ${new Date(order.pickup_date+"T12:00:00").toLocaleDateString("es-ES")}`:"Inmediata"}</small></span><span><b>{order.customer}</b><small>Código {order.customer_code||"—"} · {order.created_by||"EXIT"}</small></span><span className={`workflow-badge stage-${visibleOrderStage(order.estado_registro_exit)}`}>{orderStateLabel(order.estado_registro_exit||"PENDIENTE")}</span><span><b>{(order.items||[]).length} líneas</b><small>{new Set((order.items||[]).map(item=>item.sku)).size} referencias</small></span><span className="order-expand">Ver detalle⌄</span></summary><div className="operator-web-detail"><PickupEditor order={order} onSaved={onDelivered}/><div className="web-order-origin"><b>PEDIDO WEB</b><span>{order.auxiliary_reference}</span><span className="web-order-change" role="group" aria-label="Cambiar estado del pedido"><span>Cambiar a:</span>{order.estado_registro_exit!=="PENDIENTE"&&<button className="primary" disabled={busy!==null} onClick={()=>void registration(order,"PENDIENTE")}>Pendiente</button>}{order.estado_registro_exit==="PENDIENTE"&&<button className="primary" disabled={busy!==null} onClick={()=>{setError("");setRegisterOrder(order)}}>Registrado</button>}</span>{order.estado_registro_exit==="PENDIENTE"&&!order.nro_pedido_exit&&<button className="secondary" disabled={busy!==null} onClick={()=>setDeleteCandidate(order)}>Eliminar pedido</button>}{order.delivered_at?<span>Entregado: {new Date(order.delivered_at).toLocaleString("es-ES")}</span>:order.estado_registro_exit==="ATENDIDO"?<button className="primary" disabled={busy!==null} onClick={()=>void deliver(order)}>{busy===order.id?"Guardando…":"Entregar"}</button>:order.estado_registro_exit==="PENDIENTE"?<><span>Pendiente de registro en EXIT.</span></>:null}</div><div className="web-order-lines"><div className="web-order-lines-head"><span>Artículo</span><span>Zona</span><span>Pedida</span><span>Servida</span><span>Estado</span></div>{(order.items||[]).map((item,index)=>{const served=item.served_quantity??Math.max(0,item.quantity-(item.pending_quantity??item.quantity));return <div className="web-order-line" key={`${order.id}-${item.sku}-${index}`}><span><b>{item.description}</b><small>{item.sku}</small></span><span>{item.fulfillment_zone||"SGA"}</span><span>{units(item.quantity)}</span><span>{units(served)}</span><strong>{served>=item.quantity?"SERVIDO":"PENDIENTE"}</strong></div>})}</div></div></details>)}{!orders.length&&<div className="ops-empty"><span>✓</span><h2>No hay pedidos WEB</h2><p>No existen pedidos WEB para las fechas y el estado seleccionados.</p></div>}</div></>
 }
 
 function Operations({orders,onRefresh}:{orders:Order[];onRefresh:(mode:OperationsView,from?:string,to?:string,state?:string,delegation?:string)=>Promise<void>}) {
