@@ -423,3 +423,5 @@ body{background:linear-gradient(180deg,#f6f9fb 0,#f1f5f7 420px,#f5f6f7 100%)}.se
 .opening-hours-table input.opening-hour-input:disabled{background:#eef2f5;color:#7b8c97;cursor:not-allowed}
 
 .qr-login{margin-top:16px;padding-top:16px;border-top:1px solid var(--line)}.qr-camera{display:block;width:100%;max-height:260px;margin:12px 0;object-fit:contain;background:#142b3b}.customer-access-qr{display:block;width:240px;max-width:100%;height:auto;margin:16px 0;background:white}.qr-login input[type=file]{display:block;width:100%;margin:8px 0}
+
+.qr-login h3{margin:0 0 6px;color:var(--navy);font-size:20px}.qr-login>.small{margin:0 0 12px}.qr-advanced{margin-top:14px;font-size:13px;color:var(--muted)}.qr-advanced>summary{cursor:pointer;width:max-content;padding:4px 0}.qr-advanced[open]>summary{margin-bottom:10px}.qr-advanced .label{font-size:13px}
