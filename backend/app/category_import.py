@@ -27,11 +27,12 @@ from sqlalchemy.orm import Session
 
 from .auth import audit, require_roles
 from .db import get_db
-from .erp_db import fetch_catalog_articles_by_codes
+from .erp_db import fetch_catalog_articles_by_codes, fetch_all_catalog_articles_for_export
 from .import_materials import clean, fake_ean, slug
 from .models import (
     Brand,
     Category,
+    CatalogAreaVisibility,
     MaterialArea,
     MaterialFamily,
     MaterialImportRow,
@@ -473,7 +474,12 @@ def export_category_classification(
     _: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")),
     db: Session = Depends(get_db),
 ):
-    """Una fila por artículo, incluidos inactivos y sin clasificación."""
+    """Cruza toda la maestra EXIT con la clasificación web, conservando registros solo web."""
+    try:
+        articles = fetch_all_catalog_articles_for_export()
+    except Exception as exc:
+        logger.exception("No se pudo exportar la maestra completa EXIT")
+        raise HTTPException(503, "No se pudo consultar la maestra completa en EXIT; no se ha generado una descarga parcial") from exc
     statement = (
         select(Product, MaterialArea, MaterialFamily, MaterialSubfamily, MaterialProductType)
         .outerjoin(MaterialArea, Product.material_area_id == MaterialArea.id)
@@ -482,6 +488,8 @@ def export_category_classification(
         .outerjoin(MaterialProductType, Product.material_product_type_id == MaterialProductType.id)
         .order_by(Product.sku)
     )
+    metadata = {row[0].sku: row for row in db.execute(statement).all()}
+    hidden = set(db.scalars(select(CatalogAreaVisibility.area_id).where(CatalogAreaVisibility.visible.is_(False))).all())
     output = io.StringIO(newline="")
     output.write("\ufeff")
     writer = csv.writer(output, delimiter=";")
@@ -489,6 +497,9 @@ def export_category_classification(
         "CodigoArticulo", "Descripcion", "Activo", "EstadoClasificacion",
         "CodigoCategoria", "Categoria", "CodigoFamilia", "Familia",
         "CodigoSubfamilia", "Subfamilia", "CodigoTipo", "TipoProducto",
+        "ExisteEnEXIT", "ExisteEnWeb", "ActivoEXIT", "VisibleCategoriaWeb",
+        "InactivoEXIT", "SituacionEXIT", "InternetEXIT", "ArticuloWEBEXIT", "InternetB2BEXIT",
+        "MarcaEXIT", "ReferenciaFabricanteEXIT", "UnidadMedidaEXIT", "DescripcionWeb",
     ])
 
     def safe(value):
@@ -496,12 +507,37 @@ def export_category_classification(
         # Evitar fórmulas al abrir el archivo en una hoja de cálculo.
         return "'" + text if text.lstrip().startswith(("=", "+", "-", "@")) or text.startswith(("\t", "\r", "\n")) else text
 
-    for product, area, family, subfamily, product_type in db.execute(statement).yield_per(1000):
-        row = [product.sku, product.short_description, "Sí" if product.active else "No",
-               product.classification_status or "SIN_CLASIFICAR"]
+    def write_article(code, article, metadata_row):
+        product, area, family, subfamily, product_type = metadata_row or (None,) * 5
+        inactive = article.get("inactive") if article else None
+        inactive_value = str(inactive).strip().lower()
+        exit_active = ""
+        if article and inactive_value in ("1", "true", "si", "sí"):
+            exit_active = "No"
+        elif article and inactive_value in ("0", "false"):
+            exit_active = "Sí"
+        web_active = ("Sí" if product.active else "No") if product else ""
+        complete = all((area, family, subfamily, product_type))
+        row = [code, article.get("description") if article else product.short_description, web_active,
+               (product.classification_status or "CLASIFICADO") if complete else "SIN_CLASIFICAR"]
         for level in (area, family, subfamily, product_type):
             row.extend([level.code if level else "", level.name if level else ""])
+        row.extend([
+            "Sí" if article else "No", "Sí" if product else "No",
+            exit_active,
+            ("No" if area.id in hidden else "Sí") if area else "",
+            *[(article or {}).get(field) for field in ("inactive", "situation", "internet", "web", "b2b", "brand_name", "manufacturer_reference", "unit")],
+            product.short_description if product else "",
+        ])
         writer.writerow([safe(value) for value in row])
+
+    seen = set()
+    for article in articles:
+        code = str(article["code"]).strip()
+        seen.add(code)
+        write_article(code, article, metadata.get(code))
+    for code in sorted(metadata.keys() - seen):
+        write_article(code, None, metadata[code])
     return StreamingResponse(
         iter([output.getvalue().encode("utf-8")]),
         media_type="text/csv; charset=utf-8",

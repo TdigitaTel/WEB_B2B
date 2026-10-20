@@ -73,7 +73,7 @@ export default function CategoryUpload() {
 
     <section className={styles.notice}>
       <strong>Esta herramienta no carga imágenes.</strong>
-      <span>Los enlaces descargan registros para revisión. No cargan categorías ni fotografías automáticamente.</span>
+      <span>La descarga completa incluye todos los materiales de EXIT, su clasificación web y sus estados, también inactivos y sin stock. No carga categorías ni fotografías automáticamente.</span>
     </section>
 
     <form className={styles.uploadCard} onSubmit={submit}>
