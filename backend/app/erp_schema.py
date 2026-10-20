@@ -59,6 +59,7 @@ ARTICLE = {
         "price_with_tax": ("PrecioVentaConIVA0", "PrecioVentaconIVA0"),
         "price_without_tax": ("PrecioVentaSinIVA0", "PrecioVentasinIVA0"),
         "inactive": ("Inactivo",),
+        "situation": ("Situacion", "Situación"),
         "internet": ("Internet",),
         "web": ("ArticuloWEB",),
         "b2b": ("InternetB2B",),

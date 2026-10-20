@@ -115,6 +115,24 @@ def _prepare_eligible_articles(cursor, article_codes: list[str] | None) -> str:
     return "INNER JOIN #EligibleArticles e ON e.article_code = "
 
 
+def fetch_all_catalog_articles_for_export() -> list[dict]:
+    """Maestra completa para análisis: sin stock, paginación ni filtros comerciales."""
+    with connect_sqlserver() as connection:
+        columns = _article_columns(connection)
+        fields = {
+            name: _article_text(columns.get(name), length=500 if name == "description" else 200)
+            for name in ("code", "description", "brand_name", "manufacturer_reference", "unit",
+                         "inactive", "situation", "internet", "web", "b2b")
+        }
+        selections = ", ".join(f"{expression} AS [{name}]" for name, expression in fields.items())
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f"SELECT {selections} FROM {_identifier(ARTICLE['schema'])}.{_identifier(ARTICLE['table'])} a "
+                f"WHERE {fields['code']} <> '' ORDER BY {fields['code']}"
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+
 def fetch_catalog_articles(query: str = "", page: int = 1, page_size: int = 24,
                            article_codes: list[str] | None = None, excluded_codes: list[str] | None = None) -> tuple[list[dict], int]:
     """Pagina la maestra activa de EXIT; PostgreSQL solo limita por clasificación."""
