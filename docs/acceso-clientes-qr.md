@@ -23,3 +23,7 @@ Deshabilitar al cliente revoca también su QR. Volver a habilitarlo exige genera
 El arranque crea la tabla customer_qr_access de forma idempotente mediante metadata.create_all. No altera usuarios existentes ni almacena QR en archivos públicos. No hay librerías nuevas de Python: se usa el generador QR de ReportLab que ya existe. El lector del navegador usa jsqr 1.4.0.
 
 Validar en desarrollo: generar/descargar, entrar con cámara e imagen, regenerar, revocar, caducar, deshabilitar cliente y comprobar el cambio de contraseña inicial.
+
+## Panel de cámara
+
+El vídeo se enlaza al flujo después de que React monta el elemento, con reproducción automática silenciada y en línea. Si no entrega imagen en diez segundos o falla la reproducción se cierra y aparece un mensaje. Reiniciar y salir del login liberan los recursos de la cámara. Prueba reproducible sin cámara física: `cd frontend && npm ci && npm run test:qr-camera`.
