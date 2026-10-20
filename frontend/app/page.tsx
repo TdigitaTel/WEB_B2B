@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import CustomerAccess, {InitialPassword} from "./CustomerAccess";
+import {QrLogin} from "./QrAccess";
 import CategoryUpload from "./CategoryUpload";
 import CategoryVisibility from "./CategoryVisibility";
 
@@ -264,6 +265,12 @@ export default function Page() {
     setUser(result.user); setLoading(true); await loadAccount();
   }
 
+  async function loginQr(token:string){
+    setError("");
+    const result=await api<{user:User}>("/api/v1/auth/qr",{method:"POST",body:JSON.stringify({token})});
+    setUser(result.user);setLoading(true);await loadAccount();
+  }
+
   async function logout() { try { await api("/api/v1/auth/logout", { method: "POST" }); } finally { window.dispatchEvent(new Event("session-expired")); location.replace(location.pathname); } }
 
   async function addProduct(productId: string, quantity = 1) {
@@ -306,7 +313,7 @@ export default function Page() {
   }
 
   if (loading) return <div className="loading">Preparando el portal profesional…</div>;
-  if (!user) return <Login onLogin={login} error={error} />;
+  if (!user) return <Login onLogin={login} onQrLogin={loginQr} error={error} />;
 
   if (user.must_change_password) return <InitialPassword onChanged={loadAccount} onLogout={logout}/>;
 
@@ -358,10 +365,10 @@ function SiteMenu({onClose,onNavigate,onCatalog}:{onClose:()=>void;onNavigate:(v
 
 function CatalogMenu({classification,onClose,onSelect}:{classification:AreaNode[];onClose:()=>void;onSelect:(filters:CatalogFilters)=>void}) { const [areaId,setAreaId]=useState(String(classification[0]?.id||"")); const area=classification.find(item=>String(item.id)===areaId); return <div className="menu-overlay" role="presentation" onMouseDown={e=>{if(e.target===e.currentTarget)onClose()}}><section className="mega-menu" role="dialog" aria-modal="true" aria-label="Categorías del catálogo"><div className="mega-menu-head"><div><span className="eyebrow">CATÁLOGO PROFESIONAL</span><h2>¿Qué material necesitas?</h2></div><button aria-label="Cerrar menú" onClick={onClose}>×</button></div><div className="mega-menu-body"><nav className="mega-departments"><b>Departamentos</b>{classification.map(item=><button key={item.id} className={areaId===String(item.id)?"active":""} onMouseEnter={()=>setAreaId(String(item.id))} onClick={()=>setAreaId(String(item.id))}>{item.name}<span>›</span></button>)}</nav><div className="mega-content"><button className="mega-all" onClick={()=>onSelect({areaId:String(area?.id||""),familyId:"",subfamilyId:"",productTypeId:""})}>Ver todo en {area?.name||"el catálogo"} →</button><div className="mega-family-grid">{area?.families.map(family=><section key={family.id}><button className="mega-family" onClick={()=>onSelect({areaId:String(area.id),familyId:String(family.id),subfamilyId:"",productTypeId:""})}>{family.name}</button>{family.subfamilies.slice(0,6).map(subfamily=><button key={subfamily.id} onClick={()=>onSelect({areaId:String(area.id),familyId:String(family.id),subfamilyId:String(subfamily.id),productTypeId:""})}>{subfamily.name}</button>)}</section>)}</div></div></div></section></div> }
 
-function Login({onLogin,error}:{onLogin:(email:string,password:string)=>Promise<void>;error:string}) {
+function Login({onLogin,onQrLogin,error}:{onQrLogin:(token:string)=>Promise<void>;onLogin:(email:string,password:string)=>Promise<void>;error:string}) {
   const [loginError,setLoginError]=useState(""); const [email,setEmail]=useState(""); const [password,setPassword]=useState(""); const [busy,setBusy]=useState(false);
   async function submit(e:FormEvent){e.preventDefault();setBusy(true);try{await onLogin(email,password)}catch(e){setLoginError((e as Error).message)}finally{setBusy(false)}}
-  return <div className="login"><section className="login-brand"><img className="login-logo" src="/bermudez-ulloa-logo.jpg" alt="Bermúdez Ulloa"/><h1>Material profesional.<br/>Pedido en segundos.</h1><p>Consulta tu precio, comprueba stock local y deja el pedido preparado para recoger en Almeiras.</p></section><section className="login-panel"><form className="login-form" onSubmit={submit}><h2>Acceso profesional</h2><p className="small">Entra con la cuenta de tu empresa.</p><label className="label">Usuario o email</label><input className="input" value={email} onChange={e=>setEmail(e.target.value)}/><label className="label">Contraseña</label><input className="input" type="password" autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)}/>{(error||loginError)&&<p className="error">{error||loginError}</p>}<button className="primary block" disabled={busy}>{busy?"Entrando…":"Iniciar sesión"}</button></form></section></div>
+  return <div className="login"><section className="login-brand"><img className="login-logo" src="/bermudez-ulloa-logo.jpg" alt="Bermúdez Ulloa"/><h1>Material profesional.<br/>Pedido en segundos.</h1><p>Consulta tu precio, comprueba stock local y deja el pedido preparado para recoger en Almeiras.</p></section><section className="login-panel"><form className="login-form" onSubmit={submit}><h2>Acceso profesional</h2><p className="small">Entra con la cuenta de tu empresa.</p><label className="label">Usuario o email</label><input className="input" value={email} onChange={e=>setEmail(e.target.value)}/><label className="label">Contraseña</label><input className="input" type="password" autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)}/>{(error||loginError)&&<p className="error">{error||loginError}</p>}<button className="primary block" disabled={busy}>{busy?"Entrando…":"Iniciar sesión"}</button><QrLogin onLogin={onQrLogin}/></form></section></div>
 }
 
 function Home({customer,orders,products,classification,onNavigate,onSelectArea,onAdd}:{customer:AccountCustomer|null;orders:Order[];products:Product[];classification:AreaNode[];onNavigate:(v:View)=>void;onSelectArea:(id:number)=>void;onAdd:(id:string)=>void}) {
