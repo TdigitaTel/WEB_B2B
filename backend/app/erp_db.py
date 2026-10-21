@@ -4,7 +4,7 @@ from datetime import date
 
 from .config import settings
 from .erp_schema import ARTICLE, CUSTOMER, CUSTOMER_PURCHASES, IMAGE, SALES_DOCUMENTS, STOCK, WAREHOUSE
-from .search import normalize_query
+from .search import normalize_query, catalog_search_intent, ACCESSORY_NAMES
 
 
 def connect_sqlserver():
@@ -187,8 +187,18 @@ def fetch_catalog_articles(query: str = "", page: int = 1, page_size: int = 24,
             searchable.extend(expression for expression in (
                 description_expression, reference_expression, ean_expression, brand_expression,
             ) if expression != "NULL")
-            for term in normalized_query.split():
-                conditions.append("(" + " OR ".join(f"{expression} LIKE %s" for expression in searchable) + ")")
+            terms, accessory_search = catalog_search_intent(query)
+            if accessory_search:
+                # La pieza debe aparecer como palabra completa en su descripción.
+                # Evita que «te» coincida con «calentador» o «termostato».
+                piece_text = f"COALESCE({description_expression}, '')"
+                for separator in ("-", "/", ".", ",", "(", ")"):
+                    piece_text = f"REPLACE({piece_text}, '{separator}', ' ')"
+                piece_text = f"(' ' + {piece_text} + ' ') COLLATE Latin1_General_CI_AI"
+                conditions.append("(" + " OR ".join(f"{piece_text} LIKE %s" for _ in ACCESSORY_NAMES) + ")")
+                parameters.extend(f"% {name} %" for name in ACCESSORY_NAMES)
+            for term in terms:
+                conditions.append("(" + " OR ".join(f"{expression} COLLATE Latin1_General_CI_AI LIKE %s" for expression in searchable) + ")")
                 parameters.extend([f"%{term}%"] * len(searchable))
         parameters = stock_parameters + parameters
         from_sql = f"FROM {schema}.{table} a {eligible_join}{stock_join}WHERE " + " AND ".join(conditions)

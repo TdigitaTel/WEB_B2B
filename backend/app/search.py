@@ -17,3 +17,25 @@ def normalize_query(query: str) -> str:
     value = re.sub(r'\b(?:de|del|la|el|pulgadas?)\b', ' ', value)
     value = value.replace('"', '').replace('″', '')
     return ' '.join(value.split())
+
+
+# Solo se amplía el término genérico cuando el cliente también indica material.
+ACCESSORY_NAMES = (
+    "accesorio", "accesorios", "codo", "codos", "te", "tes", "racor", "racores",
+    "manguito", "manguitos", "machon", "machones", "entronque", "entronques",
+    "reduccion", "reducciones", "tapon", "tapones", "union", "uniones",
+    "enlace", "enlaces", "adaptador", "adaptadores", "curva", "curvas",
+    "cruz", "cruces", "brida", "bridas", "casquillo", "casquillos",
+    "tuerca", "tuercas", "collarin", "collarines", "colector", "colectores",
+)
+MATERIAL_TERMS = frozenset(("laton", "cobre", "inox", "inoxidable", "pvc", "ppr", "pex", "polietileno", "acero"))
+
+
+def catalog_search_intent(query: str) -> tuple[list[str], bool]:
+    """Devuelve palabras obligatorias y si se buscan accesorios por material."""
+    terms = normalize_query(query).split()
+    accessories = any(term in ("accesorio", "accesorios") for term in terms)
+    by_material = accessories and any(term in MATERIAL_TERMS for term in terms)
+    if by_material:
+        terms = [term for term in terms if term not in ("accesorio", "accesorios")]
+    return terms, by_material
