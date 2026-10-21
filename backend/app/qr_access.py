@@ -46,12 +46,16 @@ def eligible(db, code):
 @router.post("/api/v1/store/customer-access/qr")
 def customer_qr(data: QrAction, response: Response, actor: User = Depends(operator), db: Session = Depends(get_db)):
     account = eligible(db, data.customer_code)
+    return issue_qr(account, actor, db, response, data.regenerate)
+
+
+def issue_qr(account, actor, db, response, regenerate=False):
     record = db.scalar(select(CustomerQrAccess).where(CustomerQrAccess.user_id == account.id).with_for_update())
     now = datetime.now(timezone.utc)
     if not record:
         record = CustomerQrAccess(user_id=account.id)
         db.add(record)
-    if not record.id or data.regenerate or not record.active or record.expires_at.replace(tzinfo=timezone.utc) <= now:
+    if not record.id or regenerate or not record.active or record.expires_at.replace(tzinfo=timezone.utc) <= now:
         secret = secrets.token_urlsafe(32)
         record.secret_hash = hashlib.sha256(secret.encode()).hexdigest()
         record.secret_ciphertext = cipher().encrypt(secret.encode()).decode()
@@ -71,7 +75,7 @@ def customer_qr(data: QrAction, response: Response, actor: User = Depends(operat
     response.headers["Cache-Control"] = "no-store"
     db.commit()
     return {"image": "data:image/svg+xml;base64,"+base64.b64encode(svg).decode(), "url": link,
-            "expires_at": record.expires_at, "customer_code": data.customer_code}
+            "expires_at": record.expires_at, "customer_code": account.erp_customer_code}
 
 
 @router.post("/api/v1/store/customer-access/qr/revoke")

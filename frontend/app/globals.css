@@ -438,3 +438,13 @@ body{background:linear-gradient(180deg,#f6f9fb 0,#f1f5f7 420px,#f5f6f7 100%)}.se
 .delete-order-final:hover{background:#94221f}
 .delete-order-dialog button:disabled{opacity:.5;cursor:not-allowed}
 .delete-order-dialog .confirmation-actions{flex-wrap:wrap}
+
+/* Gestión de los accesos asociados a una cuenta de cliente. */
+.subusers-layout{display:grid;grid-template-columns:minmax(220px,1fr) minmax(300px,2fr);gap:24px;margin-top:24px}
+.subusers-list{display:flex;flex-direction:column;gap:8px;align-items:stretch}
+.subusers-list button{text-align:left;display:flex;flex-direction:column;gap:5px;padding:16px;border:1px solid #cddde6;background:#fff;border-radius:12px;color:#233844;overflow-wrap:anywhere}
+.subusers-list button.selected{background:#e7f3fb;border-color:#20648a}
+.subuser-editor>label{display:block;margin-bottom:16px}.subuser-editor .input{display:block;width:100%;margin-top:8px}
+.subuser-permissions{display:flex;flex-direction:column;gap:14px;margin:20px 0}.subuser-permissions label{display:flex;align-items:center;gap:10px}.subuser-permissions input{flex:none;width:18px;height:18px}
+.subuser-actions{display:flex;gap:10px;flex-wrap:wrap}.subuser-credentials{margin-top:20px;padding:18px;background:#edf7f0;border-radius:12px;overflow-wrap:anywhere}.subuser-credentials code{font-size:1.15rem;user-select:all}.account-qr-result{margin-top:18px}.account-qr-result img{display:block;max-width:100%;height:auto}
+@media(max-width:700px){.subusers-layout{grid-template-columns:1fr}.subusers-section .section-heading{align-items:flex-start;gap:12px;flex-direction:column}}

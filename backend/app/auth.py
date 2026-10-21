@@ -73,6 +73,25 @@ def current_user(
         allowed = {"/api/v1/account", "/api/v1/account/password", "/api/v1/auth/logout", "/api/v1/auth/activity"}
         if request.url.path not in allowed:
             raise HTTPException(403, "Debes cambiar tu contraseña inicial antes de continuar")
+    from .account_permissions import effective_permissions
+    permissions = effective_permissions(user, db)
+    path = request.url.path
+    if path == "/api/v1/account/preferences" and not permissions["can_manage_preferences"]:
+        raise HTTPException(403, "Tu cuenta principal no permite cambiar estas preferencias")
+    kind = request.query_params.get("kind", "").upper()
+    if path.startswith("/api/v1/documents/"):
+        if "/ALBARAN/" in path.upper(): kind = "ALBARAN"
+        elif "/FACTURA/" in path.upper(): kind = "FACTURA"
+        if not permissions["can_view_prices"]:
+            raise HTTPException(403, "La descarga contiene precios que tu usuario no puede consultar")
+        if ((kind == "ALBARAN" and not permissions["can_view_delivery_notes"])
+                or (kind == "FACTURA" and not permissions["can_view_invoices"])
+                or (not kind and not (permissions["can_view_delivery_notes"] and permissions["can_view_invoices"]))):
+            raise HTTPException(403, "Tu usuario no tiene permiso para consultar estos documentos")
+    if (path == "/api/v1/delivery-notes" and not permissions["can_view_delivery_notes"]) or (path == "/api/v1/invoices" and not permissions["can_view_invoices"]):
+        raise HTTPException(403, "Tu usuario no tiene permiso para consultar estos documentos")
+    request.state.hide_prices = not permissions["can_view_prices"]
+    request.state.document_permissions = permissions
     request.state.auth_session = session
     return user
 
