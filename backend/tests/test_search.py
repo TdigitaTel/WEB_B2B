@@ -34,9 +34,8 @@ def test_material_accessory_intent(query, terms, accessories):
     assert catalog_search_intent(query) == (terms, accessories)
 
 
-def test_exit_accessory_query_uses_piece_group_and_preserves_material_measure_and_pagination(monkeypatch):
+def test_exit_generic_material_queries_match_direct_search_and_preserve_filters(monkeypatch):
     from app import erp_db
-    from app.search import ACCESSORY_NAMES
     queries = []
     class Cursor:
         def __enter__(self): return self
@@ -57,7 +56,8 @@ def test_exit_accessory_query_uses_piece_group_and_preserves_material_measure_an
     assert erp_db.fetch_catalog_articles("accesorios de latón 1/2", page=2) == ([], 0)
     count_sql, count_params = queries[0]
     page_sql, page_params = queries[1]
-    assert "% codo %" in count_params and "% te %" in count_params and "% racor %" in count_params
+    assert not any(word in count_params for word in ("% codo %", "% te %", "% racor %"))
+    assert "REPLACE(" not in count_sql
     assert "%laton%" in count_params and "%1/2%" in count_params
     assert "%accesorios%" not in count_params
     assert count_sql.count(" LIKE %s") == len(count_params)
@@ -68,28 +68,21 @@ def test_exit_accessory_query_uses_piece_group_and_preserves_material_measure_an
     assert page_params[-2:] == (24, 24)
     assert "OFFSET %s ROWS FETCH NEXT %s ROWS ONLY" in page_sql
 
+    expected = list(queries)
+    for query in ("latón 1/2", "piezas de latón 1/2", "componentes de latón 1/2", "conexiones de latón 1/2"):
+        queries.clear()
+        erp_db.fetch_catalog_articles(query, page=2)
+        assert queries == expected
+
     queries.clear()
     config = {"enabled":True, "accessory_terms":["componentes"], "piece_names":["racor"], "materials":["laton"]}
     erp_db.fetch_catalog_articles("componentes de latón", search_config=config)
     custom_params = queries[0][1]
-    assert "% racor %" in custom_params and "%laton%" in custom_params
+    assert "% racor %" not in custom_params and "%laton%" in custom_params
     assert "% codo %" not in custom_params and "%componentes%" not in custom_params
     queries.clear()
     erp_db.fetch_catalog_articles("componentes de latón", search_config={**config,"enabled":False})
     assert "%componentes%" in queries[0][1] and "% racor %" not in queries[0][1]
-
-
-def test_accessory_piece_boundaries_exclude_unrelated_material_matches():
-    import re
-    import unicodedata
-    from app.search import ACCESSORY_NAMES
-    # Mismas palabras y separadores que la consulta SQL; material sigue obligatorio.
-    def matches(description):
-        text = ''.join(c for c in unicodedata.normalize('NFD', description.lower()) if not unicodedata.combining(c))
-        words = set(re.sub(r'[-/.,()]', ' ', text).split())
-        return "laton" in words and bool(words.intersection(ACCESSORY_NAMES))
-    assert all(matches(d) for d in ("CODO LATON 1/2", "TE LATÓN 3/4", "RACOR DE LATON", "MANGUITO-LATON"))
-    assert not any(matches(d) for d in ("CALENTADOR LATON", "TERMOSTATO LATON", "CODO PVC 1/2"))
 
 
 def test_search_custom_configuration_and_disabled_mode():

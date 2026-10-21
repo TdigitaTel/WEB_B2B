@@ -189,16 +189,10 @@ def fetch_catalog_articles(query: str = "", page: int = 1, page_size: int = 24,
                 description_expression, reference_expression, ean_expression, brand_expression,
             ) if expression != "NULL")
             config = search_config if search_config is not None else default_search_config()
-            terms, accessory_search = catalog_search_intent(query, config)
-            if accessory_search:
-                # La pieza debe aparecer como palabra completa en su descripción.
-                # Evita que «te» coincida con «calentador» o «termostato».
-                piece_text = f"COALESCE({description_expression}, '')"
-                for separator in ("-", "/", ".", ",", "(", ")"):
-                    piece_text = f"REPLACE({piece_text}, '{separator}', ' ')"
-                piece_text = f"(' ' + {piece_text} + ' ') COLLATE Latin1_General_CI_AI"
-                conditions.append("(" + " OR ".join(f"{piece_text} LIKE %s" for _ in config["piece_names"]) + ")")
-                parameters.extend(f"% {name} %" for name in config["piece_names"])
+            # Las palabras genéricas se omiten al reconocer un material.
+            # Usar exactamente el mismo filtro que «latón» evita expandir decenas
+            # de LIKE y REPLACE por fila en el conteo y en la página de resultados.
+            terms, _ = catalog_search_intent(query, config)
             for term in terms:
                 conditions.append("(" + " OR ".join(f"{expression} COLLATE Latin1_General_CI_AI LIKE %s" for expression in searchable) + ")")
                 parameters.extend([f"%{term}%"] * len(searchable))
