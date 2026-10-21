@@ -255,7 +255,7 @@ def health():
 @app.post("/api/v1/auth/login")
 def login(data: LoginIn, response: Response, db: Session = Depends(get_db)):
     identifier = data.email.strip().lower()
-    candidates = db.scalars(select(User).where((func.lower(User.email) == identifier) | ((func.lower(User.erp_customer_code) == identifier) & User.role.in_(["CLIENTE", "CLIENTE_ADMIN"]) & User.parent_user_id.is_(None)))).all()
+    candidates = db.scalars(select(User).where((func.lower(User.email) == identifier) | (func.lower(User.access_code) == identifier) | ((func.lower(User.erp_customer_code) == identifier) & User.role.in_(["CLIENTE", "CLIENTE_ADMIN"]) & User.parent_user_id.is_(None)))).all()
     valid = [candidate for candidate in candidates if candidate.active and verify_password(data.password, candidate.password_hash)]
     user = valid[0] if len(valid) == 1 else None
     if not user:

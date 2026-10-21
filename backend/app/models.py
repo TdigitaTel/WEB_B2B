@@ -63,6 +63,8 @@ class User(Base, TimestampMixin):
     email: Mapped[str] = mapped_column(String(200), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(Text)
     full_name: Mapped[str] = mapped_column(String(160))
+    access_code: Mapped[str | None] = mapped_column(String(40), unique=True, index=True)
+    contact_phone: Mapped[str | None] = mapped_column(String(40))
     role: Mapped[str] = mapped_column(String(40), index=True)
     customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id"), index=True)
     erp_customer_code: Mapped[str | None] = mapped_column(String(40), index=True)
