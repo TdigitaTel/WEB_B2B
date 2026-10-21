@@ -1,5 +1,7 @@
 # Subusuarios del cliente EXIT
 
+Mi cuenta se organiza en las pestañas **Mis datos**, **Preferencias**, **Contraseña**, **Acceso QR** y **Subusuarios**. Cada usuario ve solo las opciones que le permiten sus permisos. La pestaña Subusuarios es exclusiva del cliente principal.
+
 Desde **Mi cuenta → Subusuarios**, la cuenta principal puede crear accesos por correo y nombre, habilitarlos o deshabilitarlos, renovar su clave inicial y generar o revocar su QR personal. Los subusuarios mantienen el cliente comercial EXIT de la cuenta principal; no se crean clientes maestros nuevos en EXIT.
 
 Cada subusuario tiene cinco permisos independientes:

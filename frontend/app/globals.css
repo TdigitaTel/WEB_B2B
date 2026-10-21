@@ -448,3 +448,11 @@ body{background:linear-gradient(180deg,#f6f9fb 0,#f1f5f7 420px,#f5f6f7 100%)}.se
 .subuser-permissions{display:flex;flex-direction:column;gap:14px;margin:20px 0}.subuser-permissions label{display:flex;align-items:center;gap:10px}.subuser-permissions input{flex:none;width:18px;height:18px}
 .subuser-actions{display:flex;gap:10px;flex-wrap:wrap}.subuser-credentials{margin-top:20px;padding:18px;background:#edf7f0;border-radius:12px;overflow-wrap:anywhere}.subuser-credentials code{font-size:1.15rem;user-select:all}.account-qr-result{margin-top:18px}.account-qr-result img{display:block;max-width:100%;height:auto}
 @media(max-width:700px){.subusers-layout{grid-template-columns:1fr}.subusers-section .section-heading{align-items:flex-start;gap:12px;flex-direction:column}}
+
+/* Secciones de Mi cuenta, con navegación por teclado y espacio para móvil. */
+.account-tabs{display:flex;gap:8px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding:8px 0 14px;margin-bottom:20px}
+.account-tabs [role="tab"]{border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--navy);font:inherit;font-weight:750;padding:12px 18px;cursor:pointer}
+.account-tabs [aria-selected="true"]{background:var(--navy);color:#fff;border-color:var(--navy);box-shadow:inset 0 -3px 0 #d6a12f}
+.account-tabs [role="tab"]:focus-visible,.account-tab-panel:focus-visible{outline:3px solid var(--blue);outline-offset:3px}
+.account-tab-panel[hidden]{display:none!important}.account-tab-panel>.section{margin-top:0}.account-tab-panel>.password-form,.account-tab-panel>.display-preferences{max-width:720px}.account-tab-panel .subusers-section{margin-top:0}
+@media(max-width:560px){.account-tabs{gap:6px}.account-tabs [role="tab"]{flex:1 0 auto;padding:10px 12px}}
