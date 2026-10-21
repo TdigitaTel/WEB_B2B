@@ -111,6 +111,7 @@ class ExternalStatusChange(BaseModel):
 class WebOrderRegistrationChange(BaseModel):
     state: str = Field(pattern="^(PENDIENTE|REGISTRADO)$")
     exit_order_number: str | None = Field(default=None, max_length=80)
+    exit_registered_at: datetime | None = None
 
 
 class UserDisplayPreferences(BaseModel):

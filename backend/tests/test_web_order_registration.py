@@ -76,3 +76,69 @@ def test_pending_creates_missing_robot_event_once():
         assert len(events)==1 and events[0].sync_status==SyncStatus.pending
         assert events[0].event_type=='ORDER_CREATED'
         assert db.scalar(select(Order).where(Order.public_id==oid)).nro_pedido_exit is None
+
+
+def test_manual_exit_datetime_from_blocked_records_actual_history_and_is_idempotent(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from zoneinfo import ZoneInfo
+    from app.config import settings
+    from app.models import AuditEvent
+    operator=TestClient(app)
+    operator.post('/api/v1/auth/login',json={'email':'operador@bermudez.test','password':'123456'})
+    customer=TestClient(app)
+    customer.post('/api/v1/auth/login',json={'email':'compras001@cliente.test','password':'123456'})
+    registered=datetime.now(timezone.utc).replace(microsecond=0)-timedelta(minutes=5)
+    madrid=registered.astimezone(ZoneInfo('Europe/Madrid')).replace(tzinfo=None).isoformat()
+    with SessionLocal() as db:
+        actor=db.scalar(select(User).where(User.role=='OPERADOR_TIENDA'))
+        row=Order(order_number='WEB-MANUAL-WITH-DATETIME',company_code=actor.company_code,delegation_code='00',customer_code='CLI00001',origen_pedido='B2B',estado_registro_exit='BLOQUEADO',subtotal=1,tax_total=0,total=1)
+        db.add(row);db.flush()
+        db.add(OrderStatusHistory(order_id=row.id,estado_registro_exit='PENDIENTE',created_at=registered-timedelta(minutes=5),source='WEB'))
+        db.add(IntegrationOutbox(aggregate_type='ORDER',aggregate_id=row.public_id,event_type='ORDER_CREATED',payload={},sync_status=SyncStatus.error,last_error='Robot no disponible'))
+        db.commit();oid=row.public_id;pk=row.id;actor_id=actor.id
+    path=f'/api/v1/store/orders/{oid}/registration'
+    data={'state':'REGISTRADO','exit_order_number':'2026/AL/MANUAL-DATETIME','exit_registered_at':madrid}
+    assert customer.patch(path,json=data).status_code==403
+    response=operator.patch(path,json=data)
+    assert response.status_code==200,response.text
+    assert response.json()['estado_registro_exit']=='REGISTRADO'
+    events=[event for event in response.json()['history'] if event['estado_registro_exit']=='REGISTRADO']
+    assert len(events)==1 and 'Registro manual en EXIT' in events[0]['note']
+    assert operator.patch(path,json=data).status_code==200
+    with SessionLocal() as db:
+        saved=db.get(Order,pk)
+        assert saved.fecha_registro_exit.replace(tzinfo=timezone.utc)==registered
+        history=db.scalars(select(OrderStatusHistory).where(OrderStatusHistory.order_id==pk,OrderStatusHistory.estado_registro_exit=='REGISTRADO')).all()
+        assert len(history)==1 and history[0].changed_by_user_id==actor_id
+        assert history[0].created_at.replace(tzinfo=timezone.utc)==registered
+        assert not db.scalars(select(OrderStatusHistory).where(OrderStatusHistory.order_id==pk,OrderStatusHistory.estado_registro_exit.in_(['ATENDIDO','ENTREGADO']))).all()
+        outbox=db.scalar(select(IntegrationOutbox).where(IntegrationOutbox.aggregate_id==oid))
+        assert outbox.sync_status==SyncStatus.synced and outbox.last_error is None
+        audit=db.scalar(select(AuditEvent).where(AuditEvent.entity_id==oid,AuditEvent.action=='ORDER_REGISTRATION_CHANGED'))
+        assert audit.user_id==actor_id and audit.metadata_json['exit_registered_at']==registered.isoformat()
+    client_order=customer.get(f'/api/v1/orders/{oid}').json()
+    assert any(event['estado_registro_exit']=='REGISTRADO' for event in client_order['history'])
+    assert next(stage for stage in client_order['workflow'] if stage['etapa']=='EN_PROCESAMIENTO')['completed_at']
+    monkeypatch.setattr(settings,'show_order_status_history',False)
+    listing=operator.get('/api/v1/store/orders?view=web&state=TODOS&delegation=TODAS')
+    assert listing.status_code==200,listing.text
+    visible=next(item for item in listing.json() if item['id']==oid)
+    assert visible['history_enabled'] and any(event['estado_registro_exit']=='REGISTRADO' for event in visible['history'])
+    assert customer.get(f'/api/v1/orders/{oid}').json()['history_enabled'] is False
+
+
+def test_manual_exit_rejects_invalid_future_and_nonexistent_madrid_time():
+    from datetime import datetime,timedelta,timezone
+    operator=TestClient(app)
+    operator.post('/api/v1/auth/login',json={'email':'operador@bermudez.test','password':'123456'})
+    with SessionLocal() as db:
+        actor=db.scalar(select(User).where(User.role=='OPERADOR_TIENDA'))
+        row=Order(order_number='WEB-MANUAL-BAD-DATE',company_code=actor.company_code,delegation_code='00',origen_pedido='B2B',estado_registro_exit='PENDIENTE',subtotal=0,tax_total=0,total=0)
+        db.add(row);db.commit();oid=row.public_id;pk=row.id
+    path=f'/api/v1/store/orders/{oid}/registration'
+    for value in ['fecha inválida',(datetime.now(timezone.utc)+timedelta(days=1)).isoformat(),'2026-03-29T02:30:00']:
+        result=operator.patch(path,json={'state':'REGISTRADO','exit_order_number':'2026/AL/BAD-DATE','exit_registered_at':value})
+        assert result.status_code==422,result.text
+    with SessionLocal() as db:
+        assert db.get(Order,pk).nro_pedido_exit is None
+        assert not db.scalars(select(OrderStatusHistory).where(OrderStatusHistory.order_id==pk)).all()
