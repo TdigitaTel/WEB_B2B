@@ -67,6 +67,7 @@ def test_deadline_is_persisted_previewed_and_recalculated_by_operator(pickup_sch
     result = customer.post('/api/v1/orders',json={'company_code':store['company_code'],'delegation_code':store['code'],'pickup_date':day.isoformat()})
     assert result.status_code == 201, result.text
     order = result.json()
+    assert datetime.fromisoformat(order['server_now']).tzinfo is not None
     deadline = datetime.fromisoformat(order['attention_deadline_at']).astimezone(MADRID)
     assert deadline.date() == day and deadline.hour == 9
     assert order['preparation_minutes_snapshot'] == 60

@@ -15,7 +15,7 @@ El carrito consulta la previsión para la sede y fecha elegidas. Al enviar el pe
 
 Cambiar los parámetros de la sede no modifica los plazos ya guardados. Si el operador cambia la recogida, se calcula un nuevo plazo con los parámetros vigentes y se registra el cambio en el histórico y la auditoría. La excepción del operador para convertir en inmediata fuera del horario habitual conserva su funcionamiento: se calcula desde ese momento más los minutos configurados.
 
-El plazo aparece en confirmación, detalle del cliente y ventana Pedidos WEB del operador; la API de integración también lo incluye al consultar el pedido. Es un dato de seguimiento: no cierra ni elimina automáticamente pedidos, y no cambia la regla de conservación durante 24 horas.
+El plazo aparece en confirmación, detalle del cliente y ventana Pedidos WEB del operador. En Pedidos WEB se etiqueta como **Fecha máxima de entrega**, y muestra **Retraso** en rojo únicamente si se ha superado. El contador se actualiza cada segundo desde la hora del servidor recibida en la API (`server_now`), usando un reloj monotónico entre actualizaciones. Al entregar, el retraso se fija contra `delivered_at`; si un pedido cerrado no tiene hora de entrega, se informa sin inventar un retraso. No se asigna retraso a pedidos sin plazo. La API de integración también lo incluye al consultar el pedido. Es un dato de seguimiento: no cierra ni elimina automáticamente pedidos, y no cambia la regla de conservación durante 24 horas.
 
 ## Publicación
 
