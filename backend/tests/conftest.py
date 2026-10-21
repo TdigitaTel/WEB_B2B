@@ -133,3 +133,29 @@ def exit_erp_stub(monkeypatch):
     monkeypatch.setattr(main_module, "fetch_customer_delivery_statuses", lambda *args, **kwargs: [])
     monkeypatch.setattr(main_module, "fetch_delivery_statuses_for_orders", lambda *args, **kwargs: [])
     monkeypatch.setattr(main_module, "fetch_exit_orders_live", lambda *args, **kwargs: [])
+
+
+@pytest.fixture
+def pickup_schedule(exit_erp_stub):
+    """Horario real de prueba para los flujos que envían pedidos."""
+    import copy
+    from app.db import SessionLocal
+    from app.models import PickupSettings
+    from app.main import live_delegations
+    with SessionLocal() as db:
+        row = db.get(PickupSettings, 1)
+        previous = (row.preparation_minutes, copy.deepcopy(row.schedules)) if row else None
+        if not row:
+            row = PickupSettings(id=1, preparation_minutes=60, schedules={})
+            db.add(row)
+        row.preparation_minutes = 60
+        row.schedules = {f'{store.company}:{store.code}': [dict(enabled=True, morning_from='08:00', morning_to='13:00', afternoon_from='16:00', afternoon_to='19:00') for _ in range(7)] for store in live_delegations()}
+        db.commit()
+    yield
+    with SessionLocal() as db:
+        row = db.get(PickupSettings, 1)
+        if previous:
+            row.preparation_minutes, row.schedules = previous
+        elif row:
+            db.delete(row)
+        db.commit()

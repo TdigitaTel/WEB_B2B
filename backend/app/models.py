@@ -270,6 +270,8 @@ class Order(Base, TimestampMixin):
     nro_pedido_exit: Mapped[str | None] = mapped_column(String(80), index=True)
     fecha_registro_exit: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     pickup_date: Mapped[date | None] = mapped_column(Date)
+    attention_deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    preparation_minutes_snapshot: Mapped[int | None] = mapped_column(Integer)
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     origen_pedido: Mapped[str] = mapped_column(String(20), default="B2B", index=True)
     estado_registro_exit: Mapped[str] = mapped_column(String(80), default="PENDIENTE", index=True)
