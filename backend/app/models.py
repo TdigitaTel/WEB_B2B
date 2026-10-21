@@ -362,3 +362,9 @@ class CustomerQrAccess(Base):
     secret_ciphertext: Mapped[str] = mapped_column(Text)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class SearchSettings(Base):
+    __tablename__ = "search_settings"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    config: Mapped[dict] = mapped_column(JSON)

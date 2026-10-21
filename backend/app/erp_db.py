@@ -4,7 +4,7 @@ from datetime import date
 
 from .config import settings
 from .erp_schema import ARTICLE, CUSTOMER, CUSTOMER_PURCHASES, IMAGE, SALES_DOCUMENTS, STOCK, WAREHOUSE
-from .search import normalize_query
+from .search import normalize_query, catalog_search_intent, default_search_config
 
 
 def connect_sqlserver():
@@ -134,7 +134,8 @@ def fetch_all_catalog_articles_for_export() -> list[dict]:
 
 
 def fetch_catalog_articles(query: str = "", page: int = 1, page_size: int = 24,
-                           article_codes: list[str] | None = None, excluded_codes: list[str] | None = None) -> tuple[list[dict], int]:
+                           article_codes: list[str] | None = None, excluded_codes: list[str] | None = None,
+                           search_config: dict | None = None) -> tuple[list[dict], int]:
     """Pagina la maestra activa de EXIT; PostgreSQL solo limita por clasificación."""
     if article_codes is not None and not article_codes:
         return [], 0
@@ -187,8 +188,19 @@ def fetch_catalog_articles(query: str = "", page: int = 1, page_size: int = 24,
             searchable.extend(expression for expression in (
                 description_expression, reference_expression, ean_expression, brand_expression,
             ) if expression != "NULL")
-            for term in normalized_query.split():
-                conditions.append("(" + " OR ".join(f"{expression} LIKE %s" for expression in searchable) + ")")
+            config = search_config if search_config is not None else default_search_config()
+            terms, accessory_search = catalog_search_intent(query, config)
+            if accessory_search:
+                # La pieza debe aparecer como palabra completa en su descripción.
+                # Evita que «te» coincida con «calentador» o «termostato».
+                piece_text = f"COALESCE({description_expression}, '')"
+                for separator in ("-", "/", ".", ",", "(", ")"):
+                    piece_text = f"REPLACE({piece_text}, '{separator}', ' ')"
+                piece_text = f"(' ' + {piece_text} + ' ') COLLATE Latin1_General_CI_AI"
+                conditions.append("(" + " OR ".join(f"{piece_text} LIKE %s" for _ in config["piece_names"]) + ")")
+                parameters.extend(f"% {name} %" for name in config["piece_names"])
+            for term in terms:
+                conditions.append("(" + " OR ".join(f"{expression} COLLATE Latin1_General_CI_AI LIKE %s" for expression in searchable) + ")")
                 parameters.extend([f"%{term}%"] * len(searchable))
         parameters = stock_parameters + parameters
         from_sql = f"FROM {schema}.{table} a {eligible_join}{stock_join}WHERE " + " AND ".join(conditions)
