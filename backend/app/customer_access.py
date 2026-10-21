@@ -49,7 +49,7 @@ class InitialEmail(AccessAction):
 
 def accounts_for(db, code):
     return list(db.scalars(select(User).outerjoin(Customer, User.customer_id == Customer.id).where(
-        (User.erp_customer_code == code) | (Customer.erp_id == code)
+        ((User.erp_customer_code == code) | (Customer.erp_id == code)), User.parent_user_id.is_(None)
     ).order_by(User.id).with_for_update(of=User)).all())
 
 
@@ -79,7 +79,7 @@ def list_access(q: str = Query("", max_length=200), after: str = Query("", max_l
                 user: User = Depends(operator), db: Session = Depends(get_db)):
     if enabled_only:
         code = func.coalesce(func.nullif(func.trim(User.erp_customer_code), ""), Customer.erp_id)
-        conditions = [User.active.is_(True), User.role.in_(CUSTOMER_ROLES), code.is_not(None), ~func.lower(User.email).endswith("@cliente.test")]
+        conditions = [User.parent_user_id.is_(None), User.active.is_(True), User.role.in_(CUSTOMER_ROLES), code.is_not(None), ~func.lower(User.email).endswith("@cliente.test")]
         if q.strip():
             term = q.strip().lower()
             conditions.append(func.lower(code).contains(term, autoescape=True) | func.lower(User.full_name).contains(term, autoescape=True) | func.lower(User.email).contains(term, autoescape=True) | func.lower(Customer.legal_name).contains(term, autoescape=True) | func.lower(Customer.trade_name).contains(term, autoescape=True))
@@ -90,7 +90,7 @@ def list_access(q: str = Query("", max_length=200), after: str = Query("", max_l
         codes = list(db.scalars(codes_query.order_by(code).limit(51)).all())
         has_more = len(codes) > 50
         codes = codes[:50]
-        accounts = db.execute(select(User, Customer).outerjoin(Customer, User.customer_id == Customer.id).where(User.active.is_(True), User.role.in_(CUSTOMER_ROLES), code.in_(codes)).order_by(User.id)).all() if codes else []
+        accounts = db.execute(select(User, Customer).outerjoin(Customer, User.customer_id == Customer.id).where(User.parent_user_id.is_(None), User.active.is_(True), User.role.in_(CUSTOMER_ROLES), code.in_(codes)).order_by(User.id)).all() if codes else []
         try:
             exit_customers = fetch_access_customers_by_codes(codes)
         except Exception:
@@ -117,7 +117,7 @@ def list_access(q: str = Query("", max_length=200), after: str = Query("", max_l
     rows = customers[:50]
     codes = [row["erp_id"] for row in rows]
     users = list(db.execute(select(User, Customer.erp_id).outerjoin(Customer, User.customer_id == Customer.id).where(
-        (User.erp_customer_code.in_(codes)) | (Customer.erp_id.in_(codes))
+        ((User.erp_customer_code.in_(codes)) | (Customer.erp_id.in_(codes))), User.parent_user_id.is_(None)
     )).all()) if codes else []
     for row in rows:
         accounts = [account for account, legacy_code in users if (account.erp_customer_code or legacy_code) == row["erp_id"]]

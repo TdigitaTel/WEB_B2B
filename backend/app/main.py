@@ -2,6 +2,7 @@ from datetime import date, datetime, timezone, timedelta
 from decimal import Decimal
 from functools import lru_cache
 from io import BytesIO
+import json
 import logging
 import secrets
 from zoneinfo import ZoneInfo
@@ -55,6 +56,10 @@ from .search_settings import router as search_settings_router, get_search_config
 app.include_router(search_settings_router)
 from .qr_access import router as qr_access_router
 app.include_router(qr_access_router)
+from .subusers import router as subusers_router
+from .account_permissions import identity, principal_for
+from .price_visibility import protect_payload
+app.include_router(subusers_router)
 logger = logging.getLogger(__name__)
 
 @lru_cache(maxsize=2000)
@@ -67,6 +72,13 @@ app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000"], allo
 @app.middleware("http")
 async def prevent_private_cache(request: Request, call_next):
     response = await call_next(request)
+    if (hasattr(request.state, "document_permissions")
+            and (request.state.hide_prices or not all(request.state.document_permissions.values()))
+            and "application/json" in response.headers.get("content-type", "")):
+        raw = b"".join([chunk async for chunk in response.body_iterator])
+        protected = protect_payload(json.loads(raw), request.state.document_permissions, request.state.hide_prices)
+        headers = {key: value for key, value in response.headers.items() if key.lower() not in {"content-length", "content-type"}}
+        response = Response(json.dumps(protected, ensure_ascii=False), status_code=response.status_code, headers=headers, media_type="application/json")
     if request.url.path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-store, private"
     return response
@@ -103,6 +115,7 @@ def customer_code_for(user: User, db: Session) -> str:
 
 
 def customer_for(user: User, db: Session) -> dict:
+    principal_for(user, db)
     code = customer_code_for(user, db)
     try:
         customer = fetch_customer(code)
@@ -181,12 +194,14 @@ def order_payload(order: Order, db: Session, include_items: bool = False) -> dic
                 customer_name = erp_customer["trade_name"] or erp_customer["legal_name"] or order.customer_code
         except Exception:
             logger.exception("No se pudo enriquecer el pedido con el cliente EXITERP %s", order.customer_code)
-    creator = db.get(User, order.user_id)
+    creator = db.get(User, order.user_id) if order.user_id else None
     result = {"id": order.public_id, "number": order.order_number,
               "store": store.name if store else order.store_id, "store_code": store.code if store else order.delegation_code, "company_code": order.company_code, "delegation_code": order.delegation_code, "customer_code": order.customer_code, "customer_reference": order.customer_reference,
               "pickup_date": order.pickup_date, "job_name": order.job_name, "notes": order.notes, "subtotal": float(order.subtotal),
               "tax_total": float(order.tax_total), "total": float(order.total), "created_at": order.created_at,
-              "customer": customer_name, "created_by": creator.full_name if creator else "Integración EXIT",
+              "customer": customer_name, "created_by": order.creator_user_name or (creator.full_name if creator else "Integración EXIT"),
+              "principal_user_name": order.principal_user_name or (principal_for(creator, db).full_name if creator and not creator.parent_user_id else None),
+              "creator_user_name": order.creator_user_name or (creator.full_name if creator else "Integración EXIT"),
               "nro_pedido_exit": order.nro_pedido_exit, "fecha_registro_exit": order.fecha_registro_exit, "delivered_at": order.delivered_at,
               "origen_pedido": order.origen_pedido, "is_web_order": order.origen_pedido == "B2B", "estado_registro_exit": order.estado_registro_exit}
     if include_items:
@@ -240,7 +255,7 @@ def health():
 @app.post("/api/v1/auth/login")
 def login(data: LoginIn, response: Response, db: Session = Depends(get_db)):
     identifier = data.email.strip().lower()
-    candidates = db.scalars(select(User).where((func.lower(User.email) == identifier) | ((func.lower(User.erp_customer_code) == identifier) & User.role.in_(["CLIENTE", "CLIENTE_ADMIN"])))).all()
+    candidates = db.scalars(select(User).where((func.lower(User.email) == identifier) | ((func.lower(User.erp_customer_code) == identifier) & User.role.in_(["CLIENTE", "CLIENTE_ADMIN"]) & User.parent_user_id.is_(None)))).all()
     valid = [candidate for candidate in candidates if candidate.active and verify_password(data.password, candidate.password_hash)]
     user = valid[0] if len(valid) == 1 else None
     if not user:
@@ -259,8 +274,8 @@ def complete_login(user: User, response: Response, db: Session):
     token = create_access_token(user, db)
     response.set_cookie("b2b_access", token, httponly=True, samesite="lax", secure=False)
     db.commit()
-    display_name = (customer or {}).get("trade_name") or (customer or {}).get("legal_name") or user.full_name
-    return {"user": {"id": user.public_id, "name": display_name, "email": user.email, "role": user.role, "idle_timeout_seconds": settings.session_idle_timeout_minutes * 60, "must_change_password": user.must_change_password, "show_delivery_note_images": user.show_delivery_note_images, "show_order_images": user.show_order_images}, "access_token": token}
+    display_name = user.full_name if user.parent_user_id else ((customer or {}).get("trade_name") or (customer or {}).get("legal_name") or user.full_name)
+    return {"user": {**identity(user, db), "id": user.public_id, "name": display_name, "email": user.email, "role": user.role, "idle_timeout_seconds": settings.session_idle_timeout_minutes * 60, "must_change_password": user.must_change_password, "show_delivery_note_images": user.show_delivery_note_images, "show_order_images": user.show_order_images}, "access_token": token}
 
 
 @app.post("/api/v1/auth/logout")
@@ -280,8 +295,8 @@ def session_activity(request: Request, user: User = Depends(current_user), db: S
 @app.get("/api/v1/account")
 def account(user: User = Depends(current_user), db: Session = Depends(get_db)):
     customer = None if user.role in {"OPERADOR_TIENDA", "ADMIN"} else customer_for(user, db)
-    display_name = (customer or {}).get("trade_name") or (customer or {}).get("legal_name") or user.full_name
-    return {"user": {"id": user.public_id, "name": display_name, "email": user.email, "role": user.role, "idle_timeout_seconds": settings.session_idle_timeout_minutes * 60, "must_change_password": user.must_change_password, "show_delivery_note_images": user.show_delivery_note_images, "show_order_images": user.show_order_images},
+    display_name = user.full_name if user.parent_user_id else ((customer or {}).get("trade_name") or (customer or {}).get("legal_name") or user.full_name)
+    return {"user": {**identity(user, db), "id": user.public_id, "name": display_name, "email": user.email, "role": user.role, "idle_timeout_seconds": settings.session_idle_timeout_minutes * 60, "must_change_password": user.must_change_password, "show_delivery_note_images": user.show_delivery_note_images, "show_order_images": user.show_order_images},
             "customer": customer}
 
 
@@ -634,7 +649,8 @@ def create_order(data: OrderCreate, user: User = Depends(current_user), db: Sess
     except Exception:
         logger.exception("No se pudo comprobar el stock de recogida del pedido")
     initial_status = "BORRADOR" if data.draft else "PENDIENTE"
-    order = Order(order_number=f"TMP-{cart.public_id[:20]}", customer_id=legacy_customer_id(user), customer_code=customer_code, user_id=user.id, company_code=store.company, delegation_code=store.code,
+    principal = principal_for(user, db)
+    order = Order(principal_user_id=principal.id, principal_user_name=principal.full_name, creator_user_name=user.full_name, order_number=f"TMP-{cart.public_id[:20]}", customer_id=legacy_customer_id(user), customer_code=customer_code, user_id=user.id, company_code=store.company, delegation_code=store.code,
                   origen_pedido="B2B", estado_registro_exit=initial_status,
                   pickup_date=data.pickup_date, customer_reference=data.customer_reference, job_name=data.job_name, notes=data.notes,
                   subtotal=0, tax_total=0, total=0, sync_status=SyncStatus.pending)
@@ -672,6 +688,8 @@ def customer_order(order_id: str, user: User, db: Session) -> Order:
     condition = Order.customer_code == customer_code
     if user.customer_id:
         condition = condition | (Order.customer_id == user.customer_id)
+    if user.own_orders_only:
+        condition = condition & (Order.user_id == user.id)
     order = db.scalar(select(Order).where(Order.public_id == order_id, condition))
     if not order:
         raise HTTPException(404, "Pedido no encontrado")
@@ -733,6 +751,8 @@ def orders(date_from: date | None = None, date_to: date | None = None,
     condition = Order.customer_code == customer_code
     if user.customer_id:
         condition = condition | (Order.customer_id == user.customer_id)
+    if user.own_orders_only:
+        condition = condition & (Order.user_id == user.id)
     if db.bind.dialect.name == "postgresql":
         db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": f"order-history-customer:{customer_code}"})
     all_local_rows = db.scalars(select(Order).where(condition).order_by(Order.created_at.desc()).limit(5000)).all()
@@ -790,6 +810,8 @@ def orders(date_from: date | None = None, date_to: date | None = None,
             if local and not local.nro_pedido_exit:
                 local.nro_pedido_exit = record.exit_order_id
                 local.fecha_registro_exit = record.recorded_at
+        if user.own_orders_only and (local is None or local.user_id != user.id):
+            continue
         if local is None:
             local = upsert_exit_order(db, record, user)
             by_exit[external] = local
@@ -812,7 +834,7 @@ def orders(date_from: date | None = None, date_to: date | None = None,
                             "notes": record.notes or local.notes, "subtotal": float(record.subtotal),
                             "tax_total": float(record.tax_total), "total": float(record.total),
                             "created_at": record.recorded_at or local.created_at,
-                            "created_by": record.source_created_by or "EXIT", "local_order": local.origen_pedido == "B2B",
+                            "created_by": payload["created_by"] if local.origen_pedido == "B2B" else (record.source_created_by or "EXIT"), "local_order": local.origen_pedido == "B2B",
                             "workflow": exit_workflow(record, effective_state, delivery),
                             "items": [{"sku": line.sku, "description": line.description, "quantity": float(line.quantity),
                                        "served_quantity": float(line.served_quantity or 0),
@@ -893,6 +915,8 @@ def order_detail(order_id: str, user: User = Depends(current_user), db: Session 
     condition = Order.customer_code == customer_code
     if user.customer_id:
         condition = condition | (Order.customer_id == user.customer_id)
+    if user.own_orders_only:
+        condition = condition & (Order.user_id == user.id)
     order = db.scalar(select(Order).where(Order.public_id == order_id, condition))
     if not order: raise HTTPException(404, "Pedido no encontrado")
     return order_payload(order, db, True)
@@ -904,6 +928,8 @@ def repeat_order(order_id: str, user: User = Depends(current_user), db: Session 
     condition = Order.customer_code == customer_code
     if user.customer_id:
         condition = condition | (Order.customer_id == user.customer_id)
+    if user.own_orders_only:
+        condition = condition & (Order.user_id == user.id)
     order = db.scalar(select(Order).where(Order.public_id == order_id, condition))
     if not order: raise HTTPException(404, "Pedido no encontrado")
     old_items = db.scalars(select(OrderItem).where(OrderItem.order_id == order.id)).all(); cart = active_cart(user, db)
@@ -1048,7 +1074,8 @@ def reset_customer_access(
     if not customer:
         raise HTTPException(404, "El cliente no existe en EXIT")
     user = db.scalar(select(User).where(
-        (User.erp_customer_code == code) | (func.lower(User.email) == code.lower())
+        ((User.erp_customer_code == code) | (func.lower(User.email) == code.lower())),
+        User.parent_user_id.is_(None)
     ))
     if not user:
         user = User(email=code.lower(), full_name=code, password_hash="", role="CLIENTE_ADMIN",
