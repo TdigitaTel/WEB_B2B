@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "test:delivery-deadline": "node --test scripts/test-delivery-deadline.mjs",
     "test:qr-camera": "node scripts/test-qr-camera.cjs"
   },
   "dependencies": {
