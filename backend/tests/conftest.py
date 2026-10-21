@@ -60,7 +60,7 @@ def exit_erp_stub(monkeypatch):
         }
 
     def fetch_catalog_articles(query: str = "", page: int = 1, page_size: int = 24,
-                               article_codes: list[str] | None = None, excluded_codes: list[str] | None = None) -> tuple[list[dict], int]:
+                               article_codes: list[str] | None = None, excluded_codes: list[str] | None = None, search_config=None) -> tuple[list[dict], int]:
         with SessionLocal() as db:
             statement = select(Product).where(Product.active.is_(True))
             if excluded_codes:

@@ -18,6 +18,9 @@ def test_professional_measure_aliases(query, expected):
 
 @pytest.mark.parametrize(("query", "terms", "accessories"), [
     ("accesorios de latón", ["laton"], True),
+    ("piezas de latón", ["laton"], True),
+    ("componentes de cobre", ["cobre"], True),
+    ("conexiones PVC", ["pvc"], True),
     ("ACCESORIOS LATON 1/2", ["laton", "1/2"], True),
     ("accesorios de cobre", ["cobre"], True),
     ("accesorios inox", ["inox"], True),
@@ -65,6 +68,16 @@ def test_exit_accessory_query_uses_piece_group_and_preserves_material_measure_an
     assert page_params[-2:] == (24, 24)
     assert "OFFSET %s ROWS FETCH NEXT %s ROWS ONLY" in page_sql
 
+    queries.clear()
+    config = {"enabled":True, "accessory_terms":["componentes"], "piece_names":["racor"], "materials":["laton"]}
+    erp_db.fetch_catalog_articles("componentes de latón", search_config=config)
+    custom_params = queries[0][1]
+    assert "% racor %" in custom_params and "%laton%" in custom_params
+    assert "% codo %" not in custom_params and "%componentes%" not in custom_params
+    queries.clear()
+    erp_db.fetch_catalog_articles("componentes de latón", search_config={**config,"enabled":False})
+    assert "%componentes%" in queries[0][1] and "% racor %" not in queries[0][1]
+
 
 def test_accessory_piece_boundaries_exclude_unrelated_material_matches():
     import re
@@ -77,3 +90,13 @@ def test_accessory_piece_boundaries_exclude_unrelated_material_matches():
         return "laton" in words and bool(words.intersection(ACCESSORY_NAMES))
     assert all(matches(d) for d in ("CODO LATON 1/2", "TE LATÓN 3/4", "RACOR DE LATON", "MANGUITO-LATON"))
     assert not any(matches(d) for d in ("CALENTADOR LATON", "TERMOSTATO LATON", "CODO PVC 1/2"))
+
+
+def test_search_custom_configuration_and_disabled_mode():
+    from app.search import catalog_search_intent, default_search_config
+    config = default_search_config()
+    config["accessory_terms"] = ["repuestos"]
+    assert catalog_search_intent("repuestos de latón", config) == (["laton"], True)
+    assert catalog_search_intent("piezas de latón", config) == (["piezas", "laton"], False)
+    config["enabled"] = False
+    assert catalog_search_intent("repuestos de latón", config) == (["repuestos", "laton"], False)

@@ -51,6 +51,8 @@ app.include_router(category_image_router)
 app.include_router(image_admin_router)
 from .customer_access import router as customer_access_router
 app.include_router(customer_access_router)
+from .search_settings import router as search_settings_router, get_search_config
+app.include_router(search_settings_router)
 from .qr_access import router as qr_access_router
 app.include_router(qr_access_router)
 logger = logging.getLogger(__name__)
@@ -338,7 +340,7 @@ def products(q: str = "", family: str | None = None, area_id: int | None = None,
         family, area_id, family_id, subfamily_id, product_type_id
     )
     try:
-        articles, total = fetch_catalog_articles(q, page, page_size, classification_codes, excluded_codes=hidden_codes(db))
+        articles, total = fetch_catalog_articles(q, page, page_size, classification_codes, excluded_codes=hidden_codes(db), search_config=get_search_config(db))
     except Exception as exc:
         logger.exception("Error consultando la maestra de artículos EXIT")
         raise HTTPException(503, "No se pudo consultar el catálogo en EXIT") from exc
@@ -441,7 +443,7 @@ def catalog_classification(user: User = Depends(current_user), db: Session = Dep
 def suggestions(q: str = Query(min_length=2), user: User = Depends(current_user), db: Session = Depends(get_db)):
     customer_for(user, db)
     try:
-        articles, _ = fetch_catalog_articles(q, 1, 8, excluded_codes=hidden_codes(db))
+        articles, _ = fetch_catalog_articles(q, 1, 8, excluded_codes=hidden_codes(db), search_config=get_search_config(db))
     except Exception as exc:
         logger.exception("Error consultando sugerencias en EXIT")
         raise HTTPException(503, "No se pudieron consultar las sugerencias en EXIT") from exc

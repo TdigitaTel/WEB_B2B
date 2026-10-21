@@ -31,11 +31,21 @@ ACCESSORY_NAMES = (
 MATERIAL_TERMS = frozenset(("laton", "cobre", "inox", "inoxidable", "pvc", "ppr", "pex", "polietileno", "acero"))
 
 
-def catalog_search_intent(query: str) -> tuple[list[str], bool]:
+DEFAULT_ACCESSORY_TERMS = ("accesorio", "accesorios", "pieza", "piezas", "componente", "componentes", "conexion", "conexiones", "racoreria", "fitting", "fittings")
+
+
+def default_search_config() -> dict:
+    return {"enabled": True, "accessory_terms": list(DEFAULT_ACCESSORY_TERMS),
+            "piece_names": list(ACCESSORY_NAMES), "materials": sorted(MATERIAL_TERMS)}
+
+
+def catalog_search_intent(query: str, config: dict | None = None) -> tuple[list[str], bool]:
     """Devuelve palabras obligatorias y si se buscan accesorios por material."""
     terms = normalize_query(query).split()
-    accessories = any(term in ("accesorio", "accesorios") for term in terms)
-    by_material = accessories and any(term in MATERIAL_TERMS for term in terms)
+    config = config if config is not None else default_search_config()
+    generic_terms = set(config["accessory_terms"])
+    accessories = any(term in generic_terms for term in terms)
+    by_material = config["enabled"] and accessories and any(term in config["materials"] for term in terms)
     if by_material:
-        terms = [term for term in terms if term not in ("accesorio", "accesorios")]
+        terms = [term for term in terms if term not in generic_terms]
     return terms, by_material
