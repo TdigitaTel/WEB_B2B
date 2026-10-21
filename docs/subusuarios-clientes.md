@@ -16,10 +16,10 @@ Los permisos se comprueban en el servidor. Sin permiso de precios, la API devuel
 
 El pedido guarda `customer_code` (cliente EXIT), `principal_user_id`, `principal_user_name`, `user_id` (creador) y `creator_user_name`. Los nombres quedan como fotografía del momento de creación; los pedidos antiguos conservan sus datos históricos. La API de integración recibe estos datos al consultar el pedido.
 
-La clave inicial se muestra a la cuenta principal hasta que el subusuario la cambie o caduque. Al renovarla se revocan sesiones y QR anteriores. Los cambios de permisos cierran las sesiones del subusuario. La deshabilitación del principal impide también el acceso de sus subusuarios. Los subusuarios entran por su propio correo o QR; el código EXIT identifica únicamente a la cuenta principal.
+La clave inicial se muestra a la cuenta principal hasta que el subusuario la cambie o caduque. Al renovarla se revocan sesiones y QR anteriores. Los cambios de permisos cierran las sesiones del subusuario. La deshabilitación del principal impide también el acceso de sus subusuarios. Los subusuarios entran por su propio código (por ejemplo `SU-00000042`), correo o QR. El código propio es visible en la lista, la ficha y Mi cuenta; el código EXIT identifica únicamente a la cuenta principal. El principal puede editar nombre, correo y teléfono del subusuario. Los datos fiscales y comerciales siguen siendo los del cliente EXIT compartido. Al actualizar el correo, el código y QR siguen identificando al mismo usuario.
 
 ## Instalación
 
-Requiere actualizar conjuntamente API y frontend. El arranque habitual de la API ejecuta `python -m app.bootstrap`, que añade de forma idempotente las columnas e índices de usuarios y pedidos en PostgreSQL. No modifica maestros de EXIT ni crea subusuarios reales automáticamente. Las cuentas actuales mantienen sus permisos anteriores.
+Requiere actualizar conjuntamente API y frontend. El arranque habitual de la API ejecuta `python -m app.bootstrap`, que añade de forma idempotente las columnas e índices de usuarios y pedidos en PostgreSQL, incluido un código único para los subusuarios que ya existan. No modifica maestros de EXIT ni crea subusuarios reales automáticamente. Las cuentas actuales mantienen sus permisos anteriores.
 
 Validar primero en desarrollo: crear una subcuenta, entrar con su clave inicial, cambiarla, realizar un pedido y revisar las dos identidades con el principal. Comprobar los cinco permisos y la entrada con QR antes de pasar a producción.

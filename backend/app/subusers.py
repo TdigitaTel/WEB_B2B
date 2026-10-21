@@ -35,6 +35,7 @@ class Permissions(BaseModel):
 class SubuserCreate(Permissions):
     full_name: str = Field(min_length=1, max_length=160)
     email: str = Field(min_length=3, max_length=200)
+    contact_phone: str = Field(default="", max_length=40)
 
     @field_validator("full_name")
     @classmethod
@@ -54,6 +55,26 @@ class SubuserCreate(Permissions):
 
 class SubuserChange(Permissions):
     active: bool
+    full_name: str | None = Field(default=None, min_length=1, max_length=160)
+    email: str | None = Field(default=None, min_length=3, max_length=200)
+    contact_phone: str | None = Field(default=None, max_length=40)
+
+    @field_validator("full_name")
+    @classmethod
+    def name(cls, value):
+        if value is None: raise ValueError("Indica el nombre")
+        return SubuserCreate.name(value)
+
+    @field_validator("email")
+    @classmethod
+    def valid_email(cls, value):
+        if value is None: raise ValueError("Indica un correo válido")
+        return SubuserCreate.valid_email(value)
+
+    @field_validator("contact_phone")
+    @classmethod
+    def phone(cls, value):
+        return (value or "").strip()
 
 
 class PasswordReset(BaseModel):
@@ -81,6 +102,7 @@ def payload(row):
     if row.must_change_password and row.initial_password_expires_at and row.initial_password_expires_at.replace(tzinfo=timezone.utc) > datetime.now(timezone.utc):
         password = decrypt_initial(row.initial_password_ciphertext) if row.initial_password_ciphertext else None
     return {"id":row.public_id, "full_name":row.full_name, "email":row.email, "active":row.active,
+            "access_code":row.access_code, "customer_code":row.erp_customer_code, "contact_phone":row.contact_phone or "",
             **{key:bool(getattr(row,key)) for key in Permissions.model_fields},
             "must_change_password":row.must_change_password, "initial_password":password,
             "initial_password_expires_at":row.initial_password_expires_at}
@@ -110,6 +132,7 @@ def create_subuser(data: SubuserCreate, actor: User = Depends(principal), db: Se
     db.add(row)
     try:
         db.flush()
+        row.access_code = f"SU-{row.id:08d}"
         audit(db, actor, "SUBUSER_CREATED", "USER", row.public_id, {"customer_code":code})
         db.commit()
     except IntegrityError as exc:
@@ -121,10 +144,17 @@ def create_subuser(data: SubuserCreate, actor: User = Depends(principal), db: Se
 @router.patch("/subusers/{public_id}")
 def change_subuser(public_id: str, data: SubuserChange, actor: User = Depends(principal), db: Session = Depends(get_db)):
     row = owned(db, actor, public_id)
-    for key, value in data.model_dump().items(): setattr(row, key, value)
+    changes = data.model_dump(exclude_unset=True)
+    if "email" in changes and db.scalar(select(User.id).where(func.lower(User.email) == changes["email"], User.id != row.id)):
+        raise HTTPException(409, "Ese correo ya tiene una cuenta de acceso")
+    for key, value in changes.items(): setattr(row, key, value)
     revoke(db, row, qr=not row.active)
-    audit(db, actor, "SUBUSER_PERMISSIONS_CHANGED", "USER", row.public_id, data.model_dump())
-    db.commit()
+    audit(db, actor, "SUBUSER_PERMISSIONS_CHANGED", "USER", row.public_id, {key:value for key,value in changes.items() if key in Permissions.model_fields or key == "active"})
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(409, "Ese correo ya tiene una cuenta de acceso") from exc
     return payload(row)
 
 
