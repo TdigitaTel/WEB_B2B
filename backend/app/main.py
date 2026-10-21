@@ -184,7 +184,7 @@ def cart_payload(cart: Cart, user: User, db: Session) -> dict:
             "total": float((subtotal * Decimal("1.21")).quantize(Decimal("0.01")))}
 
 
-def order_payload(order: Order, db: Session, include_items: bool = False) -> dict:
+def order_payload(order: Order, db: Session, include_items: bool = False, history_for_operator: bool = False) -> dict:
     store = get_delegation(order.delegation_code, order.company_code)
     customer_name = order.customer_code or "Cliente EXITERP"
     if order.customer_code:
@@ -218,8 +218,8 @@ def order_payload(order: Order, db: Session, include_items: bool = False) -> dic
                                     "unit_price": float(item.unit_price), "line_total": float(item.line_total),
                                     "fulfillment_zone": item.fulfillment_zone or "OTROS"})
         history = db.scalars(select(OrderStatusHistory).where(OrderStatusHistory.order_id == order.id).order_by(OrderStatusHistory.created_at)).all()
-        result["history_enabled"] = settings.show_order_status_history
-        if settings.show_order_status_history:
+        result["history_enabled"] = settings.show_order_status_history or history_for_operator
+        if result["history_enabled"]:
             result["history"] = [{"estado_registro_exit": h.estado_registro_exit, "source": h.source, "note": h.note, "created_at": h.created_at, "date_only": h.estado_registro_exit == "FACTURADO"} for h in sorted(history, key=lambda event: instant(event.created_at), reverse=True)]
         result["documents"] = []
         current_state = order.estado_registro_exit.strip().upper()
@@ -1244,7 +1244,7 @@ def web_store_orders(db: Session, user: User, date_from: date | None, date_to: d
     groups = {"EN_PROCESAMIENTO": {"BLOQUEADO", "REGISTRADO", "EN_PROCESO", "EN_PREPARACION"}, "PENDIENTE_RECOJO": {"ATENDIDO"}}
     result = []
     for row in rows:
-        payload = order_payload(row, db, include_items=True)
+        payload = order_payload(row, db, include_items=True, history_for_operator=True)
         record = exit_by_key.get((row.customer_code, (row.nro_pedido_exit or "").replace("~", "/").upper()))
         if record and (record.company_code, record.store_code) == (row.company_code, row.delegation_code):
             payload["fecha_registro_exit"] = record.recorded_at
@@ -1387,7 +1387,7 @@ def change_web_pickup(order_id: str, data: PickupChange,
 def change_web_registration(order_id: str, data: WebOrderRegistrationChange,
                             user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
     order = operator_web_order(db, order_id)
-    previous = {"state": order.estado_registro_exit, "exit_order_number": order.nro_pedido_exit}
+    previous = {"state": order.estado_registro_exit, "exit_order_number": order.nro_pedido_exit, "exit_registered_at": order.fecha_registro_exit.isoformat() if order.fecha_registro_exit else None}
     number = (data.exit_order_number or "").strip().replace("~", "/").upper()
     if data.state == "REGISTRADO":
         if not number:
@@ -1395,8 +1395,28 @@ def change_web_registration(order_id: str, data: WebOrderRegistrationChange,
         duplicate = db.scalar(select(Order.id).where(Order.id != order.id, func.upper(func.replace(Order.nro_pedido_exit, "~", "/")) == number))
         if duplicate:
             raise HTTPException(409, "Ese número EXIT ya está vinculado a otro pedido")
+        registered = data.exit_registered_at
+        if registered is None:
+            # Compatibilidad con integraciones existentes que solo envían número.
+            registered = (order.fecha_registro_exit if order.estado_registro_exit == "REGISTRADO" and order.nro_pedido_exit == number else None) or datetime.now(timezone.utc)
+            if registered.tzinfo is None:
+                registered = registered.replace(tzinfo=timezone.utc)
+        elif registered.tzinfo is None:
+            # El formulario usa la hora de la sede, con independencia del navegador.
+            local = registered.replace(tzinfo=ZoneInfo("Europe/Madrid"))
+            if local.astimezone(timezone.utc).astimezone(ZoneInfo("Europe/Madrid")).replace(tzinfo=None) != registered:
+                raise HTTPException(422, "La hora indicada no existe por el cambio de horario; revisa la fecha y hora EXIT")
+            registered = local
+        registered = registered.astimezone(timezone.utc)
+        if registered > datetime.now(timezone.utc) + timedelta(minutes=1):
+            raise HTTPException(422, "La fecha y hora de registro EXIT no pueden ser futuras")
+        previous_registered = order.fecha_registro_exit
+        if previous_registered and previous_registered.tzinfo is None:
+            previous_registered = previous_registered.replace(tzinfo=timezone.utc)
+        if order.estado_registro_exit == "REGISTRADO" and order.nro_pedido_exit == number and previous_registered == registered:
+            return order_payload(order, db, True, history_for_operator=True)
         order.nro_pedido_exit = number
-        order.fecha_registro_exit = datetime.now(timezone.utc)
+        order.fecha_registro_exit = registered
         order.sync_status = SyncStatus.synced
     else:
         order.nro_pedido_exit = None
@@ -1413,15 +1433,18 @@ def change_web_registration(order_id: str, data: WebOrderRegistrationChange,
         event.last_error = None
     if data.state == "PENDIENTE" and not any(event.event_type == "ORDER_CREATED" for event in events):
         db.add(IntegrationOutbox(aggregate_type="ORDER", aggregate_id=order.public_id, event_type="ORDER_CREATED", payload={"order_number": order.order_number, "customer_erp_id": order.customer_code, "store": order.delegation_code}, sync_status=SyncStatus.pending))
-    db.add(OrderStatusHistory(order_id=order.id, estado_registro_exit=data.state, changed_by_user_id=user.id, source="WEB", note=f"Vínculo EXIT actualizado manualmente: {previous['exit_order_number'] or 'sin vínculo'} → {number if data.state == 'REGISTRADO' else 'sin vínculo'}"))
-    audit(db, user, "ORDER_REGISTRATION_CHANGED", "ORDER", order.public_id, {"previous": previous, "state": data.state, "exit_order_number": order.nro_pedido_exit})
+    history_note = (f"Registro manual en EXIT: {number}. Vínculo guardado por {user.full_name}" if data.state == "REGISTRADO" else
+                    f"Vínculo EXIT actualizado manualmente: {previous['exit_order_number'] or 'sin vínculo'} → sin vínculo")
+    db.add(OrderStatusHistory(order_id=order.id, estado_registro_exit=data.state, changed_by_user_id=user.id,
+                             source="WEB", created_at=order.fecha_registro_exit if data.state == "REGISTRADO" else datetime.now(timezone.utc), note=history_note))
+    audit(db, user, "ORDER_REGISTRATION_CHANGED", "ORDER", order.public_id, {"previous": previous, "state": data.state, "exit_order_number": order.nro_pedido_exit, "exit_registered_at": order.fecha_registro_exit.isoformat() if order.fecha_registro_exit else None})
     from sqlalchemy.exc import IntegrityError
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
         raise HTTPException(409, "No se pudo guardar el vínculo; comprueba que el número EXIT no esté duplicado")
-    return order_payload(order, db, True)
+    return order_payload(order, db, True, history_for_operator=True)
 
 
 @app.delete("/api/v1/store/orders/{order_id}")
