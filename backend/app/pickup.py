@@ -55,3 +55,28 @@ def scheduled_date_open(db, company, delegation, day):
         return False
     hours = days[day.weekday()]
     return hours.get("enabled", True) and any(hours.get(period+"_from") and hours.get(period+"_to") for period in ("morning", "afternoon"))
+
+
+def scheduled_ready_at(db, company, delegation, pickup_date):
+    """Apertura del día elegido más el mismo tiempo de preparación de inmediata."""
+    start = datetime.combine(pickup_date, time.min, ZoneInfo("Europe/Madrid"))
+    return immediate_ready_at(db, company, delegation, start)
+
+
+def assign_attention_deadline(order, db, *, operator_override=False, now=None):
+    """Conserva el compromiso del pedido aunque después cambien los parámetros."""
+    from datetime import timezone
+    from fastapi import HTTPException
+    now = now or datetime.now(ZoneInfo("Europe/Madrid"))
+    config = db.get(PickupSettings, 1)
+    minutes = config.preparation_minutes if config else 60
+    if order.pickup_date:
+        ready = scheduled_ready_at(db, order.company_code, order.delegation_code, order.pickup_date)
+    elif operator_override:
+        ready = now + timedelta(minutes=minutes)
+    else:
+        ready = immediate_ready_at(db, order.company_code, order.delegation_code, now)
+    if ready is None:
+        raise HTTPException(409, "No hay un horario de atención que permita preparar el pedido; revisa la fecha y el horario de la sede")
+    order.attention_deadline_at = ready.astimezone(timezone.utc)
+    order.preparation_minutes_snapshot = minutes

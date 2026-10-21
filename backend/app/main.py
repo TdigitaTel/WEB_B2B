@@ -20,7 +20,7 @@ from .auth import audit, create_access_token, current_user, hash_password, requi
 from .category_import import router as category_import_router
 from .category_visibility import router as category_visibility_router, image_router as category_image_router, image_urls, hidden_areas, hidden_codes
 from .config import settings
-from .pickup import immediate_ready_at, immediate_available, next_open_date, scheduled_date_open
+from .pickup import immediate_ready_at, immediate_available, next_open_date, scheduled_date_open, scheduled_ready_at, assign_attention_deadline
 from .db import get_db
 from .schemas import PickupChange, PickupSettingsIn, DeliveryConfirmation, WebOrderRegistrationChange, UserDisplayPreferences
 from .exit_orders import upsert_exit_order
@@ -195,9 +195,9 @@ def order_payload(order: Order, db: Session, include_items: bool = False) -> dic
         except Exception:
             logger.exception("No se pudo enriquecer el pedido con el cliente EXITERP %s", order.customer_code)
     creator = db.get(User, order.user_id) if order.user_id else None
-    result = {"id": order.public_id, "number": order.order_number,
+    result = {"id": order.public_id, "number": order.order_number, "server_now": datetime.now(timezone.utc),
               "store": store.name if store else order.store_id, "store_code": store.code if store else order.delegation_code, "company_code": order.company_code, "delegation_code": order.delegation_code, "customer_code": order.customer_code, "customer_reference": order.customer_reference,
-              "pickup_date": order.pickup_date, "job_name": order.job_name, "notes": order.notes, "subtotal": float(order.subtotal),
+              "pickup_date": order.pickup_date, "attention_deadline_at": order.attention_deadline_at, "preparation_minutes_snapshot": order.preparation_minutes_snapshot, "job_name": order.job_name, "notes": order.notes, "subtotal": float(order.subtotal),
               "tax_total": float(order.tax_total), "total": float(order.total), "created_at": order.created_at,
               "customer": customer_name, "created_by": order.creator_user_name or (creator.full_name if creator else "Integración EXIT"),
               "principal_user_name": order.principal_user_name or (principal_for(creator, db).full_name if creator and not creator.parent_user_id else None),
@@ -508,11 +508,12 @@ def pickup_settings(user: User = Depends(current_user), db: Session = Depends(ge
 
 
 @app.get("/api/v1/pickup-availability")
-def pickup_availability(company: int, delegation: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def pickup_availability(company: int, delegation: str, scheduled_date: date | None = None, user: User = Depends(current_user), db: Session = Depends(get_db)):
     config = pickup_settings(user, db)
     following = next_open_date(db, company, delegation)
     ready = immediate_ready_at(db, company, delegation)
-    return {**config, "immediate_available": ready is not None, "immediate_ready_at": ready.isoformat() if ready else None, "minimum_date": following.isoformat() if following else None}
+    scheduled = scheduled_ready_at(db, company, delegation, scheduled_date) if scheduled_date else None
+    return {"scheduled_ready_at": scheduled.isoformat() if scheduled else None, **config, "immediate_available": ready is not None, "immediate_ready_at": ready.isoformat() if ready else None, "minimum_date": following.isoformat() if following else None}
 
 
 @app.patch("/api/v1/pickup-settings")
@@ -654,6 +655,8 @@ def create_order(data: OrderCreate, user: User = Depends(current_user), db: Sess
                   origen_pedido="B2B", estado_registro_exit=initial_status,
                   pickup_date=data.pickup_date, customer_reference=data.customer_reference, job_name=data.job_name, notes=data.notes,
                   subtotal=0, tax_total=0, total=0, sync_status=SyncStatus.pending)
+    if not data.draft:
+        assign_attention_deadline(order, db)
     db.add(order); db.flush(); order.order_number = f"WEB-{datetime.now().year}-{order.id:07d}"
     subtotal = Decimal("0")
     for cart_item, product in rows:
@@ -708,6 +711,7 @@ def submit_draft_order(order_id: str, user: User = Depends(current_user), db: Se
             raise HTTPException(409, "Actualiza la fecha de recogida antes de enviar el borrador")
     elif not immediate_available(db, order.company_code, order.delegation_code):
         raise HTTPException(409, "Recogida inmediata no disponible en el horario actual")
+    assign_attention_deadline(order, db)
     order.estado_registro_exit = "PENDIENTE"
     order.sync_status = SyncStatus.pending
     store = get_delegation(order.delegation_code, order.company_code)
@@ -1367,11 +1371,14 @@ def change_web_pickup(order_id: str, data: PickupChange,
         raise HTTPException(422, "La sede está cerrada en esa fecha")
     before = order.pickup_date.isoformat() if order.pickup_date else "Inmediata"
     after = data.pickup_date.isoformat() if data.pickup_date else "Inmediata"
-    if before != after:
+    if before != after or order.attention_deadline_at is None:
+        previous_deadline = order.attention_deadline_at.isoformat() if order.attention_deadline_at else None
         order.pickup_date = data.pickup_date
-        note = f"Recogida cambiada por operador: {before} → {after}"
+        assign_attention_deadline(order, db, operator_override=data.pickup_date is None)
+        local_deadline = order.attention_deadline_at.astimezone(ZoneInfo("Europe/Madrid")).strftime("%d/%m/%Y %H:%M")
+        note = f"Recogida cambiada por operador: {before} → {after}. Límite de atención: {local_deadline}"
         db.add(OrderStatusHistory(order_id=order.id, estado_registro_exit=order.estado_registro_exit, changed_by_user_id=user.id, source="WEB", note=note))
-        audit(db, user, "ORDER_PICKUP_CHANGED", "ORDER", order.public_id, {"previous": before, "pickup": after})
+        audit(db, user, "ORDER_PICKUP_CHANGED", "ORDER", order.public_id, {"previous": before, "pickup": after, "previous_attention_deadline_at": previous_deadline, "attention_deadline_at": order.attention_deadline_at.isoformat(), "preparation_minutes": order.preparation_minutes_snapshot})
         db.commit()
     return order_payload(order, db, True)
 
