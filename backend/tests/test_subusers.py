@@ -156,3 +156,35 @@ def test_document_filter_and_financial_redaction():
     assert order['total'] is None and order['items'][0]['unit_price'] is None
     assert len(order['documents']) == 1 and order['documents'][0]['total'] is None
     assert order['documents'][0]['available'] is False
+
+
+def test_subuser_code_login_profile_edit_and_shared_customer():
+    parent, code, _ = principal()
+    sub, row = child(parent)
+    assert row['access_code'].startswith('SU-') and row['customer_code'] == code
+    login = TestClient(app).post('/api/v1/auth/login', json={'email':row['access_code'].lower(),'password':CHILD_PASSWORD})
+    assert login.status_code == 200 and login.json()['user']['id'] == row['id']
+    assert login.json()['user']['access_code'] == row['access_code']
+    info = sub.get('/api/v1/account').json()
+    assert info['customer']['erp_id'] == code and info['user']['access_code'] == row['access_code']
+    email = f'{uuid4().hex}@example.test'
+    edited = parent.patch(f"/api/v1/account/subusers/{row['id']}", json={
+        'active':True,'full_name':'Nombre actualizado','email':email.upper(),'contact_phone':'981000123'})
+    assert edited.status_code == 200, edited.text
+    assert edited.json()['access_code'] == row['access_code'] and edited.json()['customer_code'] == code
+    assert edited.json()['email'] == email and edited.json()['contact_phone'] == '981000123'
+    assert edited.json()['own_orders_only'] and not edited.json()['can_view_prices']
+    client = TestClient(app)
+    assert client.post('/api/v1/auth/login',json={'email':row['email'],'password':CHILD_PASSWORD}).status_code == 401
+    for identifier in (email,row['access_code']):
+        result = client.post('/api/v1/auth/login',json={'email':identifier,'password':CHILD_PASSWORD})
+        assert result.status_code == 200 and result.json()['user']['name'] == 'Nombre actualizado'
+    assert client.get('/api/v1/account').json()['user']['contact_phone'] == '981000123'
+    assert client.patch(f"/api/v1/account/subusers/{row['id']}",json={'active':True,'full_name':'No autorizado'}).status_code == 403
+    assert parent.patch(f"/api/v1/account/subusers/{row['id']}",json={'active':True,'full_name':'   '}).status_code == 422
+    assert parent.patch(f"/api/v1/account/subusers/{row['id']}",json={'active':True,'email':'invalido'}).status_code == 422
+    other = parent.post('/api/v1/account/subusers',json={'full_name':'Otro','email':f'{uuid4().hex}@example.test'}).json()
+    assert other['access_code'] != row['access_code']
+    assert parent.patch(f"/api/v1/account/subusers/{row['id']}",json={'active':True,'email':other['email']}).status_code == 409
+    assert parent.patch(f"/api/v1/account/subusers/{row['id']}",json={'active':False}).status_code == 200
+    assert TestClient(app).post('/api/v1/auth/login',json={'email':row['access_code'],'password':CHILD_PASSWORD}).status_code == 401
