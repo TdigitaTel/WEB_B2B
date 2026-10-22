@@ -768,10 +768,12 @@ def orders(date_from: date | None = None, date_to: date | None = None,
     all_local_rows = db.scalars(select(Order).where(condition).order_by(Order.created_at.desc()).limit(5000)).all()
     local_rows = [row for row in all_local_rows if start <= row.created_at.date() <= end]
     exit_rows = fetch_customer_exit_orders(customer_code, start, end)
+    notes_available = True
     try:
         delivery_rows = fetch_customer_delivery_statuses(customer_code)
     except Exception:
         logger.exception("No se pudieron consultar los albaranes para actualizar el historial")
+        notes_available = False
         delivery_rows = []
     def document_key(value: str | None) -> str:
         normalized = str(value or "").replace("~", "/").replace("-", "/")
@@ -850,8 +852,9 @@ def orders(date_from: date | None = None, date_to: date | None = None,
                             "items": [{"sku": line.sku, "description": line.description, "quantity": float(line.quantity),
                                        "served_quantity": float(line.served_quantity or 0),
                                        "pending_quantity": float(line.pending_quantity or 0), "unit": line.unit,
-                                       "unit_price": float(line.unit_price),
-                                       "line_total": float(line.line_total or line.quantity * line.unit_price),
+                                       "unit_price": float(line.unit_price), "discount_pct": float(line.discount_pct),
+                                       "net_amount": float(line.net_amount) if line.net_amount is not None else None,
+                                       "line_total": float(line.line_total if line.line_total is not None else line.quantity * line.unit_price),
                                        "fulfillment_zone": line.fulfillment_zone} for line in record.lines]})
         else:
             payload = {"id": f"exit:{record.exit_order_id}", "number": record.exit_order_id,
@@ -867,8 +870,9 @@ def orders(date_from: date | None = None, date_to: date | None = None,
                            {"sku": line.sku, "description": line.description, "quantity": float(line.quantity),
                             "served_quantity": float(line.served_quantity or 0),
                             "pending_quantity": float(line.pending_quantity or 0), "unit": line.unit,
-                            "unit_price": float(line.unit_price),
-                            "line_total": float(line.line_total or line.quantity * line.unit_price),
+                            "unit_price": float(line.unit_price), "discount_pct": float(line.discount_pct),
+                                       "net_amount": float(line.net_amount) if line.net_amount is not None else None,
+                            "line_total": float(line.line_total if line.line_total is not None else line.quantity * line.unit_price),
                             "fulfillment_zone": line.fulfillment_zone} for line in record.lines],
                        "documents": [], "history_enabled": settings.show_order_status_history,
                        "history": [{"estado_registro_exit": state, "created_at": stamp, "source": "EXIT", "note": note, "date_only": state == "FACTURADO"}
@@ -910,6 +914,10 @@ def orders(date_from: date | None = None, date_to: date | None = None,
         payload.update({"web_number": row.order_number if row.origen_pedido == "B2B" else None, "exit_number": row.nro_pedido_exit,
                         "local_order": row.origen_pedido == "B2B"})
         result.append(payload)
+    for payload in result:
+        key = document_key(payload.get("exit_number") or payload.get("nro_pedido_exit"))
+        matched = [row for row in delivery_rows if key and document_key(row.get("order_number")) == key]
+        payload["delivery_notes"] = (delivery_notes_payload(matched) if notes_available else None) if user.can_view_delivery_notes else []
     db.commit()
     requested = state.strip().upper()
     groups = {"BORRADOR": {"BORRADOR"}, "PENDIENTE": {"BORRADOR", "PENDIENTE"},

@@ -37,3 +37,30 @@ def test_operator_sees_only_notes_linked_to_selected_web_order(monkeypatch):
     monkeypatch.setattr(module,'fetch_delivery_statuses_for_orders',lambda *args: (_ for _ in ()).throw(RuntimeError('unavailable')))
     rows=operator.get('/api/v1/store/orders?view=web&delegation=TODAS').json()
     assert next(row for row in rows if row['id']==oid)['delivery_notes'] is None
+
+
+def test_customer_order_shows_linked_notes_and_original_exit_amounts(monkeypatch):
+    from app import main as module
+    from app.exit_orders import ExitOrderInput, ExitOrderLineInput
+    stamp=datetime.now(timezone.utc)
+    from sqlalchemy import select
+    from app.models import User
+    with SessionLocal() as db:
+        actor=db.scalar(select(User).where(User.email=='operador@bermudez.test'))
+        store_code,company=actor.delegation_code,actor.company_code
+    record=ExitOrderInput(exit_order_id='2026/AL/AMOUNTS',order_number='AMOUNTS',customer_code='CLI00001',store_code=store_code,company_code=company,
+        estado_registro_exit='REGISTRADO',source_updated_at=stamp,recorded_at=stamp,
+        lines=[ExitOrderLineInput(sku='PRICE-TEST',description='Material',quantity=1,unit_price=100,discount_pct=100,net_amount=0,line_total=0)])
+    monkeypatch.setattr(module,'fetch_customer_exit_orders',lambda *args:[record])
+    rows=[{'order_number':record.exit_order_id,'delivery_number':'2026/AL/NOTE1','attended_at':stamp,'is_printed':False,'is_invoiced':False},
+          {'order_number':'2026/AL/OTHER','delivery_number':'2026/AL/OTHERNOTE','attended_at':stamp,'is_printed':False,'is_invoiced':False}]
+    monkeypatch.setattr(module,'fetch_customer_delivery_statuses',lambda *args:rows)
+    client=TestClient(app)
+    client.post('/api/v1/auth/login',json={'email':'compras001@cliente.test','password':'123456'})
+    response=client.get('/api/v1/orders?state=TODOS')
+    assert response.status_code==200,response.text
+    order=next(row for row in response.json() if row['exit_number']==record.exit_order_id)
+    assert [note['number'] for note in order['delivery_notes']]==['2026/AL/NOTE1']
+    item=order['items'][0]
+    assert item['unit_price']==100 and item['discount_pct']==100
+    assert item['net_amount']==0 and item['line_total']==0
