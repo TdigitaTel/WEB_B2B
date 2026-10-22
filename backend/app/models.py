@@ -56,6 +56,12 @@ class Customer(Base, TimestampMixin):
     __table_args__ = (CheckConstraint("(delegation_code IS NULL) = (company_code IS NULL)", name="ck_customers_delegation_company"),)
 
 
+class CustomerDeliverySetting(Base, TimestampMixin):
+    __tablename__ = "customer_delivery_settings"
+    customer_code: Mapped[str] = mapped_column(String(40), primary_key=True)
+    delivery_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+
 class User(Base, TimestampMixin):
     __tablename__ = "users"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -269,6 +275,8 @@ class Order(Base, TimestampMixin):
     creator_user_name: Mapped[str | None] = mapped_column(String(160))
     nro_pedido_exit: Mapped[str | None] = mapped_column(String(80), index=True)
     fecha_registro_exit: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    fulfillment_method: Mapped[str] = mapped_column(String(20), default="PICKUP", server_default="PICKUP", nullable=False)
+    delivery_address: Mapped[str | None] = mapped_column(String(500))
     pickup_date: Mapped[date | None] = mapped_column(Date)
     attention_deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     preparation_minutes_snapshot: Mapped[int | None] = mapped_column(Integer)
