@@ -126,7 +126,8 @@ def test_printed_exit_order_stays_attended_until_web_confirmation(monkeypatch):
     assert not any(event['estado_registro_exit']=='ENTREGADO' for event in row['history'])
     attended = operator.get('/api/v1/store/orders?view=attended').json()
     live = next(row for row in attended if row['nro_pedido_exit']==record.exit_order_id)
-    assert live['estado_registro_exit']=='ATENDIDO' and live['closed_at'] is None
+    assert live['estado_registro_exit']=='ATENDIDO' and live['closed_at'] is not None
+    attended_stamp = live['closed_at']
     response = operator.post('/api/v1/store/orders/delivery', json={'order_id':oid,'order_date':'2026-10-22'})
     assert response.status_code==200, response.text
     stamp = response.json()['delivered_at']
@@ -134,4 +135,4 @@ def test_printed_exit_order_stays_attended_until_web_confirmation(monkeypatch):
     live = next(row for row in attended if row['nro_pedido_exit']==record.exit_order_id)
     assert live['estado_registro_exit']=='ENTREGADO'
     assert same_time(live['delivered_at'], stamp)
-    assert same_time(live['closed_at'], stamp)
+    assert same_time(live['closed_at'], attended_stamp)
