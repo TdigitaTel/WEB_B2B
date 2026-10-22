@@ -1266,6 +1266,19 @@ def delivery_notes_payload(rows):
     return list(unique.values())
 
 
+def matches_order_reference(reference, order):
+    def normalized(value):
+        return "/".join(part.strip().upper() for part in str(value or "").replace("~", "/").replace("-", "/").split("/"))
+    linked_key, order_key = normalized(reference), normalized(order.nro_pedido_exit)
+    if not order_key:
+        return False
+    if "/" in order_key:
+        return linked_key == order_key
+    parts = linked_key.split("/")
+    stamp = order.fecha_registro_exit or order.created_at
+    return len(parts) == 3 and parts[-1] == order_key and stamp is not None and parts[0] == str(stamp.year)
+
+
 def web_store_orders(db: Session, user: User, date_from: date | None, date_to: date | None, state: str, delegation: str = "00") -> list[dict]:
     if date_from and date_to and date_from > date_to:
         raise HTTPException(422, "La fecha desde no puede ser posterior a la fecha hasta")
@@ -1299,12 +1312,31 @@ def web_store_orders(db: Session, user: User, date_from: date | None, date_to: d
         except Exception:
             notes_available = False
             logger.exception("No se pudieron consultar los albaranes; se conserva la entrega confirmada en WEB")
+    # Los registros antiguos pueden guardar solo NumeroPedido, sin ejercicio/serie.
+    customer_notes = {}
+    fallback_failed = set()
+    for code in dict.fromkeys(row.customer_code for row in linked
+                             if not delivery_rows.get((row.nro_pedido_exit or "").replace("~", "/").upper())):
+        try:
+            customer_notes[code] = fetch_customer_delivery_statuses(code)
+        except Exception:
+            fallback_failed.add(code)
+            logger.exception("No se pudieron consultar los albaranes del cliente %s", code)
+    linked_notes = {}
+    for row in linked:
+        key = (row.nro_pedido_exit or "").replace("~", "/").strip().upper()
+        matched = delivery_rows.get(key, [])
+        if not matched:
+            matched = [note for note in customer_notes.get(row.customer_code, [])
+                       if matches_order_reference(note.get("order_number"), row)]
+        linked_notes[row.id] = matched
     requested = state.strip().upper()
     groups = {"EN_PROCESAMIENTO": {"BLOQUEADO", "REGISTRADO", "EN_PROCESO", "EN_PREPARACION"}, "PENDIENTE_RECOJO": {"ATENDIDO"}}
     result = []
     for row in rows:
         sync_history(db, row, [])
-        delivery = deliveries.get((row.nro_pedido_exit or "").replace("~", "/").upper())
+        order_notes = linked_notes.get(row.id, [])
+        delivery = order_notes[0] if order_notes else None
         if delivery:
             if delivery["is_invoiced"]:
                 row.estado_registro_exit = "FACTURADO"
@@ -1314,7 +1346,7 @@ def web_store_orders(db: Session, user: User, date_from: date | None, date_to: d
                 row.estado_registro_exit = "ATENDIDO"
             sync_history(db, row, [("ATENDIDO", instant(delivery["attended_at"]), f"Albarán {delivery['delivery_number']} generado")] if delivery.get("attended_at") else [])
         payload = order_payload(row, db, include_items=True, history_for_operator=True)
-        payload["delivery_notes"] = delivery_notes_payload(delivery_rows.get((row.nro_pedido_exit or "").replace("~", "/").upper(), [])) if notes_available else None
+        payload["delivery_notes"] = delivery_notes_payload(order_notes) if notes_available and row.customer_code not in fallback_failed else None
         record = exit_by_key.get((row.customer_code, (row.nro_pedido_exit or "").replace("~", "/").upper()))
         if record and (record.company_code, record.store_code) == (row.company_code, row.delegation_code):
             payload["fecha_registro_exit"] = record.recorded_at
@@ -1432,6 +1464,25 @@ def operator_web_order(db: Session, order_id: str) -> Order:
     if not order:
         raise HTTPException(404, "Pedido WEB no encontrado")
     return order
+
+
+@app.get("/api/v1/store/orders/{order_id}/delivery-note")
+def operator_order_delivery_note(order_id: str, number: str = Query(min_length=1, max_length=100),
+        user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
+    order = db.scalar(select(Order).where(Order.public_id == order_id, Order.origen_pedido == "B2B"))
+    if not order or not order.nro_pedido_exit or not order.customer_code:
+        raise HTTPException(404, "Pedido EXIT no encontrado")
+    def key(value):
+        return str(value or "").replace("~", "/").replace("-", "/").strip().upper()
+    wanted = key(number)
+    try:
+        documents = fetch_customer_delivery_notes(order.customer_code, 1000, number)
+    except Exception as exc:
+        raise HTTPException(503, "No se pudo consultar el albarán en EXIT") from exc
+    for document in documents:
+        if key(document.get("number")) == wanted and matches_order_reference(document.get("order_number"), order):
+            return document
+    raise HTTPException(404, "El albarán no pertenece a este pedido")
 
 
 @app.patch("/api/v1/store/orders/{order_id}/pickup")
