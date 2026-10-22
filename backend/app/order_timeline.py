@@ -63,9 +63,10 @@ def dispatch_timing(record, delivery=None, now=None, kardex_started_at=None, del
     dates = {state: stamp for state, stamp, _ in exit_events(record, delivery)}
     if kardex_started_at is not None:
         dates['EN_PREPARACION'] = instant(kardex_started_at)
-    closed = instant(delivered_at)
-    if closed:
-        dates['ENTREGADO'] = closed
+    delivered = instant(delivered_at)
+    if delivered:
+        dates['ENTREGADO'] = delivered
+    closed = dates.get('ATENDIDO')
     processing = [dates[state] for state in ('REGISTRADO', 'EN_PREPARACION') if state in dates]
     end = closed or instant(now or datetime.now(MADRID))
     invalid = bool(registered and closed and closed < registered)
@@ -77,6 +78,6 @@ def dispatch_timing(record, delivery=None, now=None, kardex_started_at=None, del
                 {'etapa': stage, 'completed_at': stamp}
                 for stage, stamp in (('PENDIENTE', None),
                     ('EN_PROCESAMIENTO', min(processing) if processing else None),
-                    ('PENDIENTE_RECOJO', dates.get('ATENDIDO')), ('ENTREGADO', closed))],
-            'closed_at': closed, 'dispatch_seconds': max(0, seconds) if seconds is not None else None,
+                    ('PENDIENTE_RECOJO', dates.get('ATENDIDO')), ('ENTREGADO', delivered))],
+            'attended_at': closed, 'closed_at': closed, 'dispatch_seconds': max(0, seconds) if seconds is not None else None,
             'dispatch_date_error': invalid}
