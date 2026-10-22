@@ -25,7 +25,7 @@ from .db import get_db
 from .schemas import PickupChange, PickupSettingsIn, DeliveryConfirmation, WebOrderRegistrationChange, UserDisplayPreferences
 from .exit_orders import upsert_exit_order
 from .kardex_timing import fetch_kardex_timings, sales_order_number
-from .order_timeline import exit_events, sync_history, instant, dispatch_timing
+from .order_timeline import exit_events, sync_history, instant, dispatch_timing, is_web_order
 from .delegations import fetch_delegations, resolve_delegation
 from .erp_db import (
     fetch_catalog_articles, fetch_catalog_articles_by_codes,
@@ -235,6 +235,8 @@ def order_payload(order: Order, db: Session, include_items: bool = False, histor
         processing_dates = [event.created_at for event in history if event.estado_registro_exit in {"BLOQUEADO", "REGISTRADO", "EN_PROCESO", "EN_PREPARACION"}]
         pickup_dates = [event.created_at for event in history if event.estado_registro_exit == "ATENDIDO"]
         result["attended_at"] = max(pickup_dates, key=instant) if pickup_dates else None
+        if order.origen_pedido != "B2B" and not result["delivered_at"]:
+            result["delivered_at"] = max((h.created_at for h in history if h.source == "EXIT" and h.estado_registro_exit == "ENTREGADO"), key=instant, default=None)
         delivered_dates = [event.created_at for event in history if event.estado_registro_exit == "ENTREGADO" and event.source == "WEB"]
         invoice_dates = [event.created_at for event in history if event.estado_registro_exit == "FACTURADO"]
         stage_dates = {
@@ -789,11 +791,11 @@ def orders(date_from: date | None = None, date_to: date | None = None,
             by_exit[raw.split("/")[-1]] = row
     linked: set[int] = set()
     result: list[dict] = []
-    def exit_workflow(record, current: str | None = None, delivery: dict | None = None) -> list[dict]:
+    def exit_workflow(record, current: str | None = None, delivery: dict | None = None, web_order: bool | None = None) -> list[dict]:
         current = current or record.estado_registro_exit
         positions = {"PENDIENTE": 0, "BLOQUEADO": 1, "REGISTRADO": 1, "EN_PROCESO": 1, "EN_PREPARACION": 1, "ATENDIDO": 2, "ENTREGADO": 3, "FACTURADO": 4}
         position = positions.get(current, 0)
-        event_dates = {state: stamp for state, stamp, _ in exit_events(record, delivery)}
+        event_dates = {state: stamp for state, stamp, _ in exit_events(record, delivery, web_order)}
         processing = [event_dates[state] for state in ('REGISTRADO', 'EN_PREPARACION') if state in event_dates]
         dates = (None, min(processing) if processing else None,
                  event_dates.get('ATENDIDO'), event_dates.get('ENTREGADO'), event_dates.get('FACTURADO'))
@@ -828,7 +830,10 @@ def orders(date_from: date | None = None, date_to: date | None = None,
                 effective_state = "EN_PREPARACION"
             elif not delivery:
                 effective_state = "REGISTRADO"
-            sync_history(db, local, exit_events(record, delivery))
+            web_order = is_web_order(record, local)
+            if delivery and delivery["is_printed"] and not web_order and effective_state != "FACTURADO":
+                effective_state = "ENTREGADO"
+            sync_history(db, local, exit_events(record, delivery, web_order), web_order=web_order)
             if local.delivered_at and effective_state != "FACTURADO":
                 effective_state = "ENTREGADO"
             local.estado_registro_exit = effective_state
@@ -841,7 +846,7 @@ def orders(date_from: date | None = None, date_to: date | None = None,
                             "tax_total": float(record.tax_total), "total": float(record.total),
                             "created_at": record.recorded_at or local.created_at,
                             "created_by": payload["created_by"] if local.origen_pedido == "B2B" else (record.source_created_by or "EXIT"), "local_order": local.origen_pedido == "B2B",
-                            "workflow": exit_workflow(record, effective_state, delivery),
+                            "workflow": exit_workflow(record, effective_state, delivery, is_web_order(record, local)),
                             "items": [{"sku": line.sku, "description": line.description, "quantity": float(line.quantity),
                                        "served_quantity": float(line.served_quantity or 0),
                                        "pending_quantity": float(line.pending_quantity or 0), "unit": line.unit,
@@ -889,9 +894,11 @@ def orders(date_from: date | None = None, date_to: date | None = None,
             delivery = deliveries.get(key) or deliveries.get(key.split("/")[-1])
         if delivery:
             sequence = ["PENDIENTE", "REGISTRADO", "EN_PROCESO", "EN_PREPARACION", "ATENDIDO", "ENTREGADO", "FACTURADO"]
-            target = "FACTURADO" if delivery["is_invoiced"] else "ENTREGADO" if row.delivered_at else "ATENDIDO"
+            target = "FACTURADO" if delivery["is_invoiced"] else "ENTREGADO" if row.delivered_at or (row.origen_pedido != "B2B" and delivery["is_printed"]) else "ATENDIDO"
             current_index = sequence.index(row.estado_registro_exit) if row.estado_registro_exit in sequence else 0
             events = [("ATENDIDO", delivery["attended_at"], f"Albarán {delivery['delivery_number']} generado")]
+            if row.origen_pedido != "B2B" and delivery["is_printed"] and delivery.get("delivered_at"):
+                events.append(("ENTREGADO", delivery["delivered_at"], f"Albarán {delivery['delivery_number']} impreso"))
             if delivery["is_invoiced"] and delivery["invoiced_at"]:
                 events.append(("FACTURADO", delivery["invoiced_at"], f"Albarán {delivery['delivery_number']} facturado"))
             for status, occurred_at, note in events:
@@ -1315,6 +1322,8 @@ def store_orders(view: str = Query("active_kardex", pattern="^(active_kardex|act
         local = local_record(record)
         if local and local.delivered_at:
             return "ENTREGADO"
+        if delivery and delivery["is_printed"] and not is_web_order(record, local):
+            return "ENTREGADO"
         if delivery:
             return "ATENDIDO"
         if record.estado_registro_exit == "ATENDIDO":
@@ -1357,10 +1366,11 @@ def store_orders(view: str = Query("active_kardex", pattern="^(active_kardex|act
         "nro_pedido_exit": record.exit_order_id, "fecha_registro_exit": record.recorded_at,
         **dispatch_timing(record, delivery_by_order.get(record.exit_order_id.upper()),
                           kardex_started_at=kardex_timings.get(sales_order_number(record.exit_order_id), {}).get("kardex_started_at"),
-                          delivered_at=local_record(record).delivered_at if local_record(record) else None),
+                          delivered_at=local_record(record).delivered_at if local_record(record) else None,
+                          web_order=is_web_order(record, local_record(record))),
         **kardex_timings.get(sales_order_number(record.exit_order_id), {}),
         "delivery_order_id": local_record(record).public_id if local_record(record) else None,
-        "delivered_at": local_record(record).delivered_at if local_record(record) else None,
+        "delivered_at": (local_record(record).delivered_at if local_record(record) else None) or next((stamp for stage, stamp, _ in exit_events(record, delivery_by_order.get(record.exit_order_id.upper()), is_web_order(record, local_record(record))) if stage == "ENTREGADO"), None),
         "origen_pedido": "EXIT", "estado_registro_exit": operational_state(record),
         "items": [{"sku": line.sku, "description": line.description, "quantity": float(line.quantity),
                    "served_quantity": float(line.served_quantity or 0),

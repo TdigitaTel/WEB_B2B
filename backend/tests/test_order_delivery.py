@@ -136,3 +136,28 @@ def test_printed_exit_order_stays_attended_until_web_confirmation(monkeypatch):
     assert live['estado_registro_exit']=='ENTREGADO'
     assert same_time(live['delivered_at'], stamp)
     assert same_time(live['closed_at'], attended_stamp)
+
+
+def test_non_web_uses_exit_delivered_state_and_date(monkeypatch):
+    from app import main as module
+    operator=TestClient(app)
+    operator.post('/api/v1/auth/login',json={'email':'operador@bermudez.test','password':'123456'})
+    record=ExitOrderInput(exit_order_id='2026/TEST/NONWEB',order_number='NONWEB',customer_code='CLI00001',
+                          store_code='00',company_code=0,estado_registro_exit='REGISTRADO',
+                          recorded_at=datetime(2026,10,22,8,tzinfo=timezone.utc),
+                          source_updated_at=datetime(2026,10,22,12,35,tzinfo=timezone.utc),
+                          delivered_at=datetime(2026,10,22),auxiliary_reference=None)
+    delivery=dict(order_number=record.exit_order_id,is_printed=True,is_invoiced=False,
+                  attended_at=datetime(2026,10,22,10,tzinfo=timezone.utc),
+                  delivered_at=datetime(2026,10,22),delivery_number='NONWEB-ALB')
+    monkeypatch.setattr(module,'fetch_exit_orders_live',lambda *args:[record])
+    monkeypatch.setattr(module,'fetch_delivery_statuses_for_orders',lambda *args:[delivery])
+    monkeypatch.setattr(module,'fetch_kardex_timings',lambda *args:{})
+    rows=operator.get('/api/v1/store/orders?view=attended').json()
+    row=next(o for o in rows if o['nro_pedido_exit']==record.exit_order_id)
+    assert row['estado_registro_exit']=='ENTREGADO'
+    assert row['is_web_order'] is False
+    assert row['delivered_at'] and row['closed_at']
+    assert row['operational_workflow'][-1]['occurred_at']==row['delivered_at']
+    assert row['operational_workflow'][2]['occurred_at']==row['closed_at']
+    assert row['closed_at']!=row['delivered_at']

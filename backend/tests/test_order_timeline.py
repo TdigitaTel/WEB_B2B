@@ -4,7 +4,7 @@ from app.order_timeline import preparation_time, exit_events
 from app.config import settings
 
 def record(**values):
-    defaults=dict(recorded_at=datetime(2026,10,5,9,30), prepared_at=None, delivered_at=None,
+    defaults=dict(auxiliary_reference='PEDIDO GENERADO WEB B2B', recorded_at=datetime(2026,10,5,9,30), prepared_at=None, delivered_at=None,
                   invoiced_at=None, source_updated_at=datetime(2026,10,6,15,42))
     return SimpleNamespace(**(defaults|values))
 
@@ -65,3 +65,15 @@ def test_dispatch_timer_reports_invalid_attended_date():
     from app.order_timeline import dispatch_timing
     data=record(recorded_at=datetime(2026,10,6,12))
     assert dispatch_timing(data,{'attended_at':datetime(2026,10,6,10)})['dispatch_date_error']
+
+
+def test_non_web_restores_exit_delivery_without_changing_attention_clock():
+    from app.order_timeline import dispatch_timing
+    data=record(auxiliary_reference=None, delivered_at=datetime(2026,10,6), source_updated_at=datetime(2026,10,6,15,42))
+    delivery={'attended_at':datetime(2026,10,6,11), 'is_printed':True, 'is_invoiced':False}
+    events={state:stamp for state,stamp,_ in exit_events(data,delivery)}
+    assert events['ENTREGADO'].hour==15 and events['ENTREGADO'].minute==42
+    timing=dispatch_timing(data,delivery,datetime(2026,10,7))
+    assert timing['closed_at'].hour==11
+    assert timing['workflow'][-1]['completed_at']==events['ENTREGADO']
+    assert 'ENTREGADO' not in {state for state,_,_ in exit_events(data,delivery,web_order=True)}

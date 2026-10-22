@@ -13,3 +13,5 @@ El arranque crea customer_delivery_settings y añade de forma idempotente fulfil
 La cabecera muestra Recogida en tienda por defecto y Recogida real para su confirmación. Solo un pedido solicitado como DELIVERY muestra Delivery y Entrega real.
 
 En Operaciones, Pendiente solo está habilitado desde REGISTRADO y la API rechaza otros estados sin cambiar el vínculo EXIT. Entregar se muestra en la cabecera solo en ATENDIDO y sin entrega confirmada; no se mezcla con Gestión.
+
+Entrega según origen: en pedidos no WEB se conservan ENTREGADO y su fecha de EXIT (albarán impreso). En WEB solo la confirmación del botón Entregar acredita la entrega. En ambos casos el contador mide hasta ATENDIDO.
