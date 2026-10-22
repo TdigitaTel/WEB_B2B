@@ -64,6 +64,8 @@ def main():
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS fecha_registro_exit TIMESTAMPTZ",
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ",
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS pickup_date DATE",
+                "ALTER TABLE orders ADD COLUMN IF NOT EXISTS fulfillment_method VARCHAR(20) NOT NULL DEFAULT 'PICKUP'",
+                "ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_address VARCHAR(500)",
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS attention_deadline_at TIMESTAMPTZ",
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS preparation_minutes_snapshot INTEGER",
                 "CREATE INDEX IF NOT EXISTS ix_orders_attention_deadline_at ON orders(attention_deadline_at)",

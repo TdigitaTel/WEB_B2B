@@ -69,8 +69,9 @@ def test_pending_creates_missing_robot_event_once():
         user=db.scalar(select(User).where(User.role=='OPERADOR_TIENDA'))
         order=Order(order_number='WEB-PENDING-NO-EVENT',company_code=user.company_code,delegation_code='00',origen_pedido='B2B',estado_registro_exit='REGISTRADO',nro_pedido_exit='2026/AL/NOEVENT',subtotal=0,tax_total=0,total=0)
         db.add(order);db.commit();oid=order.public_id
-    for _ in range(2):
-        assert operator.patch(f'/api/v1/store/orders/{oid}/registration',json={'state':'PENDIENTE'}).status_code==200
+    assert operator.patch(f'/api/v1/store/orders/{oid}/registration',json={'state':'PENDIENTE'}).status_code==200
+    # Ya está pendiente: la nueva regla rechaza repetir el cambio sin duplicar eventos.
+    assert operator.patch(f'/api/v1/store/orders/{oid}/registration',json={'state':'PENDIENTE'}).status_code==409
     with SessionLocal() as db:
         events=db.scalars(select(IntegrationOutbox).where(IntegrationOutbox.aggregate_id==oid)).all()
         assert len(events)==1 and events[0].sync_status==SyncStatus.pending
@@ -142,3 +143,27 @@ def test_manual_exit_rejects_invalid_future_and_nonexistent_madrid_time():
     with SessionLocal() as db:
         assert db.get(Order,pk).nro_pedido_exit is None
         assert not db.scalars(select(OrderStatusHistory).where(OrderStatusHistory.order_id==pk)).all()
+
+
+def test_only_registered_can_be_reset_to_pending():
+    from datetime import datetime, timezone
+    operator=TestClient(app)
+    operator.post('/api/v1/auth/login',json={'email':'operador@bermudez.test','password':'123456'})
+    with SessionLocal() as db:
+        actor=db.scalar(select(User).where(User.role=='OPERADOR_TIENDA'))
+        cases=[]
+        for state in ('BORRADOR','PENDIENTE','BLOQUEADO','EN_PROCESO','EN_PREPARACION','ATENDIDO','ENTREGADO','FACTURADO','REGISTRADO'):
+            row=Order(order_number='WEB-RESET-GUARD-'+state,company_code=actor.company_code,delegation_code='00',
+                      origen_pedido='B2B',estado_registro_exit=state,nro_pedido_exit='EXIT-RESET-'+state,
+                      delivered_at=datetime.now(timezone.utc) if state=='ENTREGADO' else None)
+            db.add(row);db.flush();cases.append((row.public_id,row.id,state,row.nro_pedido_exit))
+        db.commit()
+    for public_id,pk,state,number in cases:
+        response=operator.patch(f'/api/v1/store/orders/{public_id}/registration',json={'state':'PENDIENTE'})
+        assert response.status_code==(200 if state=='REGISTRADO' else 409),response.text
+        with SessionLocal() as db:
+            row=db.get(Order,pk)
+            assert row.estado_registro_exit==('PENDIENTE' if state=='REGISTRADO' else state)
+            assert row.nro_pedido_exit==(None if state=='REGISTRADO' else number)
+            if state!='REGISTRADO':
+                assert not db.scalars(select(OrderStatusHistory).where(OrderStatusHistory.order_id==pk)).all()

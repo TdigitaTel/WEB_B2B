@@ -50,6 +50,7 @@ app.include_router(category_import_router)
 app.include_router(category_visibility_router)
 app.include_router(category_image_router)
 app.include_router(image_admin_router)
+from .customer_delivery import delivery_enabled, validate_delivery
 from .customer_access import router as customer_access_router
 app.include_router(customer_access_router)
 from .search_settings import router as search_settings_router, get_search_config
@@ -178,7 +179,7 @@ def cart_payload(cart: Cart, user: User, db: Session) -> dict:
                       "quantity": float(item.quantity), "unit": article["unit"],
                       "unit_price": float(price), "line_total": float(line)})
     store = get_delegation(cart.delegation_code, cart.company_code) if cart.store_id else None
-    return {"id": cart.public_id, "store": {"id": store.public_id, "name": store.name} if store else None,
+    return {"delivery_enabled": delivery_enabled(db, customer_code_for(user, db)), "id": cart.public_id, "store": {"id": store.public_id, "name": store.name} if store else None,
             "items": items, "line_count": len(items), "subtotal": float(subtotal),
             "tax_total": float((subtotal * Decimal("0.21")).quantize(Decimal("0.01"))),
             "total": float((subtotal * Decimal("1.21")).quantize(Decimal("0.01")))}
@@ -197,7 +198,7 @@ def order_payload(order: Order, db: Session, include_items: bool = False, histor
     creator = db.get(User, order.user_id) if order.user_id else None
     result = {"id": order.public_id, "number": order.order_number, "server_now": datetime.now(timezone.utc),
               "store": store.name if store else order.store_id, "store_code": store.code if store else order.delegation_code, "company_code": order.company_code, "delegation_code": order.delegation_code, "customer_code": order.customer_code, "customer_reference": order.customer_reference,
-              "pickup_date": order.pickup_date, "attention_deadline_at": order.attention_deadline_at, "preparation_minutes_snapshot": order.preparation_minutes_snapshot, "job_name": order.job_name, "notes": order.notes, "subtotal": float(order.subtotal),
+              "fulfillment_method": order.fulfillment_method, "delivery_address": order.delivery_address, "pickup_date": order.pickup_date, "attention_deadline_at": order.attention_deadline_at, "preparation_minutes_snapshot": order.preparation_minutes_snapshot, "job_name": order.job_name, "notes": order.notes, "subtotal": float(order.subtotal),
               "tax_total": float(order.tax_total), "total": float(order.total), "created_at": order.created_at,
               "customer": customer_name, "created_by": order.creator_user_name or (creator.full_name if creator else "Integración EXIT"),
               "principal_user_name": order.principal_user_name or (principal_for(creator, db).full_name if creator and not creator.parent_user_id else None),
@@ -621,6 +622,7 @@ def create_order(data: OrderCreate, user: User = Depends(current_user), db: Sess
     if data.pickup_date and data.pickup_date < datetime.now(ZoneInfo("Europe/Madrid")).date() + timedelta(days=1):
         raise HTTPException(422, "La recogida programada debe ser a partir de mañana")
     customer = customer_for(user, db); customer_code = customer_code_for(user, db); cart = active_cart(user, db)
+    delivery_address = validate_delivery(db, customer_code, data.fulfillment_method, data.delivery_address)
     if data.delegation_code is not None and data.company_code is None:
         raise HTTPException(422, "Indica CodigoEmpresa junto a IdDelegacion")
     store = get_delegation(data.delegation_code or data.store_id, data.company_code)
@@ -654,7 +656,7 @@ def create_order(data: OrderCreate, user: User = Depends(current_user), db: Sess
     principal = principal_for(user, db)
     order = Order(principal_user_id=principal.id, principal_user_name=principal.full_name, creator_user_name=user.full_name, order_number=f"TMP-{cart.public_id[:20]}", customer_id=legacy_customer_id(user), customer_code=customer_code, user_id=user.id, company_code=store.company, delegation_code=store.code,
                   origen_pedido="B2B", estado_registro_exit=initial_status,
-                  pickup_date=data.pickup_date, customer_reference=data.customer_reference, job_name=data.job_name, notes=data.notes,
+                  fulfillment_method=data.fulfillment_method, delivery_address=delivery_address, pickup_date=data.pickup_date, customer_reference=data.customer_reference, job_name=data.job_name, notes=data.notes,
                   subtotal=0, tax_total=0, total=0, sync_status=SyncStatus.pending)
     if not data.draft:
         assign_attention_deadline(order, db)
@@ -678,7 +680,7 @@ def create_order(data: OrderCreate, user: User = Depends(current_user), db: Sess
     if not data.draft:
         db.add(Notification(customer_id=legacy_customer_id(user), customer_code=customer_code, user_id=user.id, title="Pedido recibido", message=f"Hemos recibido el pedido {order.order_number}."))
         db.add(IntegrationOutbox(aggregate_type="ORDER", aggregate_id=order.public_id, event_type="ORDER_CREATED",
-                                 payload={"order_number": order.order_number, "customer_erp_id": customer_code, "store": store.code}, sync_status=SyncStatus.pending))
+                                 payload={"order_number": order.order_number, "customer_erp_id": customer_code, "store": store.code, "fulfillment_method": order.fulfillment_method, "delivery_address": order.delivery_address}, sync_status=SyncStatus.pending))
     cart.status = "CONVERTED"
     audit(db, user, "ORDER_CREATED", "ORDER", order.public_id, {"number": order.order_number, "store": store.code})
     db.commit()
@@ -705,6 +707,7 @@ def submit_draft_order(order_id: str, user: User = Depends(current_user), db: Se
     order = customer_order(order_id, user, db)
     if order.estado_registro_exit != "BORRADOR":
         raise HTTPException(409, "Solo se puede enviar un pedido que esté en borrador")
+    validate_delivery(db, order.customer_code, order.fulfillment_method, order.delivery_address)
     if order.pickup_date:
         if not scheduled_date_open(db, order.company_code, order.delegation_code, order.pickup_date):
             raise HTTPException(409, "La sede está cerrada en la fecha seleccionada")
@@ -721,7 +724,7 @@ def submit_draft_order(order_id: str, user: User = Depends(current_user), db: Se
                         title="Pedido recibido", message=f"Hemos recibido el pedido {order.order_number}."))
     db.add(IntegrationOutbox(aggregate_type="ORDER", aggregate_id=order.public_id, event_type="ORDER_CREATED",
                              payload={"order_number": order.order_number, "customer_erp_id": order.customer_code,
-                                      "store": store.code if store else ""}, sync_status=SyncStatus.pending))
+                                      "store": store.code if store else "", "fulfillment_method": order.fulfillment_method, "delivery_address": order.delivery_address}, sync_status=SyncStatus.pending))
     audit(db, user, "ORDER_SUBMITTED", "ORDER", order.public_id, {"number": order.order_number})
     db.commit()
     return order_payload(order, db, True)
@@ -1407,6 +1410,8 @@ def change_web_pickup(order_id: str, data: PickupChange,
 def change_web_registration(order_id: str, data: WebOrderRegistrationChange,
                             user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
     order = operator_web_order(db, order_id)
+    if data.state == "PENDIENTE" and (order.estado_registro_exit != "REGISTRADO" or order.delivered_at):
+        raise HTTPException(409, "Solo se puede volver a PENDIENTE desde REGISTRADO y sin entrega confirmada")
     previous = {"state": order.estado_registro_exit, "exit_order_number": order.nro_pedido_exit, "exit_registered_at": order.fecha_registro_exit.isoformat() if order.fecha_registro_exit else None}
     number = (data.exit_order_number or "").strip().replace("~", "/").upper()
     if data.state == "REGISTRADO":
