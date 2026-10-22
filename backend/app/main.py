@@ -1231,6 +1231,17 @@ ALLOWED_TRANSITIONS = {
 }
 
 
+def delivery_notes_payload(rows):
+    """Cabeceras de todos los albaranes vinculados, sin líneas ni importes."""
+    unique = {}
+    for row in rows:
+        number = str(row.get("delivery_number") or "").strip()
+        if number:
+            unique.setdefault(number, {"number": number, "created_at": instant(row.get("attended_at")),
+                "status": "FACTURADO" if row.get("is_invoiced") else "IMPRESO" if row.get("is_printed") else "PENDIENTE_IMPRESION"})
+    return list(unique.values())
+
+
 def web_store_orders(db: Session, user: User, date_from: date | None, date_to: date | None, state: str, delegation: str = "00") -> list[dict]:
     if date_from and date_to and date_from > date_to:
         raise HTTPException(422, "La fecha desde no puede ser posterior a la fecha hasta")
@@ -1253,11 +1264,16 @@ def web_store_orders(db: Session, user: User, date_from: date | None, date_to: d
         except Exception:
             logger.exception("No se pudieron enriquecer los pedidos WEB del cliente %s", code)
     deliveries = {}
+    delivery_rows = {}
+    notes_available = True
     if linked:
         try:
             for delivery in fetch_delivery_statuses_for_orders([row.nro_pedido_exit for row in linked]):
-                deliveries.setdefault(str(delivery["order_number"]).replace("~", "/").upper(), delivery)
+                key = str(delivery["order_number"]).replace("~", "/").upper()
+                deliveries.setdefault(key, delivery)
+                delivery_rows.setdefault(key, []).append(delivery)
         except Exception:
+            notes_available = False
             logger.exception("No se pudieron consultar los albaranes; se conserva la entrega confirmada en WEB")
     requested = state.strip().upper()
     groups = {"EN_PROCESAMIENTO": {"BLOQUEADO", "REGISTRADO", "EN_PROCESO", "EN_PREPARACION"}, "PENDIENTE_RECOJO": {"ATENDIDO"}}
@@ -1274,6 +1290,7 @@ def web_store_orders(db: Session, user: User, date_from: date | None, date_to: d
                 row.estado_registro_exit = "ATENDIDO"
             sync_history(db, row, [("ATENDIDO", instant(delivery["attended_at"]), f"Albarán {delivery['delivery_number']} generado")] if delivery.get("attended_at") else [])
         payload = order_payload(row, db, include_items=True, history_for_operator=True)
+        payload["delivery_notes"] = delivery_notes_payload(delivery_rows.get((row.nro_pedido_exit or "").replace("~", "/").upper(), [])) if notes_available else None
         record = exit_by_key.get((row.customer_code, (row.nro_pedido_exit or "").replace("~", "/").upper()))
         if record and (record.company_code, record.store_code) == (row.company_code, row.delegation_code):
             payload["fecha_registro_exit"] = record.recorded_at
@@ -1306,10 +1323,12 @@ def store_orders(view: str = Query("active_kardex", pattern="^(active_kardex|act
         records = []
     kardex_timings = fetch_kardex_timings([sales_order_number(record.exit_order_id) for record in records])
     delivery_by_order: dict[str, dict] = {}
+    all_delivery_rows: dict[str, list] = {}
     if records:
         for delivery in fetch_delivery_statuses_for_orders([record.exit_order_id for record in records]):
             key = str(delivery["order_number"]).replace("~", "/").upper()
             delivery_by_order.setdefault(key, delivery)
+            all_delivery_rows.setdefault(key, []).append(delivery)
     keys = [key for record in records for key in (record.exit_order_id, record.customer_reference or "")]
     local_orders = list(db.scalars(select(Order).where((Order.nro_pedido_exit.in_(keys)) | (Order.order_number.in_(keys)))).all()) if keys else []
     local_by_key = {key.upper(): row for row in local_orders for key in (row.nro_pedido_exit, row.order_number) if key}
@@ -1369,6 +1388,7 @@ def store_orders(view: str = Query("active_kardex", pattern="^(active_kardex|act
                           delivered_at=local_record(record).delivered_at if local_record(record) else None,
                           web_order=is_web_order(record, local_record(record))),
         **kardex_timings.get(sales_order_number(record.exit_order_id), {}),
+        "delivery_notes": delivery_notes_payload(all_delivery_rows.get(record.exit_order_id.upper(), [])),
         "delivery_order_id": local_record(record).public_id if local_record(record) else None,
         "delivered_at": (local_record(record).delivered_at if local_record(record) else None) or next((stamp for stage, stamp, _ in exit_events(record, delivery_by_order.get(record.exit_order_id.upper()), is_web_order(record, local_record(record))) if stage == "ENTREGADO"), None),
         "origen_pedido": "EXIT", "estado_registro_exit": operational_state(record),
