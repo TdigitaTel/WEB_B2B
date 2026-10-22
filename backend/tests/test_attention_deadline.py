@@ -54,7 +54,7 @@ def login(email):
     return client
 
 
-def test_deadline_is_persisted_previewed_and_recalculated_by_operator(pickup_schedule):
+def test_deadline_is_persisted_previewed_and_recalculated_by_operator(pickup_schedule, classified_catalog):
     customer = login('compras001@cliente.test')
     operator = login('operador@bermudez.test')
     store = customer.get('/api/v1/stores').json()[0]
@@ -88,7 +88,7 @@ def test_deadline_is_persisted_previewed_and_recalculated_by_operator(pickup_sch
         assert event is not None and '09:30' in event.note
 
 
-def test_draft_receives_deadline_only_when_submitted(pickup_schedule):
+def test_draft_receives_deadline_only_when_submitted(pickup_schedule, classified_catalog):
     client = login('compras001@cliente.test')
     store = client.get('/api/v1/stores').json()[0]
     day = datetime.now(MADRID).date()+timedelta(days=1)

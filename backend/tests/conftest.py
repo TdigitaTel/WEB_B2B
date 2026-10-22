@@ -159,3 +159,24 @@ def pickup_schedule(exit_erp_stub):
         elif row:
             db.delete(row)
         db.commit()
+
+
+@pytest.fixture
+def classified_catalog():
+    """Los escenarios de compra necesitan artículos publicados con categoría."""
+    from sqlalchemy import select
+    from app.db import SessionLocal
+    from app.models import Product, MaterialArea
+    with SessionLocal() as db:
+        area=db.scalar(select(MaterialArea).where(MaterialArea.code=="TEST-PUBLISHED"))
+        if area is None:
+            area=MaterialArea(code="TEST-PUBLISHED",name="Material publicado para pruebas")
+            db.add(area);db.flush()
+        rows=db.scalars(select(Product).where(Product.material_area_id.is_(None))).all()
+        ids=[row.id for row in rows]
+        for row in rows:row.material_area_id=area.id
+        db.commit()
+    yield
+    with SessionLocal() as db:
+        for row in db.scalars(select(Product).where(Product.id.in_(ids))).all():row.material_area_id=None
+        db.commit()

@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from .auth import audit, create_access_token, current_user, hash_password, require_roles, verify_password
 from .category_import import router as category_import_router
-from .category_visibility import router as category_visibility_router, image_router as category_image_router, image_urls, hidden_areas, hidden_codes
+from .category_visibility import router as category_visibility_router, image_router as category_image_router, image_urls, hidden_areas, hidden_codes, visible_catalog_codes
 from .config import settings
 from .pickup import immediate_ready_at, immediate_available, next_open_date, scheduled_date_open, scheduled_ready_at, assign_attention_deadline
 from .db import get_db
@@ -358,6 +358,7 @@ def products(q: str = "", family: str | None = None, area_id: int | None = None,
     classification_codes = PostgresCatalogService(db).classification_codes(
         family, area_id, family_id, subfamily_id, product_type_id
     )
+    classification_codes = visible_catalog_codes(db, classification_codes)
     try:
         articles, total = fetch_catalog_articles(q, page, page_size, classification_codes, excluded_codes=hidden_codes(db), search_config=get_search_config(db))
     except Exception as exc:
@@ -394,7 +395,8 @@ def favorite_products(limit: int = Query(8, ge=1, le=24), user: User = Depends(c
         raise HTTPException(503, "No se pudieron consultar los materiales favoritos en EXIT") from exc
 
     purchased_units = {row["article_code"]: row["purchased_units"] for row in purchases}
-    codes = [code for code in purchased_units if code not in set(hidden_codes(db))]
+    excluded = set(hidden_codes(db))
+    codes = visible_catalog_codes(db, [code for code in purchased_units if code not in excluded])
     if not codes:
         return {"items": [], "total": 0}
     try:
@@ -462,7 +464,7 @@ def catalog_classification(user: User = Depends(current_user), db: Session = Dep
 def suggestions(q: str = Query(min_length=2), user: User = Depends(current_user), db: Session = Depends(get_db)):
     customer_for(user, db)
     try:
-        articles, _ = fetch_catalog_articles(q, 1, 8, excluded_codes=hidden_codes(db), search_config=get_search_config(db))
+        articles, _ = fetch_catalog_articles(q, 1, 8, visible_catalog_codes(db), excluded_codes=hidden_codes(db), search_config=get_search_config(db))
     except Exception as exc:
         logger.exception("Error consultando sugerencias en EXIT")
         raise HTTPException(503, "No se pudieron consultar las sugerencias en EXIT") from exc

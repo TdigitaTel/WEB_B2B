@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import Response
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, func, or_
 from sqlalchemy.orm import Session
 from .auth import current_user, require_roles
 from .db import get_db
@@ -27,8 +27,29 @@ def image_urls(db):
     return {area_id: f"/api/v1/catalog/category-images/{area_id}?v={digest}"
             for area_id, digest in db.execute(select(MaterialAreaImage.area_id, MaterialAreaImage.sha256)).all()}
 
+UNCLASSIFIED_CODE = "__UNCLASSIFIED__"
+
+def unclassified_visible(db):
+    return db.scalar(select(CatalogAreaVisibility.visible).where(CatalogAreaVisibility.code == UNCLASSIFIED_CODE)) is True
+
+def unclassified_area_ids(db):
+    return select(MaterialArea.id).where(or_(MaterialArea.code == UNCLASSIFIED_CODE,
+        func.upper(func.trim(MaterialArea.name)).in_(["SIN CLASIFICAR", "SIN CATEGORIA", "SIN CATEGORÍA"])))
+
 def hidden_areas(db):
-    return select(CatalogAreaVisibility.area_id).where(CatalogAreaVisibility.visible.is_(False))
+    condition = CatalogAreaVisibility.visible.is_(False)
+    hidden = select(CatalogAreaVisibility.area_id).where(condition)
+    return hidden.union(unclassified_area_ids(db)) if not unclassified_visible(db) else hidden
+
+def visible_catalog_codes(db, codes=None):
+    """La maestra sigue siendo EXIT; PostgreSQL delimita qué clasificación se publica."""
+    if unclassified_visible(db):
+        return codes
+    stmt = select(Product.sku).where(Product.material_area_id.is_not(None),
+        Product.material_area_id.not_in(unclassified_area_ids(db)))
+    if codes is not None:
+        stmt = stmt.where(Product.sku.in_(codes))
+    return list(db.scalars(stmt).all())
 
 def hidden_codes(db):
     return list(db.scalars(select(Product.sku).where(Product.material_area_id.in_(hidden_areas(db)))).all())
@@ -38,16 +59,22 @@ class VisibilityIn(BaseModel):
 
 @router.get("")
 def list_categories(db: Session = Depends(get_db), user: User = Depends(require_roles("ADMIN", "OPERADOR_TIENDA"))):
+    unclassified = db.scalar(select(MaterialArea).where(MaterialArea.code == UNCLASSIFIED_CODE))
+    if unclassified is None:
+        unclassified = MaterialArea(code=UNCLASSIFIED_CODE, name="Artículos sin categoría")
+        db.add(unclassified)
+        db.flush()
     areas = db.scalars(select(MaterialArea).order_by(MaterialArea.name)).all()
     controls = {row.area_id: row for row in db.scalars(select(CatalogAreaVisibility)).all()}
     for area in areas:
         if area.id not in controls:
-            row = CatalogAreaVisibility(area_id=area.id, code=area.code, name=area.name, visible=True)
+            row = CatalogAreaVisibility(area_id=area.id, code=area.code, name=area.name, visible=area.code != UNCLASSIFIED_CODE)
             db.add(row)
             controls[area.id] = row
     db.commit()
     images = image_urls(db)
-    return [{"id":area.id,"code":area.code,"name":area.name,"visible":controls[area.id].visible,"image_url":images.get(area.id)} for area in areas]
+    unclassified_ids = set(db.scalars(unclassified_area_ids(db)).all())
+    return [{"id":area.id,"code":area.code,"name":area.name,"visible":controls[area.id].visible,"image_url":images.get(area.id)} for area in areas if area.code == UNCLASSIFIED_CODE or area.id not in unclassified_ids]
 
 
 @router.post("/{area_id}/image")
