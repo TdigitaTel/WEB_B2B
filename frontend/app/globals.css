@@ -492,3 +492,5 @@ body{background:linear-gradient(180deg,#f6f9fb 0,#f1f5f7 420px,#f5f6f7 100%)}.se
 .order-lines.exit-order-amounts{overflow-x:auto}
 .exit-order-amounts .order-lines-head,.exit-order-amounts .order-line{grid-template-columns:minmax(260px,1fr) 65px 65px 90px 85px 100px 100px;min-width:900px}
 .exit-order-amounts .order-lines-head>*,.exit-order-amounts .order-line>*{display:block}
+
+.operator-delivery-document{width:min(1100px,95vw)}
