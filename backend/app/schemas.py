@@ -68,6 +68,8 @@ class PickupSettingsIn(BaseModel):
 
 
 class OrderCreate(BaseModel):
+    fulfillment_method: str = Field(default="PICKUP", pattern="^(PICKUP|DELIVERY)$")
+    delivery_address: str | None = Field(default=None, max_length=500)
     pickup_date: date | None = None
     store_id: str | None = None
     company_code: int | None = None

@@ -17,6 +17,8 @@ from .config import settings
 from .db import get_db
 from .erp_db import fetch_access_customers, fetch_customer, fetch_access_customers_by_codes
 from .models import CustomerQrAccess, AuthSession, Customer, User
+from .customer_delivery import delivery_enabled
+from .models import CustomerDeliverySetting
 from .initial_credentials import encrypt_initial, decrypt_initial
 
 router = APIRouter(prefix="/api/v1/store/customer-access", tags=["Accesos de clientes"])
@@ -254,3 +256,28 @@ def send_initial_email(data: InitialEmail, user: User = Depends(operator), db: S
     audit(db, user, "CUSTOMER_INITIAL_EMAIL_SENT", "USER", account.public_id, {"customer_code": data.customer_code})
     db.commit()
     return {"ok": True}
+
+
+class DeliverySettingIn(AccessAction):
+    delivery_enabled: bool
+
+
+@router.get("/delivery")
+def get_delivery_setting(customer_code: str = Query(min_length=1, max_length=40),
+                         user: User = Depends(operator), db: Session = Depends(get_db)):
+    customer_lookup(customer_code.strip())
+    return {"customer_code": customer_code.strip(), "delivery_enabled": delivery_enabled(db, customer_code.strip())}
+
+
+@router.post("/delivery")
+def set_delivery_setting(data: DeliverySettingIn, user: User = Depends(operator), db: Session = Depends(get_db)):
+    customer_lookup(data.customer_code)
+    setting = db.get(CustomerDeliverySetting, data.customer_code)
+    if setting is None:
+        setting = CustomerDeliverySetting(customer_code=data.customer_code)
+        db.add(setting)
+    setting.delivery_enabled = data.delivery_enabled
+    audit(db, user, "CUSTOMER_DELIVERY_CHANGED", "CUSTOMER", data.customer_code,
+          {"delivery_enabled": data.delivery_enabled})
+    db.commit()
+    return {"customer_code": data.customer_code, "delivery_enabled": setting.delivery_enabled}
