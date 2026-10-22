@@ -233,7 +233,7 @@ def order_payload(order: Order, db: Session, include_items: bool = False, histor
         draft_dates = [event.created_at for event in history if event.estado_registro_exit == "BORRADOR"]
         processing_dates = [event.created_at for event in history if event.estado_registro_exit in {"BLOQUEADO", "REGISTRADO", "EN_PROCESO", "EN_PREPARACION"}]
         pickup_dates = [event.created_at for event in history if event.estado_registro_exit == "ATENDIDO"]
-        delivered_dates = [event.created_at for event in history if event.estado_registro_exit == "ENTREGADO"]
+        delivered_dates = [event.created_at for event in history if event.estado_registro_exit == "ENTREGADO" and event.source == "WEB"]
         invoice_dates = [event.created_at for event in history if event.estado_registro_exit == "FACTURADO"]
         stage_dates = {
             **({"BORRADOR": min(draft_dates)} if draft_dates else {}),
@@ -804,8 +804,6 @@ def orders(date_from: date | None = None, date_to: date | None = None,
         if delivery:
             if delivery["is_invoiced"]:
                 effective_state = "FACTURADO"
-            elif delivery["is_printed"]:
-                effective_state = "ENTREGADO"
             else:
                 effective_state = "ATENDIDO"
         local = by_exit.get(external) or by_exit.get(external.split("/")[-1])
@@ -878,6 +876,7 @@ def orders(date_from: date | None = None, date_to: date | None = None,
         payload["is_web_order"] = bool(payload.get("is_web_order")) or "PEDIDOGENERADOWEBB2B" in "".join(str(record.auxiliary_reference or "").upper().split())
         result.append(payload)
     for row in local_rows:
+        sync_history(db, row, [])
         if row.id in linked:
             continue
         delivery = None
@@ -886,11 +885,9 @@ def orders(date_from: date | None = None, date_to: date | None = None,
             delivery = deliveries.get(key) or deliveries.get(key.split("/")[-1])
         if delivery:
             sequence = ["PENDIENTE", "REGISTRADO", "EN_PROCESO", "EN_PREPARACION", "ATENDIDO", "ENTREGADO", "FACTURADO"]
-            target = "FACTURADO" if delivery["is_invoiced"] else "ENTREGADO" if delivery["is_printed"] else "ATENDIDO"
+            target = "FACTURADO" if delivery["is_invoiced"] else "ENTREGADO" if row.delivered_at else "ATENDIDO"
             current_index = sequence.index(row.estado_registro_exit) if row.estado_registro_exit in sequence else 0
             events = [("ATENDIDO", delivery["attended_at"], f"Albarán {delivery['delivery_number']} generado")]
-            if delivery["is_printed"] and delivery["delivered_at"]:
-                events.append(("ENTREGADO", delivery["delivered_at"], f"Albarán {delivery['delivery_number']} impreso"))
             if delivery["is_invoiced"] and delivery["invoiced_at"]:
                 events.append(("FACTURADO", delivery["invoiced_at"], f"Albarán {delivery['delivery_number']} facturado"))
             for status, occurred_at, note in events:
@@ -1158,6 +1155,8 @@ def update_order_status_from_integration(
     if requested not in {"BLOQUEADO", *INTEGRATION_STATUS_SEQUENCE}:
         allowed = ", ".join(INTEGRATION_STATUS_SEQUENCE)
         raise HTTPException(422, f"Estado no válido. Valores admitidos: {allowed}")
+    if requested == "ENTREGADO" and not order.delivered_at:
+        raise HTTPException(409, "La entrega debe confirmarse desde Operaciones WEB")
     source = data.source.strip().upper()
     if not source:
         raise HTTPException(422, "El origen de la actualización es obligatorio")
@@ -1187,6 +1186,8 @@ def update_order_status_from_integration(
             return {"changed": False, "order": order_payload(order, db, True)}
         statuses = INTEGRATION_STATUS_SEQUENCE[current_index + 1:requested_index + 1]
 
+    if not order.delivered_at:
+        statuses = [status for status in statuses if status != "ENTREGADO"]
     recorded = []
     for status in statuses:
         db.add(OrderStatusHistory(
@@ -1240,10 +1241,27 @@ def web_store_orders(db: Session, user: User, date_from: date | None, date_to: d
                 exit_by_key[(code, record.exit_order_id.replace("~", "/").upper())] = record
         except Exception:
             logger.exception("No se pudieron enriquecer los pedidos WEB del cliente %s", code)
+    deliveries = {}
+    if linked:
+        try:
+            for delivery in fetch_delivery_statuses_for_orders([row.nro_pedido_exit for row in linked]):
+                deliveries.setdefault(str(delivery["order_number"]).replace("~", "/").upper(), delivery)
+        except Exception:
+            logger.exception("No se pudieron consultar los albaranes; se conserva la entrega confirmada en WEB")
     requested = state.strip().upper()
     groups = {"EN_PROCESAMIENTO": {"BLOQUEADO", "REGISTRADO", "EN_PROCESO", "EN_PREPARACION"}, "PENDIENTE_RECOJO": {"ATENDIDO"}}
     result = []
     for row in rows:
+        sync_history(db, row, [])
+        delivery = deliveries.get((row.nro_pedido_exit or "").replace("~", "/").upper())
+        if delivery:
+            if delivery["is_invoiced"]:
+                row.estado_registro_exit = "FACTURADO"
+            elif row.delivered_at:
+                row.estado_registro_exit = "ENTREGADO"
+            else:
+                row.estado_registro_exit = "ATENDIDO"
+            sync_history(db, row, [("ATENDIDO", instant(delivery["attended_at"]), f"Albarán {delivery['delivery_number']} generado")] if delivery.get("attended_at") else [])
         payload = order_payload(row, db, include_items=True, history_for_operator=True)
         record = exit_by_key.get((row.customer_code, (row.nro_pedido_exit or "").replace("~", "/").upper()))
         if record and (record.company_code, record.store_code) == (row.company_code, row.delegation_code):
@@ -1255,6 +1273,8 @@ def web_store_orders(db: Session, user: User, date_from: date | None, date_to: d
         if requested not in {"", "TODOS"} and actual not in groups.get(requested, {requested}):
             continue
         result.append(payload)
+    if rows:
+        db.commit()
     return result
 
 
@@ -1290,8 +1310,6 @@ def store_orders(view: str = Query("active_kardex", pattern="^(active_kardex|act
             return "FACTURADO"
         local = local_record(record)
         if local and local.delivered_at:
-            return "ENTREGADO"
-        if delivery and delivery["is_printed"]:
             return "ENTREGADO"
         if delivery:
             return "ATENDIDO"
@@ -1334,7 +1352,8 @@ def store_orders(view: str = Query("active_kardex", pattern="^(active_kardex|act
         "subtotal": float(record.subtotal), "tax_total": float(record.tax_total), "total": float(record.total),
         "nro_pedido_exit": record.exit_order_id, "fecha_registro_exit": record.recorded_at,
         **dispatch_timing(record, delivery_by_order.get(record.exit_order_id.upper()),
-                          kardex_started_at=kardex_timings.get(sales_order_number(record.exit_order_id), {}).get("kardex_started_at")),
+                          kardex_started_at=kardex_timings.get(sales_order_number(record.exit_order_id), {}).get("kardex_started_at"),
+                          delivered_at=local_record(record).delivered_at if local_record(record) else None),
         **kardex_timings.get(sales_order_number(record.exit_order_id), {}),
         "delivery_order_id": local_record(record).public_id if local_record(record) else None,
         "delivered_at": local_record(record).delivered_at if local_record(record) else None,
