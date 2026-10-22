@@ -478,3 +478,6 @@ body{background:linear-gradient(180deg,#f6f9fb 0,#f1f5f7 420px,#f5f6f7 100%)}.se
 
 .order-pickup-summary>.pickup-labels{grid-column:1/-1;display:flex;align-items:center;gap:6px;flex-wrap:wrap}.pickup-labels>.pickup-kind{grid-column:auto;background:#edf3f7;color:var(--navy)}.pickup-labels>.pickup-kind.immediate{background:#e5f5ec;color:#16734b}.pickup-labels>.pickup-kind.scheduled{background:#eeeafd;color:#6445a0}
 @media(max-width:800px){.operator-web-order>summary>.order-pickup-summary{grid-template-columns:1fr 1fr}.order-pickup-summary>.pickup-labels{grid-column:1/-1}}
+
+.operator-web-order>summary>.order-header-actions{display:flex;align-items:flex-end;gap:8px}.order-header-actions>.primary{white-space:nowrap;padding:9px 15px;font-size:12px}.web-order-change button:disabled{opacity:.45;cursor:not-allowed}
+@media(max-width:800px){.operator-web-order>summary>.order-header-actions{display:flex;grid-column:1/-1;flex-direction:row;justify-content:space-between;align-items:center}}
