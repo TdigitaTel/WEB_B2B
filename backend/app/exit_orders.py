@@ -60,8 +60,6 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
     if not store:
         raise ValueError(f"Almacén interno desconocido: {incoming.store_code}")
     estado_registro_exit = incoming.estado_registro_exit.strip().upper()
-    if estado_registro_exit == "ENTREGADO":
-        estado_registro_exit = "ATENDIDO"
     if estado_registro_exit not in {"PENDIENTE", "REGISTRADO", "EN_PROCESO", "EN_PREPARACION", "ATENDIDO", "ENTREGADO", "FACTURADO"}:
         raise ValueError(f"Estado EXIT no mapeado: {incoming.estado_registro_exit}")
 
@@ -90,6 +88,10 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
     # la fecha de modificación de la cabecera avance. Por eso se refrescan siempre
     # las líneas del pedido durante la sincronización.
 
+    from .order_timeline import is_web_order
+    web_order = is_web_order(incoming, order)
+    if estado_registro_exit == "ENTREGADO" and web_order:
+        estado_registro_exit = "ATENDIDO"
     order.nro_pedido_exit = incoming.exit_order_id
     order.fecha_registro_exit = incoming.recorded_at or order.fecha_registro_exit
     order.estado_registro_exit = "ENTREGADO" if order.delivered_at and estado_registro_exit != "FACTURADO" else estado_registro_exit
@@ -119,7 +121,7 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
                          line_total=line_total, fulfillment_zone=line.fulfillment_zone,
                          served_quantity=line.served_quantity, pending_quantity=line.pending_quantity))
     from .order_timeline import exit_events, sync_history
-    sync_history(db, order, exit_events(incoming))
+    sync_history(db, order, exit_events(incoming, web_order=web_order), web_order=web_order)
     return order
 
 

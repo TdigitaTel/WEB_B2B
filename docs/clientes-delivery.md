@@ -13,3 +13,7 @@ El arranque crea customer_delivery_settings y añade de forma idempotente fulfil
 La cabecera muestra Recogida en tienda por defecto y Recogida real para su confirmación. Solo un pedido solicitado como DELIVERY muestra Delivery y Entrega real.
 
 En Operaciones, Pendiente solo está habilitado desde REGISTRADO y la API rechaza otros estados sin cambiar el vínculo EXIT. Entregar se muestra en la cabecera solo en ATENDIDO y sin entrega confirmada; no se mezcla con Gestión.
+
+Entrega según origen: en pedidos no WEB se conservan ENTREGADO y su fecha de EXIT (albarán impreso). En WEB solo la confirmación del botón Entregar acredita la entrega. En ambos casos el contador mide hasta ATENDIDO.
+
+La cabecera de pedidos WEB conserva la sede sin repetir su fecha de creación. Albaranes abre una lista por pedido con número, fecha de creación (fecha y hora de grabación del albarán) y estado: Pendiente de impresión, Impreso o Facturado. Se muestran todos los vinculados, sin confundir impresión con entrega WEB. La lista también está en las comandas de mostrador; una consulta fallida muestra un aviso.

@@ -27,26 +27,33 @@ def preparation_time(prepared, registered):
     # Se conserva el día de preparación; el incremento puede cruzar medianoche.
     return with_hour(prepared, registered) + timedelta(seconds=settings.exit_preparation_offset_seconds)
 
-def exit_events(record, delivery=None):
+def is_web_order(record, local=None):
+    return bool(local and local.origen_pedido == 'B2B') or bool(getattr(record, 'web_order_number', None)) or 'PEDIDOGENERADOWEBB2B' in ''.join(str(getattr(record, 'auxiliary_reference', '') or '').upper().split())
+
+
+def exit_events(record, delivery=None, web_order=None):
     delivery = delivery or {}
     events = [('REGISTRADO', instant(record.recorded_at), 'Registro del pedido en EXIT')]
     events.append(('EN_PREPARACION', preparation_time(record.prepared_at, record.recorded_at), 'Preparación del pedido en EXIT'))
     if delivery:
         events.append(('ATENDIDO', instant(delivery.get('attended_at')), f"Albarán {delivery.get('delivery_number', '')} generado"))
+        if delivery.get('is_printed') and not (is_web_order(record) if web_order is None else web_order):
+            events.append(('ENTREGADO', with_hour(record.delivered_at or delivery.get('delivered_at'), record.source_updated_at), 'Albarán impreso en EXIT'))
         if delivery.get('is_invoiced'):
             invoice = instant(record.invoiced_at or delivery.get('invoiced_at'))
             events.append(('FACTURADO', invoice.replace(hour=0, minute=0, second=0, microsecond=0) if invoice else None, 'Factura generada en EXIT'))
     return [(state, stamp, note) for state, stamp, note in events if stamp is not None]
 
-def sync_history(db, order, events):
+def sync_history(db, order, events, web_order=None):
+    web_order = order.origen_pedido == "B2B" if web_order is None else web_order
     db.execute(select(Order.id).where(Order.id == order.id).with_for_update()).all()
     history = db.scalars(select(OrderStatusHistory).where(OrderStatusHistory.order_id == order.id)).all()
     # La impresión de un albarán no acredita la recogida por el cliente.
     for event in list(history):
-        if event.source == 'EXIT' and event.estado_registro_exit == 'ENTREGADO':
+        if web_order and event.source == 'EXIT' and event.estado_registro_exit == 'ENTREGADO':
             db.delete(event)
             history.remove(event)
-    if order.estado_registro_exit == 'ENTREGADO' and not order.delivered_at:
+    if web_order and order.estado_registro_exit == 'ENTREGADO' and not order.delivered_at:
         order.estado_registro_exit = 'ATENDIDO'
     for state, stamp, note in events:
         existing = next((h for h in history if h.source == 'EXIT' and h.estado_registro_exit in ({'EN_PROCESO', 'EN_PREPARACION'} if state == 'EN_PREPARACION' else {state})), None)
@@ -58,12 +65,12 @@ def sync_history(db, order, events):
             history.append(existing)
     db.flush()
 
-def dispatch_timing(record, delivery=None, now=None, kardex_started_at=None, delivered_at=None):
+def dispatch_timing(record, delivery=None, now=None, kardex_started_at=None, delivered_at=None, web_order=None):
     registered = instant(record.recorded_at)
-    dates = {state: stamp for state, stamp, _ in exit_events(record, delivery)}
+    dates = {state: stamp for state, stamp, _ in exit_events(record, delivery, web_order)}
     if kardex_started_at is not None:
         dates['EN_PREPARACION'] = instant(kardex_started_at)
-    delivered = instant(delivered_at)
+    delivered = instant(delivered_at) or dates.get("ENTREGADO")
     if delivered:
         dates['ENTREGADO'] = delivered
     closed = dates.get('ATENDIDO')
