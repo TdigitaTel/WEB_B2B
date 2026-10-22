@@ -101,6 +101,17 @@ def _article_from_row(row: dict) -> dict:
     }
 
 
+def _insert_article_filter_codes(cursor, table: str, article_codes: list[str]) -> None:
+    """Una sentencia parametrizada por bloque, no un viaje a SQL Server por código."""
+    if table not in {"#EligibleArticles", "#HiddenArticles"}:
+        raise ValueError("Tabla temporal de catálogo no admitida")
+    codes = list(dict.fromkeys(str(code).strip() for code in article_codes if str(code).strip()))
+    # SQL Server admite hasta 1.000 filas en INSERT ... VALUES y 2.100 parámetros.
+    for offset in range(0, len(codes), 1000):
+        batch = codes[offset:offset + 1000]
+        cursor.execute(f"INSERT INTO {table} (article_code) VALUES " + ", ".join(["(%s)"] * len(batch)), tuple(batch))
+
+
 def _prepare_eligible_articles(cursor, article_codes: list[str] | None) -> str:
     """Carga códigos de clasificación en una tabla temporal para evitar el límite de parámetros."""
     if article_codes is None:
@@ -109,9 +120,7 @@ def _prepare_eligible_articles(cursor, article_codes: list[str] | None) -> str:
         "CREATE TABLE #EligibleArticles "
         "(article_code varchar(100) COLLATE DATABASE_DEFAULT NOT NULL PRIMARY KEY)"
     )
-    codes = list(dict.fromkeys(str(code).strip() for code in article_codes if str(code).strip()))
-    if codes:
-        cursor.executemany("INSERT INTO #EligibleArticles (article_code) VALUES (%s)", [(code,) for code in codes])
+    _insert_article_filter_codes(cursor, "#EligibleArticles", article_codes)
     return "INNER JOIN #EligibleArticles e ON e.article_code = "
 
 
@@ -155,7 +164,7 @@ def fetch_catalog_articles(query: str = "", page: int = 1, page_size: int = 24,
         conditions = [f"{code_expression} <> ''"]
         if excluded_codes:
             cursor.execute("CREATE TABLE #HiddenArticles (article_code nvarchar(100) PRIMARY KEY)")
-            cursor.executemany("INSERT INTO #HiddenArticles (article_code) VALUES (%s)", [(code,) for code in dict.fromkeys(excluded_codes)])
+            _insert_article_filter_codes(cursor, "#HiddenArticles", excluded_codes)
             conditions.append(f"NOT EXISTS (SELECT 1 FROM #HiddenArticles hidden WHERE hidden.article_code = {code_expression})")
         parameters: list = []
         if columns["inactive"]:
