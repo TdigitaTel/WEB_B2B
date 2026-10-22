@@ -3,6 +3,8 @@ from fastapi.testclient import TestClient
 from app.main import app, delivery_notes_payload
 from app.db import SessionLocal
 from app.models import Order
+from app.bootstrap import main as bootstrap
+bootstrap()
 
 
 def test_notes_include_all_numbers_dates_and_status_without_duplicates():
@@ -64,3 +66,34 @@ def test_customer_order_shows_linked_notes_and_original_exit_amounts(monkeypatch
     item=order['items'][0]
     assert item['unit_price']==100 and item['discount_pct']==100
     assert item['net_amount']==0 and item['line_total']==0
+
+
+def test_operator_resolves_short_exit_number_and_opens_only_linked_note(monkeypatch):
+    from app import main as module
+    operator=TestClient(app)
+    operator.post('/api/v1/auth/login',json={'email':'operador@bermudez.test','password':'123456'})
+    with SessionLocal() as db:
+        order=Order(order_number='WEB-SHORT-NOTE',customer_code='CLI00001',company_code=0,delegation_code='00',
+                    origen_pedido='B2B',estado_registro_exit='ATENDIDO',nro_pedido_exit='6007768')
+        db.add(order);db.commit();oid=order.public_id
+    stamp=datetime.now(timezone.utc)
+    note={'order_number':'2026/AL/6007768','delivery_number':'2026/AL/9100','attended_at':stamp,'is_printed':True,'is_invoiced':False}
+    monkeypatch.setattr(module,'fetch_delivery_statuses_for_orders',lambda *args:[])
+    monkeypatch.setattr(module,'fetch_customer_delivery_statuses',lambda code:[note] if code=='CLI00001' else [])
+    rows=operator.get('/api/v1/store/orders?view=web&delegation=TODAS').json()
+    row=next(row for row in rows if row['id']==oid)
+    assert [item['number'] for item in row['delivery_notes']]==['2026/AL/9100']
+    document={'number':'2026/AL/9100','order_number':'2026/AL/6007768','items':[]}
+    def documents(code,*args):
+        assert code=='CLI00001'
+        return [document]
+    monkeypatch.setattr(module,'fetch_customer_delivery_notes',documents)
+    url=f'/api/v1/store/orders/{oid}/delivery-note'
+    assert operator.get(url,params={'number':'2026/AL/9100'}).json()['number']=='2026/AL/9100'
+    document['order_number']='2025/AL/6007768'
+    assert operator.get(url,params={'number':'2026/AL/9100'}).status_code==404
+    document['order_number']='2026/AL/9999'
+    assert operator.get(url,params={'number':'2026/AL/9100'}).status_code==404
+    customer=TestClient(app)
+    customer.post('/api/v1/auth/login',json={'email':'compras001@cliente.test','password':'123456'})
+    assert customer.get(url,params={'number':'2026/AL/9100'}).status_code==403
