@@ -41,8 +41,9 @@ DETAIL_CANDIDATES = {
     "served_quantity": ("UnidadesServidas",),
     "pending_quantity": ("UnidadesPendientesDeServir", "UnidadesPendientesdeServir", "UnidadesPendientes", "UnidadesPendientes2_"),
     "unit_price": ("Precio", "PrecioVenta", "PrecioArticulo"),
-    "discount_pct": ("PorcentajeDescuento1", "Descuento", "Descuento1"),
+    "discount_pct": ("%Descuento", "PorcentajeDescuento1", "Descuento", "Descuento1"),
     "tax_rate": ("PorcentajeIva", "PorcentajeIVA", "IVA"),
+    "net_amount": ("ImporteNeto",),
     "line_total": ("ImporteLiquido", "ImporteNeto", "ImporteLinea"),
     "zone": ("ex_tipopedvlinkardex", "Ex_TipoPedVLinKardex"),
 }
@@ -203,7 +204,7 @@ def fetch_exit_orders_live(view: str = "active_kardex", date_from: date | None =
         if not headers:
             return []
         wanted = {_key(row) for row in headers}
-        detail_fields = ("year", "series", "number", "line", "sku", "description", "quantity", "served_quantity", "pending_quantity", "unit_price", "discount_pct", "tax_rate", "line_total", "zone")
+        detail_fields = ("year", "series", "number", "line", "sku", "description", "quantity", "served_quantity", "pending_quantity", "unit_price", "discount_pct", "tax_rate", "net_amount", "line_total", "zone")
         detail_rows = []
         wanted_list = list(wanted)
         for start in range(0, len(wanted_list), 200):
@@ -243,6 +244,7 @@ def fetch_exit_orders_live(view: str = "active_kardex", date_from: date | None =
             quantity=quantity, served_quantity=served_quantity,
             pending_quantity=pending_quantity if pending_quantity is not None else quantity,
             unit_price=_decimal(row.get("unit_price")),
+            net_amount=_decimal(row["net_amount"]) if row.get("net_amount") is not None else None,
             discount_pct=_decimal(row.get("discount_pct")), tax_rate=_decimal(row.get("tax_rate") or 21),
             line_total=_decimal(row.get("line_total")) if row.get("line_total") is not None else None,
             fulfillment_zone=zone,

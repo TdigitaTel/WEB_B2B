@@ -487,3 +487,8 @@ body{background:linear-gradient(180deg,#f6f9fb 0,#f1f5f7 420px,#f5f6f7 100%)}.se
 /* Columnas económicas de albarán: valores originales de EXIT. */
 .delivery-items{overflow-x:auto}.delivery-items-head,.delivery-item{grid-template-columns:minmax(220px,2fr) 95px 85px 90px 85px 100px 100px;min-width:900px}.delivery-items-head>:nth-child(n+3),.delivery-item>:nth-child(n+3){text-align:right;font-variant-numeric:tabular-nums}
 @media print{.delivery-items-head,.delivery-item{min-width:0;grid-template-columns:minmax(150px,2fr) 65px 50px 65px 60px 70px 70px;gap:6px}}
+
+/* Importes originales del pedido EXIT, también accesibles en móvil. */
+.order-lines.exit-order-amounts{overflow-x:auto}
+.exit-order-amounts .order-lines-head,.exit-order-amounts .order-line{grid-template-columns:minmax(260px,1fr) 65px 65px 90px 85px 100px 100px;min-width:900px}
+.exit-order-amounts .order-lines-head>*,.exit-order-amounts .order-line>*{display:block}
