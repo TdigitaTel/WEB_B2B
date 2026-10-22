@@ -33,8 +33,6 @@ def exit_events(record, delivery=None):
     events.append(('EN_PREPARACION', preparation_time(record.prepared_at, record.recorded_at), 'Preparación del pedido en EXIT'))
     if delivery:
         events.append(('ATENDIDO', instant(delivery.get('attended_at')), f"Albarán {delivery.get('delivery_number', '')} generado"))
-        if delivery.get('is_printed'):
-            events.append(('ENTREGADO', with_hour(record.delivered_at or delivery.get('delivered_at'), record.source_updated_at), 'Albarán impreso en EXIT'))
         if delivery.get('is_invoiced'):
             invoice = instant(record.invoiced_at or delivery.get('invoiced_at'))
             events.append(('FACTURADO', invoice.replace(hour=0, minute=0, second=0, microsecond=0) if invoice else None, 'Factura generada en EXIT'))
@@ -43,6 +41,13 @@ def exit_events(record, delivery=None):
 def sync_history(db, order, events):
     db.execute(select(Order.id).where(Order.id == order.id).with_for_update()).all()
     history = db.scalars(select(OrderStatusHistory).where(OrderStatusHistory.order_id == order.id)).all()
+    # La impresión de un albarán no acredita la recogida por el cliente.
+    for event in list(history):
+        if event.source == 'EXIT' and event.estado_registro_exit == 'ENTREGADO':
+            db.delete(event)
+            history.remove(event)
+    if order.estado_registro_exit == 'ENTREGADO' and not order.delivered_at:
+        order.estado_registro_exit = 'ATENDIDO'
     for state, stamp, note in events:
         existing = next((h for h in history if h.source == 'EXIT' and h.estado_registro_exit in ({'EN_PROCESO', 'EN_PREPARACION'} if state == 'EN_PREPARACION' else {state})), None)
         if existing:
@@ -53,12 +58,14 @@ def sync_history(db, order, events):
             history.append(existing)
     db.flush()
 
-def dispatch_timing(record, delivery=None, now=None, kardex_started_at=None):
+def dispatch_timing(record, delivery=None, now=None, kardex_started_at=None, delivered_at=None):
     registered = instant(record.recorded_at)
     dates = {state: stamp for state, stamp, _ in exit_events(record, delivery)}
     if kardex_started_at is not None:
         dates['EN_PREPARACION'] = instant(kardex_started_at)
-    closed = dates.get('ENTREGADO')
+    closed = instant(delivered_at)
+    if closed:
+        dates['ENTREGADO'] = closed
     processing = [dates[state] for state in ('REGISTRADO', 'EN_PREPARACION') if state in dates]
     end = closed or instant(now or datetime.now(MADRID))
     invalid = bool(registered and closed and closed < registered)
