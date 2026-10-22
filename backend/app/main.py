@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from .auth import audit, create_access_token, current_user, hash_password, require_roles, verify_password
 from .category_import import router as category_import_router
-from .category_visibility import router as category_visibility_router, image_router as category_image_router, image_urls, hidden_areas, hidden_codes, visible_catalog_codes
+from .category_visibility import router as category_visibility_router, image_router as category_image_router, image_urls, hidden_areas, hidden_codes, visible_catalog_codes, unclassified_area_ids, UNCLASSIFIED_CODE
 from .config import settings
 from .pickup import immediate_ready_at, immediate_available, next_open_date, scheduled_date_open, scheduled_ready_at, assign_attention_deadline
 from .db import get_db
@@ -358,6 +358,9 @@ def products(q: str = "", family: str | None = None, area_id: int | None = None,
     classification_codes = PostgresCatalogService(db).classification_codes(
         family, area_id, family_id, subfamily_id, product_type_id
     )
+    if area_id and db.scalar(select(MaterialArea.code).where(MaterialArea.id == area_id)) == UNCLASSIFIED_CODE:
+        classification_codes = list(db.scalars(select(Product.sku).where(
+            Product.material_area_id.is_(None) | Product.material_area_id.in_(unclassified_area_ids(db)))).all())
     classification_codes = visible_catalog_codes(db, classification_codes)
     try:
         articles, total = fetch_catalog_articles(q, page, page_size, classification_codes, excluded_codes=hidden_codes(db), search_config=get_search_config(db))
@@ -433,24 +436,35 @@ def catalog_classification(user: User = Depends(current_user), db: Session = Dep
             MaterialProductType.id, MaterialProductType.code, MaterialProductType.name,
             func.count(Product.id),
         )
-        .join(MaterialFamily, MaterialFamily.area_id == MaterialArea.id)
-        .join(MaterialSubfamily, MaterialSubfamily.family_id == MaterialFamily.id)
-        .join(MaterialProductType, MaterialProductType.subfamily_id == MaterialSubfamily.id)
-        .join(Product, Product.material_product_type_id == MaterialProductType.id)
-        .where(Product.active.is_(True), MaterialArea.id.not_in(hidden_areas(db)))
+        .outerjoin(MaterialFamily, MaterialFamily.area_id == MaterialArea.id)
+        .outerjoin(MaterialSubfamily, MaterialSubfamily.family_id == MaterialFamily.id)
+        .outerjoin(MaterialProductType, MaterialProductType.subfamily_id == MaterialSubfamily.id)
+        .outerjoin(Product, (Product.material_product_type_id == MaterialProductType.id) & Product.active.is_(True))
+        .where(MaterialArea.id.not_in(hidden_areas(db)),
+               MaterialArea.id.not_in(unclassified_area_ids(db)) | (MaterialArea.code == UNCLASSIFIED_CODE))
         .group_by(MaterialArea.id, MaterialFamily.id, MaterialSubfamily.id, MaterialProductType.id)
         .order_by(MaterialArea.name, MaterialFamily.name, MaterialSubfamily.name, MaterialProductType.name)
     ).all()
     areas: dict[int, dict] = {}
     category_images = image_urls(db)
+    area_counts = dict(db.execute(select(Product.material_area_id, func.count(Product.id))
+        .where(Product.active.is_(True)).group_by(Product.material_area_id)).all())
+    unclassified_ids = set(db.scalars(unclassified_area_ids(db)).all())
+    unclassified_count = sum(count for area_id, count in area_counts.items() if area_id is None or area_id in unclassified_ids)
     for area_id, area_code, area_name, family_id, family_code, family_name, subfamily_id, subfamily_code, subfamily_name, type_id, type_code, type_name, count in rows:
         area = areas.setdefault(area_id, {"id": area_id, "code": area_code, "name": area_name, "image_url": category_images.get(area_id), "count": 0, "families": {}})
+        area["count"] = unclassified_count if area_code == UNCLASSIFIED_CODE else area_counts.get(area_id, 0)
+        if family_id is None:
+            continue
         family = area["families"].setdefault(family_id, {"id": family_id, "code": family_code, "name": family_name, "count": 0, "subfamilies": {}})
+        if subfamily_id is None:
+            continue
         subfamily = family["subfamilies"].setdefault(subfamily_id, {"id": subfamily_id, "code": subfamily_code, "name": subfamily_name, "count": 0, "product_types": []})
+        if type_id is None:
+            continue
         subfamily["product_types"].append({"id": type_id, "code": type_code, "name": type_name, "count": count})
         subfamily["count"] += count
         family["count"] += count
-        area["count"] += count
     result = []
     for area in areas.values():
         area["families"] = list(area["families"].values())

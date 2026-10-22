@@ -65,3 +65,29 @@ def test_unclassified_hidden_by_default_and_managed_by_operator():
     with SessionLocal() as db:
         for code,area_id in zip(codes,old):db.scalar(select(Product).where(Product.sku==code)).material_area_id=area_id
         db.commit()
+
+
+def test_all_visible_categories_appear_without_full_classification():
+    client=TestClient(app)
+    client.post('/api/v1/auth/login',json={'email':'operador@bermudez.test','password':'123456'})
+    with SessionLocal() as db:
+        empty=MaterialArea(code='TEST-EMPTY-VIS',name='Categoría visible sin artículos')
+        partial=MaterialArea(code='TEST-PARTIAL-VIS',name='Categoría con clasificación parcial')
+        hidden=MaterialArea(code='TEST-HIDDEN-VIS',name='Categoría oculta sin artículos')
+        db.add_all([empty,partial,hidden]);db.flush()
+        product=db.scalar(select(Product).order_by(Product.id))
+        old_area=product.material_area_id
+        product.material_area_id=partial.id
+        db.commit()
+        empty_id,partial_id,hidden_id=empty.id,partial.id,hidden.id
+        product_id=product.id
+    client.get('/api/v1/store/category-visibility')
+    client.patch(f'/api/v1/store/category-visibility/{hidden_id}',json={'visible':False})
+    client.post('/api/v1/auth/login',json={'email':'compras001@cliente.test','password':'123456'})
+    rows={row['id']:row for row in client.get('/api/v1/catalog/classification').json()}
+    assert rows[empty_id]['count']==0 and rows[empty_id]['families']==[]
+    assert rows[partial_id]['count']==1
+    assert hidden_id not in rows
+    with SessionLocal() as db:
+        db.get(Product,product_id).material_area_id=old_area
+        db.commit()
