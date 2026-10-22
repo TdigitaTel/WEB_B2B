@@ -1,0 +1,42 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const path=require('node:path');
+const Module=require('node:module');
+const ts=require('typescript');
+const {JSDOM}=require('jsdom');
+const dom=new JSDOM('<div id="root"></div>',{url:'https://localhost/'});
+for(const key of ['window','document','HTMLElement','HTMLInputElement','Event'])global[key]=dom.window[key];
+Object.defineProperty(global,'navigator',{value:dom.window.navigator,configurable:true});
+global.IS_REACT_ACT_ENVIRONMENT=true;
+const React=require('react');
+const {createRoot}=require('react-dom/client');
+const source=path.resolve(__dirname,'../app/QuantityInput.tsx');
+const code=ts.transpileModule(fs.readFileSync(source,'utf8'),{compilerOptions:{jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS,esModuleInterop:true,target:ts.ScriptTarget.ES2020}}).outputText;
+const loaded=new Module(source,module);loaded.filename=source;loaded.paths=Module._nodeModulePaths(path.dirname(source));loaded._compile(code,source);
+const QuantityInput=loaded.exports.default;
+const root=createRoot(document.getElementById('root'));
+const changes=[];
+let input;
+async function render(value){await React.act(async()=>root.render(React.createElement(QuantityInput,{value,label:'Cantidad de prueba',onChange:value=>changes.push(value)})));input=document.querySelector('input')}
+async function enter(value){await React.act(async()=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,value);input.dispatchEvent(new Event('input',{bubbles:true}))})}
+(async()=>{
+ await render(1);
+ await React.act(async()=>input.focus());
+ await enter('');assert.equal(input.value,'');assert.deepEqual(changes,[],'vacío temporal no envía cero ni elimina artículos');
+ await enter('12');assert.equal(input.value,'12');assert.deepEqual(changes,[12]);
+ await render(2);assert.equal(input.value,'12','una respuesta anterior no interrumpe la edición');
+ await React.act(async()=>input.blur());assert.equal(input.value,'12');
+ await React.act(async()=>input.focus());
+ await enter('');await React.act(async()=>input.blur());assert.equal(input.value,'1');assert.equal(changes.at(-1),1);
+ await React.act(async()=>input.focus());
+ await enter('0');assert.equal(changes.at(-1),1);await React.act(async()=>input.blur());assert.equal(input.value,'1');
+ await React.act(async()=>input.focus());
+ await enter('100000');await React.act(async()=>input.blur());assert.equal(input.value,'99999');assert.equal(changes.at(-1),99999);
+ await render(5);assert.equal(input.value,'5','sin foco se refleja el valor externo');
+ await React.act(async()=>input.focus());
+ await React.act(async()=>{input.stepUp();input.dispatchEvent(new Event('input',{bubbles:true}))});assert.equal(changes.at(-1),6);
+ await React.act(async()=>{input.stepDown();input.dispatchEvent(new Event('input',{bubbles:true}))});assert.equal(changes.at(-1),5);
+ assert.equal(input.type,'number');assert.equal(input.inputMode,'decimal');
+ await React.act(async()=>root.unmount());dom.window.close();
+ console.log('Cantidad: borrado, sustitución, respuesta antigua, validación al salir, límites y flechas correctos');
+})().catch(error=>{console.error(error);dom.window.close();process.exitCode=1});
