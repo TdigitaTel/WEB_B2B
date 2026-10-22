@@ -2,13 +2,14 @@
 export type DeliveryTiming = {
   attention_deadline_at?: string|null;
   delivered_at?: string|null;
+  attended_at?: string|null;
   estado_registro_exit?: string|null;
 };
 
 export function deliveryDelay(order:DeliveryTiming, now:number|null){
   const deadline=Date.parse(order.attention_deadline_at||"");
-  const closed=!!order.delivered_at||["ENTREGADO","FACTURADO"].includes(order.estado_registro_exit||"");
-  const end=closed?Date.parse(order.delivered_at||""):now;
+  const closed=!!order.attended_at||["ATENDIDO","ENTREGADO","FACTURADO"].includes(order.estado_registro_exit||"");
+  const end=closed?Date.parse(order.attended_at||""):now;
   if(!Number.isFinite(deadline)||end==null||!Number.isFinite(end))return {seconds:null,closed};
   return {seconds:Math.max(0,Math.ceil((end-deadline)/1000)),closed};
 }

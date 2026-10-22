@@ -233,6 +233,7 @@ def order_payload(order: Order, db: Session, include_items: bool = False, histor
         draft_dates = [event.created_at for event in history if event.estado_registro_exit == "BORRADOR"]
         processing_dates = [event.created_at for event in history if event.estado_registro_exit in {"BLOQUEADO", "REGISTRADO", "EN_PROCESO", "EN_PREPARACION"}]
         pickup_dates = [event.created_at for event in history if event.estado_registro_exit == "ATENDIDO"]
+        result["attended_at"] = max(pickup_dates, key=instant) if pickup_dates else None
         delivered_dates = [event.created_at for event in history if event.estado_registro_exit == "ENTREGADO" and event.source == "WEB"]
         invoice_dates = [event.created_at for event in history if event.estado_registro_exit == "FACTURADO"]
         stage_dates = {
