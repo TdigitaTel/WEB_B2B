@@ -60,6 +60,8 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
     if not store:
         raise ValueError(f"Almacén interno desconocido: {incoming.store_code}")
     estado_registro_exit = incoming.estado_registro_exit.strip().upper()
+    if estado_registro_exit == "ENTREGADO":
+        estado_registro_exit = "ATENDIDO"
     if estado_registro_exit not in {"PENDIENTE", "REGISTRADO", "EN_PROCESO", "EN_PREPARACION", "ATENDIDO", "ENTREGADO", "FACTURADO"}:
         raise ValueError(f"Estado EXIT no mapeado: {incoming.estado_registro_exit}")
 
