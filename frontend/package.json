@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "next lint",
     "test:delivery-deadline": "node --test scripts/test-delivery-deadline.mjs",
-    "test:qr-camera": "node scripts/test-qr-camera.cjs"
+    "test:qr-camera": "node scripts/test-qr-camera.cjs",
+    "test:home-orders": "node scripts/test-home-orders.cjs",
+    "test:quantity-input": "node scripts/test-quantity-input.cjs"
   },
   "dependencies": {
     "jsqr": "^1.4.0",

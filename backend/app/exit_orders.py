@@ -23,6 +23,7 @@ class ExitOrderLineInput(BaseModel):
     unit_price: Decimal = Decimal("0")
     discount_pct: Decimal = Decimal("0")
     tax_rate: Decimal = Decimal("21")
+    net_amount: Decimal | None = None
     line_total: Decimal | None = None
     fulfillment_zone: str = "OTROS"
     served_quantity: Decimal | None = None
