@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import HomeOrders from "./HomeOrders";
 import CustomerAccess, {InitialPassword} from "./CustomerAccess";
 import {QrLogin} from "./QrAccess";
 import OrderDeliveryNotes, {type DeliveryNoteHeader} from "./OrderDeliveryNotes";
@@ -168,12 +169,12 @@ export default function Page() {
 
   const refreshCustomerData = useCallback(async () => {
     if (!user || user.must_change_password || isOperator) return;
-    const [storeData, cartData, orderData, classificationData, favoriteData] = await Promise.all([
-      api<Store[]>("/api/v1/stores"), api<Cart>("/api/v1/cart"), api<Order[]>("/api/v1/orders"),
+    const [storeData, cartData, classificationData, favoriteData] = await Promise.all([
+      api<Store[]>("/api/v1/stores"), api<Cart>("/api/v1/cart"),
       api<AreaNode[]>("/api/v1/catalog/classification"),
       api<{items:Product[];total:number}>("/api/v1/catalog/favorites?limit=8")
     ]);
-    setStores(storeData); setCart(cartData); setOrders(orderData); setClassification(classificationData); setFavoriteProducts(favoriteData.items);
+    setStores(storeData); setCart(cartData); setClassification(classificationData); setFavoriteProducts(favoriteData.items);
   }, [user, isOperator]);
 
   const lastOrdersQuery = useRef({from:madridDate(new Date()),to:madridDate(new Date()),state:"PENDIENTE"});
@@ -298,13 +299,13 @@ export default function Page() {
     const selectedStore=stores.find(store=>store.id===storeId);
     if(!selectedStore)throw new Error("Selecciona una delegación válida");
     const order = await api<Order>("/api/v1/orders", { method: "POST", body: JSON.stringify({ company_code: selectedStore.company_code, delegation_code: selectedStore.code, job_name: jobName || null, customer_reference: reference || null, notes: notes || null, draft, fulfillment_method: fulfillmentMethod, delivery_address: deliveryAddress || null, pickup_date: pickupDate || null }) });
-    setCartOpen(false); setView("orders"); setOrderConfirmation(order); await refreshCustomerData();
+    setCartOpen(false); setView("orders"); setOrderConfirmation(order); await Promise.all([refreshCustomerData(),refreshOrders()]);
   }
 
   async function submitDraft(id: string) {
     try {
       await api<Order>(`/api/v1/orders/${id}/submit`, { method: "POST" });
-      setError(""); await refreshCustomerData();
+      setError(""); await Promise.all([refreshCustomerData(),refreshOrders()]);
     } catch (e) { setError((e as Error).message); }
   }
 
@@ -342,7 +343,7 @@ export default function Page() {
       <nav className="desktop-nav">{(isOperator ? [["ops","Operaciones"],["pickup-settings","Parámetros"],["customer-access","Accesos de clientes"],["category-upload","Carga de categorías"],["category-visibility","Categorías e imágenes"]] : [["home","Inicio"],["catalog","Catálogo"],["orders","Mis pedidos"],["documents","Albaranes y facturas"],["account","Mi cuenta"]]).filter(([id])=>id!=="documents"||user.can_view_delivery_notes!==false||user.can_view_invoices!==false).map(([id,label]) => <button key={id} className={view===id?"active":""} onClick={() => setView(id as View)}>{label}</button>)}</nav>
     </header>
     <div className="service-strip"><span>ÁREA PROFESIONAL · Compra a tu ritmo</span><span>Almeiras · Recogida en tienda</span></div>{error && <div className="page error" role="alert">{error}</div>}
-    {view === "home" && <Home customer={customer} orders={orders} products={favoriteProducts} classification={classification} onNavigate={setView} onSelectArea={areaId=>selectCatalogCategory({areaId:String(areaId),familyId:"",subfamilyId:"",productTypeId:""})} onAdd={addProduct} />}
+    {view === "home" && <Home key={user.id} customer={customer} products={favoriteProducts} classification={classification} onNavigate={setView} onSelectArea={areaId=>selectCatalogCategory({areaId:String(areaId),familyId:"",subfamilyId:"",productTypeId:""})} onAdd={addProduct} />}
     {view === "catalog" && <Catalog products={products} total={totalProducts} classification={classification} filters={catalogFilters} setFilters={selectCatalogCategory} onAdd={addProduct} onLoadMore={loadMoreProducts} loadingMore={loadingMoreProducts} />}
     {view === "orders" && <Orders showImages={!!user.show_order_images} orders={orders} refreshing={refreshingOrders} onRefresh={refreshOrders} onRepeat={repeatOrder} onSubmitDraft={submitDraft} onDelete={id=>{const order=orders.find(row=>row.id===id);if(order)setDeleteCandidate(order)}} />}
     {view === "documents" && <Documents canViewNotes={user.can_view_delivery_notes!==false} canViewInvoices={user.can_view_invoices!==false} canViewPrices={user.can_view_prices!==false} showImages={!!user.show_delivery_note_images} notes={deliveryNotes} invoices={invoices} />}
@@ -376,13 +377,14 @@ function Login({onLogin,onQrLogin,error}:{onQrLogin:(token:string)=>Promise<void
   return <div className="login"><section className="login-brand"><img className="login-logo" src="/bermudez-ulloa-logo.jpg" alt="Bermúdez Ulloa"/><h1>Material profesional.<br/>Pedido en segundos.</h1><p>Consulta tu precio, comprueba stock local y deja el pedido preparado para recoger en Almeiras.</p></section><section className="login-panel"><form className="login-form" onSubmit={submit}><h2>Acceso profesional</h2><p className="small">Entra con la cuenta de tu empresa.</p><label className="label">Usuario o email</label><input className="input" value={email} onChange={e=>setEmail(e.target.value)}/><label className="label">Contraseña</label><input className="input" type="password" autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)}/>{(error||loginError)&&<p className="error">{error||loginError}</p>}<button className="primary block" disabled={busy}>{busy?"Entrando…":"Iniciar sesión"}</button><QrLogin onLogin={onQrLogin}/></form></section></div>
 }
 
-function Home({customer,orders,products,classification,onNavigate,onSelectArea,onAdd}:{customer:AccountCustomer|null;orders:Order[];products:Product[];classification:AreaNode[];onNavigate:(v:View)=>void;onSelectArea:(id:number)=>void;onAdd:(id:string)=>void}) {
-  const active = orders.filter(o=>o.estado_registro_exit!=="FACTURADO");
+const loadHomeOrders = (signal:AbortSignal) => api<Order[]>("/api/v1/orders?state=TODOS", {signal, cache:"no-store"});
+
+function Home({customer,products,classification,onNavigate,onSelectArea,onAdd}:{customer:AccountCustomer|null;products:Product[];classification:AreaNode[];onNavigate:(v:View)=>void;onSelectArea:(id:number)=>void;onAdd:(id:string)=>void}) {
   const [openStockId,setOpenStockId]=useState<string|null>(null);
   return <div className="page"><section className="hero"><div><span className="eyebrow">TU MOSTRADOR DIGITAL</span><h1>Todo lo que necesitas.<br/>Listo para tu próxima obra.</h1><p>Hola, {customer?.trade_name || "profesional"}. Encuentra tu material y recógelo en tienda.</p><button className="primary" onClick={()=>onNavigate("catalog")}>Explorar catálogo →</button></div><div className="hero-note"><span>01 / BUSCA</span><span>02 / AÑADE</span><span>03 / RECOGE</span><b>Menos esperas.<br/>Más tiempo en obra.</b></div></section>
   <section className="department-showcase"><div className="section-heading"><div><span className="eyebrow">COMPRA POR DEPARTAMENTO</span><h2>¿Qué necesitas para tu instalación?</h2></div><button className="text-button" onClick={()=>onNavigate("catalog")}>Ver todos →</button></div><div className="department-rail">{classification.slice(0,10).map((area,index)=><button key={area.id} className={`department-card tone-${index%6}`} onClick={()=>onSelectArea(area.id)}>{area.image_url?<img className="department-image" src={area.image_url} alt="" loading="lazy"/>:<span className="department-symbol" aria-hidden="true">{area.name.slice(0,2)}</span>}<b>{area.name}</b><small>{area.count.toLocaleString("es-ES")} productos</small><em>Explorar →</em></button>)}</div></section>
   <div className="home-grid"><div><section className="shortcut-grid"><button onClick={()=>onNavigate("orders")}><span>↻</span><b>Pedidos anteriores</b><small>Consulta y duplica pedidos</small></button><button onClick={()=>onNavigate("documents")}><span>▤</span><b>Tus documentos</b><small>Facturas y albaranes a mano</small></button><button onClick={()=>onNavigate("orders")}><span>✓</span><b>Estado de pedidos</b><small>Sigue cada etapa y su fecha</small></button></section><section className="section panel"><div className="section-heading"><div><span className="eyebrow">LOS QUE MÁS UTILIZAS</span><h2>Materiales favoritos</h2><p className="small">Tus artículos más comprados, ordenados por unidades.</p></div><button className="text-button" onClick={()=>onNavigate("catalog")}>Ver catálogo →</button></div><div className="products">{products.map(p=><ProductCard key={p.id} product={p} onAdd={onAdd} stockOpen={openStockId===p.id} onStockToggle={open=>setOpenStockId(open?p.id:null)}/>)}</div>{!products.length&&<p className="small">Todavía no hay compras anteriores disponibles para mostrar.</p>}</section></div>
-  <aside className="activity-panel panel"><div className="section-heading"><h2>Mis pedidos</h2><span className="count">{active.length}</span></div><p className="small">El estado de tus últimas compras.</p>{active.slice(0,3).map(o=><div className="compact-order" key={o.id}><b>{o.number}</b><span className="small">{o.store} · {o.job_name||"Sin obra"}</span><span className="status">{orderStateLabel(visibleOrderStage(o.estado_registro_exit))}</span></div>)}{!active.length&&<p className="small">No tienes pedidos activos.</p>}<button className="secondary block home-orders-button" onClick={()=>onNavigate("orders")}>Ver todos mis pedidos →</button><div className="store-note"><b>Cerca de tu próxima obra</b><p>Almeiras · A Coruña · Sanxenxo · Ferrol · Santiago</p></div></aside></div></div>;
+  <aside className="activity-panel panel"><HomeOrders load={loadHomeOrders} onNavigate={()=>onNavigate("orders")} /><div className="store-note"><b>Cerca de tu próxima obra</b><p>Almeiras · A Coruña · Sanxenxo · Ferrol · Santiago</p></div></aside></div></div>;
 }
 
 function Catalog({products,total,classification,filters,setFilters,onAdd,onLoadMore,loadingMore}:{products:Product[];total:number;classification:AreaNode[];filters:CatalogFilters;setFilters:(f:CatalogFilters)=>void;onAdd:(id:string,qty?:number)=>void;onLoadMore:()=>Promise<void>;loadingMore:boolean}) {
