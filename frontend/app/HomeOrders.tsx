@@ -2,7 +2,7 @@
 
 import {useEffect, useState} from "react";
 
-type SummaryOrder = {id:string;number:string;store:string;job_name?:string|null;estado_registro_exit?:string};
+type SummaryOrder = {id:string;number:string;store:string;job_name?:string|null;estado_registro_exit?:string|null};
 const labels:Record<string,string>={BORRADOR:"Borrador",PENDIENTE:"Pendiente",BLOQUEADO:"En procesamiento",REGISTRADO:"En procesamiento",EN_PROCESO:"En procesamiento",EN_PREPARACION:"En procesamiento",ATENDIDO:"Pendiente de recogida",ENTREGADO:"Entregado"};
 
 export default function HomeOrders({load,onNavigate}:{load:(signal:AbortSignal)=>Promise<SummaryOrder[]>;onNavigate:()=>void}) {
