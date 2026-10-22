@@ -7,3 +7,5 @@ Se consideran sin categoría los productos sin material_area_id, los asignados a
 El operador administra esta opción en Categorías e imágenes, fila Artículos sin categoría. Su valor inicial es Oculta; se puede activar expresamente. El control utiliza las tablas de categorías y visibilidad existentes, sin migración. No se borran ni reclasifican materiales. La exportación completa de clasificación permanece disponible para trabajar los pendientes.
 
 Validación: 128 pruebas backend, compilación Next.js y TypeScript y git diff --check correctos. Las pruebas de compra preparan artículos con categoría para representar productos publicados. Pendiente de validación funcional en desarrollo.
+
+Los filtros y selectores del catálogo incluyen todas las categorías configuradas como visibles, aunque no tengan artículos activos o falte completar familia, subfamilia o tipo. Las categorías ocultas se excluyen. El grupo Artículos sin categoría también puede seleccionarse cuando se habilita.
