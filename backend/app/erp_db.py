@@ -462,7 +462,7 @@ def fetch_customer_delivery_notes(customer_code: str, limit: int = 200, document
             "description": " ".join(part for part in (str(line.get("DescripcionArticulo") or "").strip(), str(line.get("Descripcion2Articulo") or "").strip()) if part),
             "unit": str(line.get("UnidadMedida1_") or "UD").strip(), "quantity": float(line.get("Unidades") or 0),
             "unit_price": float(line.get("Precio") or 0), "discount_pct": float(line.get("Descuento") or 0),
-            "net_amount": float(line.get("ImporteNeto") or line.get("BaseImponible") or 0),
+            "net_amount": float(line.get("ImporteNeto") or 0),
             "tax_rate": float(line.get("Iva") or 0), "tax_amount": float(line.get("CuotaIva") or 0),
             "total": float(line.get("ImporteLiquido") or 0), "warehouse": str(line.get("CodigoAlmacen") or "").strip(),
             "dispatch_delegation": str(line.get("DispatchDelegation") or "").strip(),
