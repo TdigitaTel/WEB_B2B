@@ -389,3 +389,52 @@ class SearchSettings(Base):
     __tablename__ = "search_settings"
     id: Mapped[int] = mapped_column(primary_key=True)
     config: Mapped[dict] = mapped_column(JSON)
+
+
+class ReplenishmentPolicy(Base, TimestampMixin):
+    __tablename__ = "replenishment_policies"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    scope: Mapped[str] = mapped_column(String(24))
+    scope_key: Mapped[str] = mapped_column(String(100))
+    parameters: Mapped[dict] = mapped_column(JSON, default=dict)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    updated_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    __table_args__ = (UniqueConstraint("scope", "scope_key"),)
+
+
+class ReplenishmentScenario(Base, TimestampMixin):
+    __tablename__ = "replenishment_scenarios"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    public_id: Mapped[str] = mapped_column(String(36), unique=True, default=public_uuid)
+    name: Mapped[str] = mapped_column(String(160), default="Simulación sin guardar")
+    saved: Mapped[bool] = mapped_column(Boolean, default=False)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    source_snapshot: Mapped[dict] = mapped_column(JSON)
+    source_fingerprint: Mapped[str] = mapped_column(String(64))
+    filters: Mapped[dict] = mapped_column(JSON)
+    policies_snapshot: Mapped[list] = mapped_column(JSON)
+    temporary_parameters: Mapped[dict] = mapped_column(JSON, default=dict)
+    summary: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class ReplenishmentResult(Base):
+    __tablename__ = "replenishment_results"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    scenario_id: Mapped[int] = mapped_column(ForeignKey("replenishment_scenarios.id"), index=True)
+    sku: Mapped[str] = mapped_column(String(50), index=True)
+    delegation: Mapped[str] = mapped_column(String(2))
+    payload: Mapped[dict] = mapped_column(JSON)
+    __table_args__ = (UniqueConstraint("scenario_id", "sku", "delegation"),)
+
+
+class ReplenishmentAdjustment(Base):
+    __tablename__ = "replenishment_adjustments"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    scenario_id: Mapped[int] = mapped_column(ForeignKey("replenishment_scenarios.id"), index=True)
+    result_id: Mapped[int] = mapped_column(ForeignKey("replenishment_results.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    reason: Mapped[str] = mapped_column(String(500))
+    previous: Mapped[dict] = mapped_column(JSON)
+    changes: Mapped[dict] = mapped_column(JSON)
