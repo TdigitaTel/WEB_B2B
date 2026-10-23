@@ -1,0 +1,17 @@
+"use client";
+import {useEffect,useState} from "react";
+import "./login-appearance.css";
+export type Appearance={image_url:string|null};
+export function useLoginAppearance(){
+ const [appearance,setAppearance]=useState<Appearance>({image_url:null});
+ useEffect(()=>{const controller=new AbortController();fetch("/api/v1/login-appearance",{cache:"no-store",signal:controller.signal}).then(response=>{if(!response.ok)throw Error();return response.json()}).then(setAppearance).catch(()=>{});return()=>controller.abort()},[]);
+ return appearance;
+}
+export default function LoginAppearanceSettings(){
+ const initial=useLoginAppearance();
+ const [current,setCurrent]=useState<Appearance|null>(null),[file,setFile]=useState<File|null>(null),[preview,setPreview]=useState(""),[busy,setBusy]=useState(false),[message,setMessage]=useState(""),[error,setError]=useState("");
+ const saved=current||initial;
+ useEffect(()=>{if(!file){setPreview("");return}const url=URL.createObjectURL(file);setPreview(url);return()=>URL.revokeObjectURL(url)},[file]);
+ async function persist(restore=false){setBusy(true);setError("");setMessage("");try{const body=new FormData();if(file)body.append("file",file);const response=await fetch("/api/v1/login-appearance",{method:restore?"DELETE":"PUT",credentials:"include",...(restore?{}:{body})});if(response.status===401)window.dispatchEvent(new Event("session-expired"));const data=await response.json();if(!response.ok)throw Error(data.detail||"No se pudo guardar la imagen");setCurrent(data);setFile(null);setMessage(restore?"Diseño original restaurado.":"Imagen de acceso guardada. Se mostrará al entrar en la web.")}catch(e){setError((e as Error).message)}finally{setBusy(false)}}
+ return <section className="appearance-settings"><h2>Imagen de acceso</h2><p>Personaliza el fondo de la pantalla donde los clientes inician sesión.</p><div className="appearance-layout"><div><label className="label" htmlFor="login-image-file">Subir imagen</label><input id="login-image-file" key={saved.image_url||"default"} type="file" accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={event=>{const selected=event.target.files?.[0];setError("");setMessage("");if(!selected)return;if(selected.size>8*1024*1024){setError("La imagen debe ocupar como máximo 8 MB");event.target.value="";return}setFile(selected)}}/><p className="small">JPG, PNG o WebP · Máximo 8 MB. Recomendado: 1600 × 1800 px. La imagen se adapta al espacio y puede recortarse.</p><p className="small">El logotipo y el texto permanecen sobre un fondo oscuro para facilitar la lectura. En móvil se muestra una cabecera compacta.</p><div className="appearance-actions"><button className="primary" disabled={!file||busy} onClick={()=>void persist()}>{busy?"Guardando…":"Guardar imagen"}</button><button className="ghost" disabled={busy||!saved.image_url} onClick={()=>void persist(true)}>Restaurar diseño original</button></div>{message&&<p role="status">{message}</p>}{error&&<p className="error" role="alert">{error}</p>}</div><div><h3>Vista previa {file?"· Sin guardar":""}</h3><div className="access-image-preview">{(preview||saved.image_url)&&<img src={preview||saved.image_url||""} alt="Vista previa de la imagen de acceso"/>}<div><img className="preview-logo" src="/bermudez-ulloa-logo.jpg" alt="Bermúdez Ulloa"/><h3>Material profesional.<br/>Pedido en segundos.</h3><p>Tu portal profesional</p></div></div></div></div></section>;
+}

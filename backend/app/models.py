@@ -438,3 +438,10 @@ class ReplenishmentAdjustment(Base):
     reason: Mapped[str] = mapped_column(String(500))
     previous: Mapped[dict] = mapped_column(JSON)
     changes: Mapped[dict] = mapped_column(JSON)
+
+
+class LoginAppearance(Base):
+    __tablename__ = "login_appearance"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    image_data: Mapped[bytes | None] = mapped_column(LargeBinary)
+    revision: Mapped[str] = mapped_column(String(36), default=public_uuid)
