@@ -54,6 +54,8 @@ ARTICLE = {
             "ReferenciaFabricante", "ReferenciaProveedor", "CodigoAlternativo",
         ),
         "brand_code": ("CodigoMarca", "Marca"),
+        "brand_filter_code": ("Marca", "CodigoMarca"),
+        "company": ("CodigoEmpresa",),
         "brand_name": ("DescripcionMarca", "MarcaDescripcion", "Marca"),
         "ean": ("Ean13B2C", "EAN13", "CodigoBarras"),
         "price_with_tax": ("PrecioVentaConIVA0", "PrecioVentaconIVA0"),
@@ -91,4 +93,14 @@ SALES_DOCUMENTS = {
     "invoice_tax": "FacturaVentaIva",
     "delivery_files": "GesDocAlbaranes",
     "invoice_files": "GesDocFacturas",
+}
+
+BRAND = {
+    "schema": "dbo", "table": "marcas",
+    "columns": {
+        "code": ("Marca", "CodigoMarca"),
+        "name": ("DescripcionMarca", "Descripcion", "NombreMarca", "Nombre"),
+        "internet_b2b": ("InternetB2B",),
+        "company": ("CodigoEmpresa",),
+    },
 }

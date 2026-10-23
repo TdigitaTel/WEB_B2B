@@ -28,7 +28,7 @@ from .kardex_timing import fetch_kardex_timings, sales_order_number
 from .order_timeline import exit_events, sync_history, instant, dispatch_timing, is_web_order
 from .delegations import fetch_delegations, resolve_delegation
 from .erp_db import (
-    fetch_catalog_articles, fetch_catalog_articles_by_codes,
+    fetch_catalog_articles, fetch_catalog_articles_by_codes, fetch_catalog_brands,
     fetch_customer, fetch_customer_delivery_notes, fetch_customer_delivery_statuses, fetch_customer_invoices,
     fetch_delivery_statuses_for_orders,
     fetch_customer_favorite_articles, fetch_product_image, fetch_product_prices,
@@ -346,6 +346,15 @@ def stores(user: User = Depends(current_user), db: Session = Depends(get_db)):
     return [{"id": s.id, "code": s.code, "name": s.name, "address": s.address,
              "company_code": s.company, "warehouse_code": s.warehouse_code,
              "warehouse_name": s.warehouse_name} for s in live_delegations()]
+
+
+@app.get("/api/v1/store/catalog-brands")
+def catalog_brands(user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN"))):
+    try:
+        return fetch_catalog_brands()
+    except Exception as exc:
+        logger.exception("No se pudieron consultar las marcas de EXIT")
+        raise HTTPException(503, "No se pudieron consultar las marcas de EXIT") from exc
 
 
 @app.get("/api/v1/products")

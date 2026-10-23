@@ -48,9 +48,10 @@ def test_exit_generic_material_queries_match_direct_search_and_preserve_filters(
         def __exit__(self, *args): pass
         def cursor(self): return Cursor()
     monkeypatch.setattr(erp_db, "connect_sqlserver", Connection)
+    monkeypatch.setattr(erp_db, "_brand_columns", lambda cn: {"code":"Marca", "name":None, "internet_b2b":"InternetB2B", "company":None})
     monkeypatch.setattr(erp_db, "_article_columns", lambda cn: {
         "code":"CodigoArticulo", "description":"DescripcionArticulo", "manufacturer_reference":None,
-        "ean":None, "brand_name":None, "brand_code":None, "unit":None,
+        "ean":None, "brand_name":None, "brand_code":"Marca", "unit":None,
         "price_with_tax":None, "price_without_tax":None, "inactive":"Inactivo",
     })
     assert erp_db.fetch_catalog_articles("accesorios de latón 1/2", page=2) == ([], 0)
