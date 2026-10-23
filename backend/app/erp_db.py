@@ -484,7 +484,7 @@ def fetch_customer_delivery_notes(customer_code: str, limit: int = 200, document
         "tax_total": float(row.get("TaxTotal") or 0),
         "total": float(row.get("ImporteFactura") or 0),
         "status": ("FACTURADO" if int(row.get("StatusFacturado") or 0) == -1 and int(row.get("NumeroFactura") or 0) > 0 else
-                   "ENTREGADO" if int(row.get("StatusImpresion") or 0) == -1 else "PENDIENTE_DE_ENTREGA"),
+                   "EMITIDO" if int(row.get("StatusImpresion") or 0) == -1 else "PENDIENTE_EMISION"),
         "store_code": str(row.get("IdDelegacion") or "").strip(),
         "store_name": str(row.get("DelegationName") or "").strip(),
         "order_number": _document_id(row.get("EjercicioPedido"), row.get("SeriePedido"), row.get("NumeroPedido")),
