@@ -63,6 +63,8 @@ from .price_visibility import protect_payload
 app.include_router(subusers_router)
 from .replenishment import router as replenishment_router
 app.include_router(replenishment_router)
+from .login_appearance import router as login_appearance_router
+app.include_router(login_appearance_router)
 logger = logging.getLogger(__name__)
 
 @lru_cache(maxsize=2000)
