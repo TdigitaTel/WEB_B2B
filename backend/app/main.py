@@ -61,6 +61,8 @@ from .subusers import router as subusers_router
 from .account_permissions import identity, principal_for
 from .price_visibility import protect_payload
 app.include_router(subusers_router)
+from .replenishment import router as replenishment_router
+app.include_router(replenishment_router)
 logger = logging.getLogger(__name__)
 
 @lru_cache(maxsize=2000)

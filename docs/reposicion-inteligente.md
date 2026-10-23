@@ -1,0 +1,42 @@
+# Reposición inteligente — MVP
+
+Acceso: Operaciones → Logística → Reposición inteligente, para administrador y operador.
+
+## Fuentes y alcance
+
+Se utilizan los nombres del documento sin sustituir tablas ni campos:
+
+- `dbo.articulos`: `codigoarticulo`, `descripcionarticulo`, `EX_tipounidad`, `inactivo`, `fechaalta`, `codigoalternativo7` a `codigoalternativo10`. Solo `inactivo=0`.
+- `dbo.AlbaranVentaCabecera` y `dbo.AlbaranVentaLineas`: unión por `NumeroAlbaran`, `EjercicioAlbaran`, `CodigoEmpresa`; empresa 1; fecha `FechaAlbaran`, delegación `IdDelegacion`, artículo `CodigoArticulo`, cantidad `Unidades`.
+- `dbo.VIS_EX_StockVentasDelegacion`: `CodigoArticulo`, `IdDelegacion`, `UnidadSaldo`, `PendienteRecibir`, `PendienteServir`.
+- PostgreSQL: `products.sku` enlaza con EXIT. Clasificación mediante `material_area_id`, `material_family_id`, `material_subfamily_id`, `material_product_type_id` y sus tablas maestras.
+
+Destinos: 01 San Diego/A Coruña, 02 Ferrol, 04 Santiago y 05 Sanxenxo. El 00 es referencia central consolidada: no se duplica ni se considera automáticamente transferible. La vista indicada no incluye empresa; no se ha inventado ese filtro. Duplicados de artículo o artículo/delegación provocan un error explícito.
+
+Todas las consultas a EXIT son SELECT. No se generan pedidos, movimientos, RPA ni tareas programadas. Máximo 5.000 artículos por simulación; si se supera, hay que acotar clasificación o códigos. No se trunca silenciosamente.
+
+## Cálculo
+
+La serie diaria incluye ceros. Ventas positivas y devoluciones negativas se conservan separadas; demanda diaria = máximo(0, ventas − devoluciones). Posición = saldo + pendiente recibir − pendiente servir.
+
+Valores iniciales: revisión 7 días, plazo 1 día, servicio 95 %, histórico desde 01/01/2026. Precedencia de parámetros parciales: global → área → familia → subfamilia → tipo → delegación → artículo/delegación → ajuste temporal.
+
+Demanda regular: H = revisión + plazo; seguridad = techo(z × desviación × raíz(H)); mínimo = techo(media × plazo + seguridad); máximo = techo(media × H + seguridad); propuesta = máximo(0, máximo − posición). Se aplican límites, mínimos y múltiplos configurados y se advierte si el redondeo supera el objetivo.
+
+Demanda intermitente: percentil empírico de ventanas completas del horizonte, con al menos cinco ventanas y cinco días con demanda. Artículos nuevos o con evidencia insuficiente no reciben automáticamente una previsión normal. Las referencias comparables requieren al menos tres artículos de la misma unidad y clasificación, con cinco días de demanda y que no sean nuevos. Su estimación es indicativa y de confianza baja; nunca sustituye la demanda real. Sin evidencia, se propone revisión manual. Stock ausente no equivale a cero.
+
+## Persistencia y auditoría
+
+Tablas nuevas: `replenishment_policies`, `replenishment_scenarios`, `replenishment_results`, `replenishment_adjustments`. El arranque habitual con `Base.metadata.create_all` las crea. No se altera el esquema de EXIT.
+
+Cada escenario conserva fuente, clasificación, parámetros, fechas de extracción y huella. Los ajustes registran usuario, motivo, valores previos y cambios; control de versión evita sobreescrituras concurrentes. Guardar una excepción permanente es una acción distinta del ajuste de escenario.
+
+La comparación advierte si cambian fuente o ventana histórica. El stock corresponde al momento de extracción, no se reconstruye un stock histórico. Las lecturas secuenciales no garantizan una instantánea transaccional de EXIT. El Excel mantiene códigos como texto e incluye contexto de cálculo. Las sumas de cantidades de unidades distintas son orientativas.
+
+API: `/api/v1/store/replenishment` (opciones, políticas, simulaciones, resultados, detalle, recálculo, ajustes, comparación y exportación). Filtrado, ordenación y paginación de resultados se hacen en PostgreSQL.
+
+## Validación pendiente en el entorno real
+
+Por indicación del usuario se confía en las tablas y campos del documento. Las pruebas locales utilizan datos de prueba: no confirman la conexión ni la extracción real de EXIT.
+
+Antes de uso operativo: ejecutar extracción acotada; contrastar un artículo por delegación con albaranes y stock; comprobar unidades, empresa de la vista y unicidad de las tres claves de unión; revisar devoluciones, días sin venta y propuesta conjunta contra 00. Si EXIT devuelve un error de esquema, ajustar explícitamente con ese diagnóstico.
