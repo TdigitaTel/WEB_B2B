@@ -1262,7 +1262,7 @@ def delivery_notes_payload(rows):
         number = str(row.get("delivery_number") or "").strip()
         if number:
             unique.setdefault(number, {"number": number, "created_at": instant(row.get("attended_at")),
-                "status": "FACTURADO" if row.get("is_invoiced") else "IMPRESO" if row.get("is_printed") else "PENDIENTE_IMPRESION"})
+                "status": "FACTURADO" if row.get("is_invoiced") else "EMITIDO" if row.get("is_printed") else "PENDIENTE_EMISION"})
     return list(unique.values())
 
 

@@ -14,7 +14,7 @@ def test_notes_include_all_numbers_dates_and_status_without_duplicates():
           {'delivery_number':'2026/AL/3','attended_at':None,'is_printed':True,'is_invoiced':True}]
     result=delivery_notes_payload(rows+[rows[0]])
     assert len(result)==3
-    assert [row['status'] for row in result]==['PENDIENTE_IMPRESION','IMPRESO','FACTURADO']
+    assert [row['status'] for row in result]==['PENDIENTE_EMISION','EMITIDO','FACTURADO']
     assert result[0]['created_at'].astimezone(timezone.utc)==stamp
     assert result[2]['created_at'] is None
 

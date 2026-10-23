@@ -45,3 +45,23 @@ def test_delivery_line_uses_exact_exit_price_discount_net_and_total(monkeypatch)
     assert items[0]['discount_pct']==12.5
     assert items[0]['net_amount']==84.25 and items[0]['total']==101.94
     assert items[1]['discount_pct']==100 and items[1]['net_amount']==0 and items[1]['total']==0
+
+
+def test_delivery_document_uses_emission_states_not_order_delivery(monkeypatch):
+    for printed,invoiced,invoice_number,expected in [(0,0,0,'PENDIENTE_EMISION'),(-1,0,0,'EMITIDO'),(-1,-1,42,'FACTURADO')]:
+        class Cursor:
+            def __enter__(self):return self
+            def __exit__(self,*args):pass
+            def execute(self,sql,params):self.header='SELECT TOP' in sql
+            def fetchall(self):
+                return [{'EjercicioAlbaran':2026,'SerieAlbaran':'AL','NumeroAlbaran':999,
+                         'FechaAlbaran':'2026-10-22','StatusImpresion':printed,'StatusFacturado':invoiced,
+                         'NumeroFactura':invoice_number}] if self.header else []
+        class Connection:
+            def cursor(self):return Cursor()
+        @contextmanager
+        def connect():yield Connection()
+        monkeypatch.setattr(erp_db,'connect_sqlserver',connect)
+        document=erp_db.fetch_customer_delivery_notes('83023')[0]
+        assert document['status']==expected
+        assert document['status']!='ENTREGADO'
