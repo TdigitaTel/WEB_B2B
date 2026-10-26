@@ -4,7 +4,8 @@ from decimal import Decimal
 from .erp_db import connect_sqlserver
 
 DELEGATIONS = {'01':'San Diego / A Coruña','02':'Ferrol','04':'Santiago','05':'Sanxenxo'}
-MAX_ARTICLES = 5000
+MAX_ARTICLES = 20000
+HARD_MAX_ARTICLES = 100000
 
 def number(value):
     result=float(value or 0)
@@ -21,13 +22,15 @@ def dispatch_multiple(value):
 def stamp(value):
     return value.isoformat() if isinstance(value,(date,datetime)) else str(value) if value is not None else None
 
-def read_replenishment_source(start: date, end: date, skus: list[str] | None = None):
+def read_replenishment_source(start: date, end: date, skus: list[str] | None = None, max_articles: int = MAX_ARTICLES):
     """Empresa 1 para ventas. La vista de stock no tiene empresa en el esquema indicado."""
+    if not isinstance(max_articles,int) or not 1<=max_articles<=HARD_MAX_ARTICLES:
+        raise ValueError('El límite debe estar entre 1 y 100.000 artículos')
     captured=datetime.now(timezone.utc).isoformat()
     if skus == []:
-        return {'captured_at':captured,'company':1,'start':start.isoformat(),'end':end.isoformat(),'articles':[],'sales':[],'stocks':[]}
-    if skus is not None and len(skus)>MAX_ARTICLES:
-        raise ValueError('Limita el filtro a un máximo de 5.000 artículos por simulación')
+        return {'captured_at':captured,'article_limit':max_articles,'company':1,'start':start.isoformat(),'end':end.isoformat(),'articles':[],'sales':[],'stocks':[]}
+    if skus is not None and len(skus)>max_articles:
+        raise ValueError(f'La selección supera el límite configurado de {max_articles:,} artículos. Amplíalo en Configuración o acota los filtros')
     article_rows=[]; sales=[]; stocks=[]
     with connect_sqlserver() as connection, connection.cursor() as cursor:
         batches=[None] if skus is None else [skus[i:i+1000] for i in range(0,len(skus),1000)]
@@ -36,12 +39,12 @@ def read_replenishment_source(start: date, end: date, skus: list[str] | None = N
             params=[]
             if batch is not None:
                 where+=' AND codigoarticulo IN ('+','.join(['%s']*len(batch))+')';params.extend(batch)
-            cursor.execute(f'''SELECT TOP {MAX_ARTICLES+1} codigoarticulo, descripcionarticulo, EX_tipounidad,
+            cursor.execute(f'''SELECT TOP {max_articles+1} codigoarticulo, descripcionarticulo, EX_tipounidad,
                 inactivo, fechaalta, EX_multiplo, codigoalternativo7, codigoalternativo8, codigoalternativo9, codigoalternativo10
                 FROM dbo.articulos WHERE {where} ORDER BY codigoarticulo''',tuple(params))
             article_rows.extend(cursor.fetchall())
-        if len(article_rows)>MAX_ARTICLES:
-            raise ValueError('Hay más de 5.000 artículos. Selecciona una familia o un conjunto de códigos para esta simulación')
+        if len(article_rows)>max_articles:
+            raise ValueError(f'Hay más de {max_articles:,} artículos. Amplía el límite en Configuración o acota la selección')
         articles=[]; seen=set()
         for raw in article_rows:
             row={str(k).lower():v for k,v in raw.items()}
@@ -75,5 +78,5 @@ def read_replenishment_source(start: date, end: date, skus: list[str] | None = N
     keys=[(row['sku'],row['delegation']) for row in stocks]
     if len(keys)!=len(set(keys)):
         raise ValueError('La vista de stock devuelve más de una fila por artículo/delegación. No se sumará stock consolidado duplicado')
-    return {'captured_at':datetime.now(timezone.utc).isoformat(),'extraction_started_at':captured,'company':1,'start':start.isoformat(),'end':end.isoformat(),
+    return {'captured_at':datetime.now(timezone.utc).isoformat(),'extraction_started_at':captured,'article_limit':max_articles,'company':1,'start':start.isoformat(),'end':end.isoformat(),
             'articles':articles,'sales':sales,'stocks':stocks}

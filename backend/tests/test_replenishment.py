@@ -228,3 +228,70 @@ def test_manual_adjustment_must_respect_exit_dispatch_multiple(monkeypatch):
     assert response.status_code==422 and 'múltiplo de 12' in response.json()['detail']
     response=client.post(path,json={'quantity':24,'reason':'Dos agrupaciones','expected_version':1})
     assert response.status_code==200 and response.json()['result']['final_quantity']==24
+
+
+def test_point_keeps_minimum_plus_consumption_until_next_replenishment():
+    source=source_for(values=[63.274/30]*30,stock=24)
+    row=calculate(source,{'manual_min':21,'review_days':7,'lead_days':1,'multiple_mode':'NONE'})
+    assert row['daily_mean']*30==pytest.approx(63.274)
+    assert row['expected_cycle_consumption']==pytest.approx(63.274/30*7)
+    assert row['replenishment_point']==36 and row['target_stock']==36
+    assert row['final_quantity']==12
+    assert row['target_stock']!=row['maximum_stock']
+    # The lead time is not added a second time after an explicit minimum.
+    assert calculate(source,{'manual_min':21,'review_days':7,'lead_days':5,'multiple_mode':'NONE'})['final_quantity']==12
+    source['articles'][0]['exit_multiple']=6
+    later=calculate(source,{'manual_min':21,'review_days':14,'multiple_mode':'EXIT'})
+    assert later['replenishment_point']==51 and later['quantity_before_rounding']==27
+    assert later['final_quantity']==30
+    enough=calculate(source_for(values=[63.274/30]*30,stock=40),{'manual_min':21,'review_days':7})
+    assert enough['final_quantity']==0
+
+
+def test_only_explicit_limits_can_reduce_replenishment_point():
+    source=source_for(values=[63.274/30]*30,stock=24)
+    row=calculate(source,{'manual_min':21,'manual_max':34,'review_days':7,'multiple_mode':'NONE'})
+    assert row['replenishment_point']==36 and row['target_stock']==34 and row['final_quantity']==10
+    assert 'OBJETIVO_LIMITADO' in [note['code'] for note in row['recommendations']]
+
+
+def test_article_limit_is_configurable_audited_and_passed_to_exit(monkeypatch):
+    import app.replenishment as module
+    raw=source_for();calls=[]
+    def read(*args):calls.append(args);return dict(raw)
+    monkeypatch.setattr(module,'read_replenishment_source',read)
+    operator=login();customer=login('compras001@cliente.test');prefix='/api/v1/store/replenishment'
+    assert operator.get(prefix+'/settings').json()['article_limit']==20000
+    assert customer.put(prefix+'/settings',json={'article_limit':30000}).status_code==403
+    assert operator.put(prefix+'/settings',json={'article_limit':100001}).status_code==422
+    assert operator.put(prefix+'/settings',json={'article_limit':0}).status_code==422
+    response=operator.put(prefix+'/settings',json={'article_limit':30000})
+    assert response.status_code==200 and response.json()['article_limit']==30000
+    assert operator.get(prefix+'/options').json()['article_limit']==30000
+    preview=operator.post(prefix+'/simulations',json={'filters':{'date_from':raw['start'],'date_to':raw['end'],'delegations':['02']},'preview_only':True})
+    assert preview.status_code==201 and calls[-1][3]==30000
+    operator.put(prefix+'/settings',json={'article_limit':20000})
+
+
+def test_source_handles_more_than_5000_and_enforces_configured_limit(monkeypatch):
+    from contextlib import contextmanager
+    import app.replenishment_source as module
+    calls=[]
+    class Cursor:
+        def __enter__(self):return self
+        def __exit__(self,*args):pass
+        def execute(self,sql,params=()):self.sql=sql;calls.append(sql)
+        def fetchall(self):
+            if 'FROM dbo.articulos' in self.sql:
+                return [{'codigoarticulo':str(i).zfill(5),'descripcionarticulo':'Material','EX_multiplo':6} for i in range(5001)]
+            return []
+    class Connection:
+        def cursor(self):return Cursor()
+    @contextmanager
+    def connect():yield Connection()
+    monkeypatch.setattr(module,'connect_sqlserver',connect)
+    result=module.read_replenishment_source(date(2026,1,1),date(2026,1,31),max_articles=6000)
+    assert len(result['articles'])==5001 and result['article_limit']==6000
+    assert 'TOP 6001' in calls[0]
+    with pytest.raises(ValueError,match='límite|más de'):
+        module.read_replenishment_source(date(2026,1,1),date(2026,1,31),max_articles=5000)

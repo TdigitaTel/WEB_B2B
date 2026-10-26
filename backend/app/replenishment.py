@@ -16,9 +16,9 @@ from .auth import require_roles
 from .db import get_db
 from .models import (AuditEvent, MaterialArea, MaterialFamily, MaterialSubfamily, MaterialProductType, Product,
     ReplenishmentPolicy as Policy, ReplenishmentScenario as Scenario, ReplenishmentResult as Result,
-    ReplenishmentAdjustment as Adjustment, User)
+    ReplenishmentAdjustment as Adjustment, ReplenishmentSettings as ModuleSettings, User)
 from .replenishment_engine import Parameters, PRECEDENCE, prepare_context, calculate_article, annotate_central, summarize, rounded_dispatch
-from .replenishment_source import DELEGATIONS, read_replenishment_source
+from .replenishment_source import DELEGATIONS, MAX_ARTICLES, HARD_MAX_ARTICLES, read_replenishment_source
 
 operator=require_roles('ADMIN','OPERADOR_TIENDA')
 router=APIRouter(prefix='/api/v1/store/replenishment',tags=['replenishment'],dependencies=[Depends(operator)])
@@ -39,7 +39,7 @@ class Filters(BaseModel):
     family_id:int|None=None
     subfamily_id:int|None=None
     type_id:int|None=None
-    skus:list[str]=Field(default_factory=list,max_length=5000)
+    skus:list[str]=Field(default_factory=list,max_length=HARD_MAX_ARTICLES)
     @model_validator(mode='after')
     def dates(self):
         if self.date_from>self.date_to or self.date_to>today() or (self.date_to-self.date_from).days>1095:
@@ -97,16 +97,37 @@ def scenario_payload(row):
     return {'id':row.public_id,'name':row.name,'saved':row.saved,'version':row.version,'created_at':row.created_at,
         'captured_at':row.source_snapshot['captured_at'],'source_fingerprint':row.source_fingerprint,
         'filters':row.filters,'temporary_parameters':row.temporary_parameters,'summary':row.summary,
-        'source_articles':len(row.source_snapshot['articles']),'read_only_exit':True,
+        'article_limit':row.source_snapshot.get('article_limit',5000),'source_articles':len(row.source_snapshot['articles']),'read_only_exit':True,
         'source_notes':['Stock central 00 consolidado: no es disponibilidad transferible.',
             'Ventas: empresa 1. La vista de stock se usa con el alcance indicado, sin campo de empresa.',
             'Ventas del periodo elegido y stock consultado en la extracción; no se reconstruye stock histórico.',
             'El vínculo cabecera/líneas usa número, ejercicio y empresa según el esquema facilitado.']}
 
+class SettingsInput(BaseModel):
+    article_limit:int=Field(ge=1,le=HARD_MAX_ARTICLES)
+
+def module_settings(db):
+    row=db.get(ModuleSettings,1)
+    return {'article_limit':row.article_limit if row else MAX_ARTICLES,'maximum_article_limit':HARD_MAX_ARTICLES}
+
+@router.get('/settings')
+def read_settings(db:Session=Depends(get_db)):
+    return module_settings(db)
+
+@router.put('/settings')
+def save_settings(body:SettingsInput,db:Session=Depends(get_db),user:User=Depends(operator)):
+    previous=module_settings(db)
+    row=db.get(ModuleSettings,1)
+    if row is None:
+        row=ModuleSettings(id=1);db.add(row)
+    row.article_limit=body.article_limit;row.updated_by=user.id
+    audit(db,user,'REPLENISHMENT_SETTINGS_SAVED','1',{'previous':previous,'article_limit':body.article_limit})
+    db.commit();return module_settings(db)
+
 @router.get('/options')
 def options(db:Session=Depends(get_db)):
     result={'server_date':today().isoformat(),'delegations':[{'code':key,'name':value} for key,value in DELEGATIONS.items()],
-        'defaults':Parameters().model_dump(),'precedence':PRECEDENCE}
+        'defaults':Parameters().model_dump(),'precedence':PRECEDENCE,**module_settings(db)}
     for key,model,parent in [('areas',MaterialArea,None),('families',MaterialFamily,'area_id'),
         ('subfamilies',MaterialSubfamily,'family_id'),('types',MaterialProductType,'subfamily_id')]:
         result[key]=[{'id':row.id,'code':row.code,'name':row.name,**({parent:getattr(row,parent)} if parent else {})}
@@ -143,10 +164,14 @@ def classified_source(db,filters):
         if getattr(filters,key) is not None:query=query.where(column==getattr(filters,key))
     selected=list(db.scalars(query).all()) if any(getattr(filters,key) is not None for key in ('area_id','family_id','subfamily_id','type_id')) else None
     if filters.skus:selected=filters.skus if selected is None else sorted(set(selected).intersection(filters.skus))
-    source=read_replenishment_source(filters.date_from,filters.date_to,selected)
+    limit=module_settings(db)['article_limit']
+    source=read_replenishment_source(filters.date_from,filters.date_to,selected,limit)
+    source['article_limit']=limit
     codes=[row['sku'] for row in source['articles']]
-    rows=db.execute(select(Product.sku,Product.material_area_id,Product.material_family_id,
-        Product.material_subfamily_id,Product.material_product_type_id).where(Product.sku.in_(codes))).all()
+    rows=[]
+    for offset in range(0,len(codes),1000):
+        rows.extend(db.execute(select(Product.sku,Product.material_area_id,Product.material_family_id,
+            Product.material_subfamily_id,Product.material_product_type_id).where(Product.sku.in_(codes[offset:offset+1000]))).all())
     metadata={row[0]:dict(zip(('area_id','family_id','subfamily_id','type_id'),row[1:])) for row in rows}
     names={key:{row.id:row.name for row in db.scalars(select(model)).all()} for key,model in
         [('area',MaterialArea),('family',MaterialFamily),('subfamily',MaterialSubfamily),('type',MaterialProductType)]}
@@ -282,10 +307,13 @@ def compare(a:str,b:str,db:Session=Depends(get_db)):
     def windows(row):
         return sorted({(item.payload['calculation']['window_start'],item.payload['calculation']['window_end'])
             for item in db.scalars(select(Result).where(Result.scenario_id==row.id)).all()})
+    def models(row):
+        return {item.payload.get('calculation_model','LEGACY_MAXIMUM') for item in db.scalars(select(Result).where(Result.scenario_id==row.id)).all()}
+    model_equal=models(first)==models(second)
     same=first.source_fingerprint==second.source_fingerprint and first.filters==second.filters
     history_equal=windows(first)==windows(second)
-    return {'a':scenario_payload(first),'b':scenario_payload(second),'same_source_context':same,'same_history_window':history_equal,
-        'notice':'Misma instantánea y filtros.' if same and history_equal else 'Contextos diferentes: revisa fechas de corte, filtros y ventanas históricas antes de atribuir diferencias a parámetros.',
+    return {'a':scenario_payload(first),'b':scenario_payload(second),'same_source_context':same,'same_history_window':history_equal,'same_calculation_model':model_equal,
+        'notice':'Misma instantánea y filtros.' if same and history_equal and model_equal else 'Contextos diferentes: revisa el modelo de cálculo, fechas de corte, filtros y ventanas históricas antes de atribuir diferencias a parámetros.',
         'differences':{key:second.summary[key]-first.summary[key] if first.summary.get(key) is not None and second.summary.get(key) is not None else None
             for key in ('to_replenish','units_proposed','target_stock','average_coverage_days','alerts')}}
 
@@ -296,7 +324,7 @@ def export(scenario_id:str,db:Session=Depends(get_db)):
     book=Workbook();sheet=book.active;sheet.title='Reposición'
     fields=[('sku','Código'),('description','Descripción'),('delegation','Delegación'),('unit_type','Tipo unidad'),('family','Familia'),
         ('stock','Stock'),('incoming','Pendiente recibir'),('outgoing','Pendiente servir'),('inventory_position','Posición'),('daily_mean','Consumo diario'),
-        ('safety_stock','Seguridad'),('minimum_stock','Mínimo'),('maximum_stock','Máximo'),('calculated_quantity','Cantidad calculada'),
+        ('safety_stock','Seguridad'),('minimum_stock','Mínimo'),('maximum_stock','Máximo de referencia'),('expected_cycle_consumption','Consumo hasta próxima reposición'),('replenishment_point','Punto de reposición'),('target_stock','Objetivo aplicado'),('calculated_quantity','Cantidad calculada'),
         ('exit_multiple','Múltiplo EXIT'),('effective_multiple','Múltiplo aplicado'),('quantity_before_rounding','Cantidad antes de agrupar'),('recommended_quantity','Cantidad recomendada'),('adjusted_quantity','Ajuste manual'),('final_quantity','Cantidad final'),('method','Método'),('confidence','Confianza')]
     sheet.append([label for _,label in fields]+['Reglas aplicadas','Recomendaciones'])
     for result in rows:

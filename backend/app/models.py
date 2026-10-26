@@ -445,3 +445,10 @@ class LoginAppearance(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     image_data: Mapped[bytes | None] = mapped_column(LargeBinary)
     revision: Mapped[str] = mapped_column(String(36), default=public_uuid)
+
+
+class ReplenishmentSettings(Base, TimestampMixin):
+    __tablename__ = "replenishment_settings"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    article_limit: Mapped[int] = mapped_column(Integer, default=20000)
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
