@@ -367,3 +367,31 @@ def test_api_filters_central_overstock_and_zero_consumption(monkeypatch):
     book=load_workbook(io.BytesIO(exported.content))
     headers=[cell.value for cell in book.active[1]]
     assert 'Consumo mensual Almeiras' in headers and 'Disponible para despacho Almeiras' in headers
+
+
+def test_filtered_summary_and_export_all_pages_with_exit_control_characters(monkeypatch):
+    import app.replenishment as module
+    raw=source_for(tuple(f'00{i:03}' for i in range(55)))
+    raw['articles'][0]['description']='=Material\x0b de EXIT'
+    monkeypatch.setattr(module,'read_replenishment_source',lambda *args:raw)
+    client=login();prefix='/api/v1/store/replenishment'
+    run=client.post(prefix+'/simulations',json={'filters':{'date_from':raw['start'],'date_to':raw['end'],'delegations':['02']}})
+    assert run.status_code==201,run.text
+    path=prefix+'/simulations/'+run.json()['id']
+    result=client.get(path+'/results',params={'needed_only':True,'page_size':1}).json()
+    assert len(result['items'])==1 and result['total']==55
+    assert result['summary']['articles_analyzed']==55 and result['summary']['to_replenish']==55
+    response=client.get(path+'/export.xlsx',params={'needed_only':True,'sort':'sku','descending':True})
+    assert response.status_code==200
+    book=load_workbook(io.BytesIO(response.content));sheet=book.active
+    assert sheet.max_row==56 and sheet['A2'].value=='00054'
+    assert sheet['A56'].value=='00000' and sheet['A56'].data_type=='s'
+    assert sheet['B56'].value=='=Material de EXIT' and sheet['B56'].data_type=='s'
+    filtered=client.get(path+'/results',params={'q':'00000'}).json()
+    assert filtered['summary']['articles_analyzed']==1
+    response=client.get(path+'/export.xlsx',params={'q':'00000'})
+    assert load_workbook(io.BytesIO(response.content)).active.max_row==2
+    empty=client.get(path+'/results',params={'consumption':'WITHOUT'}).json()
+    assert empty['total']==0 and all(value==0 for value in empty['summary'].values())
+    response=client.get(path+'/export.xlsx',params={'consumption':'WITHOUT'})
+    assert load_workbook(io.BytesIO(response.content)).active.max_row==1
