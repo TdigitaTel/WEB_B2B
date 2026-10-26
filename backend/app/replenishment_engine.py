@@ -1,5 +1,6 @@
 """Motor puro de simulación. No conoce conexiones ni modifica políticas."""
 from collections import defaultdict
+from decimal import Decimal, ROUND_CEILING, InvalidOperation
 from datetime import date, timedelta
 from math import ceil, sqrt
 from statistics import NormalDist, mean, median, pstdev
@@ -14,6 +15,7 @@ class Parameters(BaseModel):
     max_coverage_days: int | None = Field(None,ge=1,le=1095)
     minimum_quantity: float = Field(0,ge=0,le=1e9)
     multiple: float = Field(1,gt=0,le=1e6)
+    multiple_mode: Literal['NONE','MANUAL','EXIT'] = 'MANUAL'
     manual_min: float | None = Field(None,ge=0,le=1e9)
     manual_max: float | None = Field(None,ge=0,le=1e9)
     enabled: bool = True
@@ -87,6 +89,22 @@ def recommendation(code,reason,evidence,parameter=None,current=None,suggested=No
     return {'code':code,'reason':reason,'evidence':evidence,'parameter':parameter,'current_value':current,
             'suggested_value':suggested,'estimated_effect':effect,'confidence':confidence}
 
+def effective_dispatch_multiple(article, parameters):
+    mode=parameters['multiple_mode']
+    if mode=='NONE':return None
+    if mode=='MANUAL':return parameters['multiple']
+    value=article.get('exit_multiple')
+    try:
+        number=Decimal(str(value))
+        return float(number) if number.is_finite() and number>0 else None
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+
+def rounded_dispatch(quantity, multiple):
+    if quantity<=0 or multiple is None:return quantity
+    value=Decimal(str(quantity));step=Decimal(str(multiple))
+    return float((value/step).to_integral_value(rounding=ROUND_CEILING)*step)
+
 def calculate_article(article,delegation,context,override=None,include_daily=False):
     key=(article['sku'],delegation);parameters,rules,origins=context['resolved'][key]
     parameters=dict(parameters)
@@ -134,11 +152,17 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
     maximum=max(minimum,maximum)
     if sparse and (parameters['manual_min'] is not None or parameters['manual_max'] is not None):method='LIMITES_MANUALES';confidence='BAJA'
     quantity=max(0,maximum-position) if position is not None else 0
-    if quantity>0:quantity=ceil(max(quantity,parameters['minimum_quantity'])/parameters['multiple']-1e-12)*parameters['multiple']
+    dispatch_multiple=effective_dispatch_multiple(article,parameters)
+    before_rounding=max(quantity,parameters['minimum_quantity']) if quantity>0 else 0
+    quantity=rounded_dispatch(before_rounding,dispatch_multiple)
+    if parameters['multiple_mode']=='EXIT' and dispatch_multiple is None:
+        quantity=0
+        recs.append(recommendation('MULTIPLO_EXIT_INVALIDO','EX_multiplo no contiene un múltiplo positivo válido. La propuesta queda a cero hasta revisar el formato de despacho.',
+            {'exit_multiple':article.get('exit_multiple'),'quantity_before_rounding':before_rounding},'multiple_mode','EXIT'))
     if not parameters['enabled'] or stats['created_in_future'] or (sparse and (parameters['new_policy'] if stats['new_article'] else parameters['no_sales_policy'])=='NO_REPLENISH'):quantity=0
     if quantity>0 and position is not None and position+quantity>maximum+1e-8:
         recs.append(recommendation('REDONDEO_SOBRE_MAXIMO','El múltiplo o la cantidad mínima elevan el inventario por encima del máximo objetivo.',
-            {'quantity':quantity,'position_after':position+quantity,'maximum':maximum},'multiple',parameters['multiple']))
+            {'quantity':quantity,'position_after':position+quantity,'maximum':maximum,'effective_multiple':dispatch_multiple},'multiple_mode',parameters['multiple_mode']))
     coverage=position/avg if position is not None and avg>0 else None
     if coverage is not None and coverage>max(90,3*horizon):
         recs.append(recommendation('EXCESO_STOCK',f'El inventario equivale a {coverage:.1f} días de demanda observada.',
@@ -175,10 +199,10 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
         'safety_stock':safety,'minimum_stock':minimum,'maximum_stock':maximum,'calculated_quantity':calculated,
         'recommended_quantity':round(quantity,6),'adjusted_quantity':None,'final_quantity':round(quantity,6),'coverage_days':coverage,
         'confidence':confidence,'method':method,'comparables':comparable,'parameters':parameters,'applied_rules':rules,
-        'parameter_origins':origins,'recommendations':recs,'manual_parameters':{},
+        'parameter_origins':origins,'recommendations':recs,'manual_parameters':{},'effective_multiple':dispatch_multiple,'quantity_before_rounding':before_rounding,
         'calculation':{'horizon':horizon,'z':z,'formula':'S = ceil(media × horizonte + seguridad); Q = max(0, S − posición)',
             'safety_formula':'ceil(Z × desviación diaria × sqrt(horizonte))' if method=='REVISION_PERIODICA' else 'Modelo alternativo explicado en método y recomendaciones',
-            'raw_maximum':raw_maximum,'window_start':stats['start'],'window_end':stats['end']}}
+            'dispatch_days':parameters['review_days'],'lead_days':parameters['lead_days'],'raw_maximum':raw_maximum,'window_start':stats['start'],'window_end':stats['end']}}
     if include_daily:result['daily_sales']=stats['daily']
     return result
 
