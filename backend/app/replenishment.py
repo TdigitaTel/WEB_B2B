@@ -349,7 +349,7 @@ def export(scenario_id:str,filters:ResultFilters=Depends(),db:Session=Depends(ge
     append(sheet,[label for _,label in fields]+['Reglas aplicadas','Recomendaciones'])
     count=0
     for result in rows:
-        row={**result.payload,'monthly_mean':result.payload['daily_mean']*30};values=[row.get(key) for key,_ in fields]+[' → '.join(row['applied_rules']),'; '.join(item['reason'] for item in row['recommendations'])]
+        row={**result.payload,'monthly_mean':result.payload.get('monthly_mean',result.payload['daily_mean']*30)};values=[row.get(key) for key,_ in fields]+[' → '.join(row['applied_rules']),'; '.join(item['reason'] for item in row['recommendations'])]
         append(sheet,values);count+=1
     sheet.auto_filter.ref=f'A1:{get_column_letter(len(fields)+2)}{count+1}'
     metadata=book.create_sheet('Contexto');append(metadata,['Dato','Valor'])

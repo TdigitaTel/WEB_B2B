@@ -1,5 +1,6 @@
 """Motor puro de simulación. No conoce conexiones ni modifica políticas."""
 from collections import defaultdict
+from calendar import monthrange
 from decimal import Decimal, ROUND_CEILING, InvalidOperation
 from datetime import date, timedelta
 from math import ceil, sqrt
@@ -58,19 +59,27 @@ def demand_statistics(article,delegation,source,parameters,sales_index,include_d
     except ValueError:pass
     if created and start<created<=end:start=created
     days=(end-start).days+1
-    daily=[];values=[];gross=returned=0;last_sale=None;anomalous=0
+    daily=[];values=[];months={};gross=returned=0;last_sale=None;anomalous=0
     for offset in range(days):
         day=(start+timedelta(days=offset)).isoformat();sold,back=sales_index.get((article['sku'],delegation,day),(0,0))
         gross+=sold;returned+=back;anomalous+=int(back>sold)
         if sold>0:last_sale=day
         values.append(max(0,sold-back))
+        bucket=months.setdefault(day[:7], {'month':day[:7], 'observed_days':0, 'consumption':0, 'calendar_days':monthrange(int(day[:4]),int(day[5:7]))[1]})
+        bucket['observed_days']+=1;bucket['consumption']+=values[-1]
         if include_daily:daily.append({'day':day,'sold':sold,'returned':back,'demand':values[-1]})
-    average=mean(values) if values else 0;deviation=pstdev(values) if values else 0
+    monthly=[]
+    for bucket in months.values():
+        bucket['estimated']=bucket['observed_days']<bucket['calendar_days']
+        bucket['monthly_consumption']=bucket['consumption']/bucket['observed_days']*bucket['calendar_days'] if bucket['estimated'] else bucket['consumption']
+        monthly.append(bucket)
+    monthly_mean=mean(row['monthly_consumption'] for row in monthly) if monthly else 0
+    average=monthly_mean/30;deviation=pstdev(values) if values else 0
     sales_days=sum(value>0 for value in values)
     adi=days/sales_days if sales_days else None
     irregular=bool(sales_days and (adi>1.32 or (average>0 and deviation/average>1)))
     return {'days':days,'start':start.isoformat(),'end':end.isoformat(),'daily':daily,'demand_values':values,'gross_sales':gross,
-            'returns':returned,'total_demand':sum(values),'daily_mean':average,'daily_std':deviation,
+            'returns':returned,'total_demand':sum(values),'daily_mean':average,'monthly_mean':monthly_mean,'monthly_consumption':monthly,'daily_std':deviation,
             'sales_days':sales_days,'last_sale':last_sale,'irregular':irregular,'anomalous_return_days':anomalous,
             'new_article':bool(created and (end-created).days<30),'created_in_future':bool(created and created>end)}
 
@@ -110,7 +119,8 @@ def effective_dispatch_multiple(article, parameters):
         return None
 
 def rounded_dispatch(quantity, multiple):
-    if quantity<=0 or multiple is None:return quantity
+    if quantity<=0:return 0
+    if multiple is None:return float(Decimal(str(quantity)).to_integral_value(rounding=ROUND_CEILING))
     value=Decimal(str(quantity));step=Decimal(str(multiple))
     return float((value/step).to_integral_value(rounding=ROUND_CEILING)*step)
 
@@ -122,7 +132,7 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
     stats=demand_statistics(article,delegation,context['source'],parameters,context['sales_index'],include_daily) if override or include_daily else context['stats'][key]
     avg,std=stats['daily_mean'],stats['daily_std'];horizon=parameters['review_days']+parameters['lead_days']
     z=NormalDist().inv_cdf(parameters['service_level']/100)
-    safety=ceil(z*std*sqrt(horizon));minimum=ceil(avg*parameters['lead_days']+safety);maximum=ceil(avg*horizon+safety)
+    safety=z*std*sqrt(horizon);minimum=avg*parameters['lead_days']+safety;maximum=avg*horizon+safety
     method='REVISION_PERIODICA';confidence='ALTA' if stats['sales_days']>=30 and not stats['irregular'] else 'MEDIA'
     recs=[];comparable=None
     sparse=stats['sales_days']<5 or stats['new_article']
@@ -133,7 +143,7 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
             for level in ('type_id','subfamily_id','family_id'):
                 candidates=[value for sku,value in context['comparables'].get((delegation,level,article.get(level),article.get('unit_type','')),[]) if sku!=article['sku']]
                 if len(candidates)>=3:
-                    estimate=median(candidates);minimum=maximum=ceil(estimate*max(1,parameters['lead_days']))
+                    estimate=median(candidates);minimum=maximum=estimate*max(1,parameters['lead_days'])
                     comparable={'level':level,'count':len(candidates),'median_daily_demand':estimate,'indicative_minimum':minimum}
                     method='MINIMO_ORIENTATIVO_COMPARABLES';break
         recs.append(recommendation('HISTORICO_INSUFICIENTE','Histórico insuficiente: revisar la propuesta orientativa; no representa ventas reales del artículo.',
@@ -146,31 +156,31 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
             for index in range(horizon,len(values)):
                 current+=values[index]-values[index-horizon];sums.append(current)
         if len(sums)>=5:
-            sums.sort();maximum=ceil(sums[min(len(sums)-1,ceil(len(sums)*parameters['service_level']/100)-1)])
-            safety=max(0,ceil(maximum-avg*horizon));minimum=min(maximum,ceil(avg*parameters['lead_days']+safety))
+            sums.sort();maximum=sums[min(len(sums)-1,ceil(len(sums)*parameters['service_level']/100)-1)]
+            safety=max(0,maximum-avg*horizon);minimum=min(maximum,avg*parameters['lead_days']+safety)
             method='PERCENTIL_EMPIRICO_INTERMITENTE';confidence='BAJA'
         else:
             safety=minimum=maximum=0;method='REVISION_MANUAL';confidence='BAJA'
     raw_maximum=maximum
     stock=context['stocks'].get(key);position=stock['stock']+stock['incoming']-stock['outgoing'] if stock else None
-    original_target=ceil(minimum+(avg*parameters['review_days'] if method!='REVISION_MANUAL' else 0))
-    calculated=max(0,ceil(original_target-position)) if position is not None else 0
+    original_target=minimum+(avg*parameters['review_days'] if method!='REVISION_MANUAL' else 0)
+    calculated=max(0,original_target-position) if position is not None else 0
     if parameters['max_coverage_days'] and avg>0:
-        maximum=min(maximum,ceil(avg*parameters['max_coverage_days']))
+        maximum=min(maximum,avg*parameters['max_coverage_days'])
     if parameters['manual_min'] is not None:minimum=parameters['manual_min']
     if parameters['manual_max'] is not None:maximum=parameters['manual_max']
     if parameters['maximum_days'] is not None:
-        maximum=ceil(minimum+avg*parameters['maximum_days'])
+        maximum=minimum+avg*parameters['maximum_days']
         if parameters['manual_max'] is not None:maximum=parameters['manual_max']
-        if parameters['max_coverage_days'] and avg>0:maximum=min(maximum,ceil(avg*parameters['max_coverage_days']))
+        if parameters['max_coverage_days'] and avg>0:maximum=min(maximum,avg*parameters['max_coverage_days'])
     maximum=max(minimum,maximum)
     if sparse and (parameters['manual_min'] is not None or parameters['manual_max'] is not None):method='LIMITES_MANUALES';confidence='BAJA'
     expected_consumption=avg*parameters['review_days'] if method!='REVISION_MANUAL' else 0
-    replenishment_point=ceil(minimum+expected_consumption)
+    replenishment_point=minimum+expected_consumption
     target=maximum if parameters["target_mode"]=="MAXIMUM" else replenishment_point
     # Only explicitly configured limits cap the point; calculated maximum is not a target.
     if parameters['max_coverage_days'] and avg>0:
-        target=max(minimum,min(target,ceil(avg*parameters['max_coverage_days'])))
+        target=max(minimum,min(target,avg*parameters['max_coverage_days']))
     if parameters['manual_max'] is not None:
         target=max(minimum,min(target,parameters['manual_max']))
     if parameters["target_mode"]=="POINT" and target<replenishment_point:
@@ -224,16 +234,16 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
             {'quantity':quantity,'position':position,'minimum':minimum,'horizon_demand':avg*horizon}))
     result={**article,'delegation':delegation,'stock':stock['stock'] if stock else None,'incoming':stock['incoming'] if stock else None,
         'outgoing':stock['outgoing'] if stock else None,'inventory_position':position,'gross_sales':stats['gross_sales'],
-        'returns':stats['returns'],'total_demand':stats['total_demand'],'daily_mean':avg,'daily_std':std,'sales_days':stats['sales_days'],
+        'returns':stats['returns'],'total_demand':stats['total_demand'],'daily_mean':avg,'monthly_mean':stats['monthly_mean'],'monthly_consumption':stats['monthly_consumption'],'daily_std':std,'sales_days':stats['sales_days'],
         'last_sale':stats['last_sale'],'observed_days':stats['days'],'irregular':stats['irregular'],'new_article':stats['new_article'],
         'overstock':overstock,'excess_stock':excess,'no_consumption':stats['total_demand']<=0,'target_mode':parameters['target_mode'],
         'calculation_model':'MAXIMUM_COVERAGE' if parameters['target_mode']=='MAXIMUM' else 'MINIMUM_PLUS_CYCLE_DEMAND','replenishment_point':replenishment_point,'target_stock':target,'expected_cycle_consumption':expected_consumption,'safety_stock':safety,'minimum_stock':minimum,'maximum_stock':maximum,'calculated_quantity':calculated,
         'recommended_quantity':round(quantity,6),'adjusted_quantity':None,'final_quantity':round(quantity,6),'coverage_days':coverage,
         'confidence':confidence,'method':method,'comparables':comparable,'parameters':parameters,'applied_rules':rules,
         'parameter_origins':origins,'recommendations':recs,'manual_parameters':{},'effective_multiple':dispatch_multiple,'quantity_before_rounding':before_rounding,
-        'calculation':{'horizon':horizon,'z':z,'formula':('Stock máximo = ceil(stock mínimo + consumo diario × días de cobertura máxima)' if parameters['target_mode']=='MAXIMUM' else 'Punto de reposición = ceil(stock mínimo + consumo diario × días hasta próxima reposición)') + '; cantidad = max(0, objetivo − disponible previsto).',
-            'safety_formula':'ceil(Z × desviación diaria × sqrt(horizonte))' if method=='REVISION_PERIODICA' else 'Modelo alternativo explicado en método y recomendaciones',
-            'maximum_formula':'ceil(stock mínimo + consumo diario × días de cobertura máxima)', 'minimum_formula':'ceil(consumo diario × plazo de llegada + stock de seguridad)', 'dispatch_days':parameters['review_days'],'lead_days':parameters['lead_days'],'raw_maximum':raw_maximum,'window_start':stats['start'],'window_end':stats['end']}}
+        'calculation':{'horizon':horizon,'z':z,'formula':('Stock máximo = stock mínimo + consumo diario × días de cobertura máxima' if parameters['target_mode']=='MAXIMUM' else 'Punto de reposición = stock mínimo + consumo diario × días hasta próxima reposición') + '; cantidad = max(0, objetivo − disponible previsto).',
+            'safety_formula':'Z × desviación diaria × sqrt(horizonte)' if method=='REVISION_PERIODICA' else 'Modelo alternativo explicado en método y recomendaciones',
+            'maximum_formula':'stock mínimo + consumo diario × días de cobertura máxima', 'minimum_formula':'consumo diario × plazo de llegada + stock de seguridad', 'dispatch_days':parameters['review_days'],'lead_days':parameters['lead_days'],'raw_maximum':raw_maximum,'window_start':stats['start'],'window_end':stats['end']}}
     if include_daily:result['daily_sales']=stats['daily']
     return result
 
@@ -257,8 +267,8 @@ def annotate_central(results,source):
                 stats_cache[history]=demand_statistics(articles[sku],'00',source,params,sales_index)
             stats=stats_cache[history];avg=stats['daily_mean'];std=stats['daily_std']
             risk=params['lead_days']+params['central_reserve_days']
-            safety=ceil(NormalDist().inv_cdf(params['service_level']/100)*std*sqrt(risk))
-            required=ceil(avg*(params['lead_days']+params['central_reserve_days'])+safety)
+            safety=NormalDist().inv_cdf(params['service_level']/100)*std*sqrt(risk)
+            required=avg*(params['lead_days']+params['central_reserve_days'])+safety
             reserve=max(reserve,required);central_avg=max(central_avg,avg);central_std=max(central_std,std)
             reserve_days=max(reserve_days,params['central_reserve_days'])
         valid_stock=stock is not None and stock['stock']>=0 and stock['outgoing']>=0 and stock['incoming']>=0
