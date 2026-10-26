@@ -73,6 +73,8 @@ def current_user(
         allowed = {"/api/v1/account", "/api/v1/account/password", "/api/v1/auth/logout", "/api/v1/auth/activity"}
         if request.url.path not in allowed:
             raise HTTPException(403, "Debes cambiar tu contraseña inicial antes de continuar")
+    from .operator_permissions import check_operator_path
+    check_operator_path(user, db, request.url.path, request.method)
     from .account_permissions import effective_permissions
     permissions = effective_permissions(user, db)
     path = request.url.path

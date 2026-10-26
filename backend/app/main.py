@@ -38,7 +38,7 @@ from .exit_db import fetch_customer_exit_orders, fetch_exit_orders_live
 from .image_admin import router as image_admin_router
 from .image_missing import record_missing_product_image
 from .models import (
-    PickupSettings, AuthSession, Cart, CartItem, Customer, IntegrationOutbox, Notification,
+    OperatorAccess, PickupSettings, AuthSession, Cart, CartItem, Customer, IntegrationOutbox, Notification,
     MaterialArea, MaterialFamily, MaterialProductType, MaterialSubfamily, Order, OrderItem,
     OrderStatusHistory, Product, ProfessionalRegistrationRequest, SyncStatus, User,
 )
@@ -53,6 +53,8 @@ app.include_router(image_admin_router)
 from .customer_delivery import delivery_enabled, validate_delivery
 from .customer_access import router as customer_access_router
 app.include_router(customer_access_router)
+from .operator_access import router as operator_access_router
+app.include_router(operator_access_router)
 from .search_settings import router as search_settings_router, get_search_config
 app.include_router(search_settings_router)
 from .qr_access import router as qr_access_router
@@ -263,7 +265,7 @@ def health():
 @app.post("/api/v1/auth/login")
 def login(data: LoginIn, response: Response, db: Session = Depends(get_db)):
     identifier = data.email.strip().lower()
-    candidates = db.scalars(select(User).where((func.lower(User.email) == identifier) | (func.lower(User.access_code) == identifier) | ((func.lower(User.erp_customer_code) == identifier) & User.role.in_(["CLIENTE", "CLIENTE_ADMIN"]) & User.parent_user_id.is_(None)))).all()
+    candidates = db.scalars(select(User).where((func.lower(User.email) == identifier) | (func.lower(User.access_code) == identifier) | User.id.in_(select(OperatorAccess.user_id).where(func.lower(OperatorAccess.exit_code) == identifier)) | ((func.lower(User.erp_customer_code) == identifier) & User.role.in_(["CLIENTE", "CLIENTE_ADMIN"]) & User.parent_user_id.is_(None)))).all()
     valid = [candidate for candidate in candidates if candidate.active and verify_password(data.password, candidate.password_hash)]
     user = valid[0] if len(valid) == 1 else None
     if not user:

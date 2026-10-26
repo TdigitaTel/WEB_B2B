@@ -176,6 +176,23 @@ def main():
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_products_search_trgm ON products USING gin (normalized_search gin_trgm_ops)"))
     from .seed import seed
     seed()
+    if engine.dialect.name == "postgresql":
+        # La sustitución se realiza solo después de verificar RPA en MCusuarios.
+        # Un fallo de conexión no elimina el único acceso disponible.
+        import logging
+        from .db import SessionLocal
+        from .operator_access import provision_rpa
+        from .models import OperatorAccess, User
+        from sqlalchemy import select, func
+        with SessionLocal() as db:
+            ready = db.scalar(select(OperatorAccess.user_id).join(User, User.id == OperatorAccess.user_id).where(func.lower(User.access_code) == 'rpa'))
+            if ready is None:
+                try:
+                    provision_rpa(db)
+                except Exception:
+                    db.rollback()
+                    logging.getLogger(__name__).warning('No se pudo trasladar el operador a RPA. Revisar MCusuarios y ejecutar scripts/provision_rpa.py; se conserva el acceso anterior.', exc_info=True)
+
 
 
 if __name__ == "__main__":

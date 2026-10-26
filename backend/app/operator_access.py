@@ -1,0 +1,196 @@
+"""Accesos web para usuarios de MCusuarios. Credenciales independientes de EXIT."""
+from datetime import datetime, timedelta, timezone
+import secrets
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import select, func, update
+from sqlalchemy.exc import IntegrityError
+from .auth import audit, hash_password, require_roles
+from .config import settings
+from .db import get_db
+from .models import User, OperatorAccess, AuthSession, CustomerQrAccess
+from .exit_users import fetch_exit_users, fetch_exit_user
+from .operator_permissions import MODULES
+from .delegations import fetch_delegations
+
+router = APIRouter(prefix='/api/v1/store/operator-access', tags=['Accesos de usuarios'])
+manager = require_roles('ADMIN', 'OPERADOR_TIENDA')
+
+class AccessIn(BaseModel):
+    code: str = Field(min_length=1, max_length=200)
+    active: bool = True
+    company_code: int
+    delegation_code: str = Field(min_length=1, max_length=40)
+    permissions: dict[str, bool]
+
+    @field_validator('permissions')
+    @classmethod
+    def valid_permissions(cls, value):
+        if set(value) - set(MODULES):
+            raise ValueError('Opción de permisos desconocida')
+        if not any(value.values()):
+            raise ValueError('Selecciona al menos una opción de la web')
+        return {key: value.get(key, False) for key in MODULES}
+
+class PasswordIn(BaseModel):
+    code: str = Field(min_length=1, max_length=200)
+    password: str | None = Field(None, min_length=6, max_length=200)
+
+
+def lookup(code):
+    try:
+        row = fetch_exit_user(code.strip())
+    except Exception as exc:
+        raise HTTPException(503, 'No se pudo consultar MCusuarios de EXIT. Revisa la conexión y el mapa de campos.') from exc
+    if not row:
+        raise HTTPException(404, 'El usuario no existe o su código no es único en MCusuarios')
+    return row
+
+
+def revoke(db, account):
+    db.execute(update(AuthSession).where(AuthSession.user_id == account.id).values(revoked=True))
+    db.execute(update(CustomerQrAccess).where(CustomerQrAccess.user_id == account.id).values(active=False))
+
+
+def linked(db, code):
+    return db.scalar(select(OperatorAccess).where(func.lower(OperatorAccess.exit_code) == code.strip().lower()).with_for_update())
+
+
+def user_payload(source, account=None, access=None):
+    return {**source, 'configured': access is not None, 'enabled': bool(account and account.active), 'login': account.access_code or account.email if account else source['username'],
+            'company_code': account.company_code if account else None, 'delegation_code': account.delegation_code if account else None,
+            'permissions': access.permissions if access else dict.fromkeys(MODULES, False),
+            'must_change_password': bool(account and account.must_change_password)}
+
+
+def commit(db):
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(409, 'El código o el usuario de acceso ya está asignado. Actualiza la lista.') from exc
+
+
+@router.get('')
+def listing(q: str = Query('', max_length=200), page: int = Query(1, ge=1), enabled_only: bool = False,
+            user: User = Depends(manager), db=Depends(get_db)):
+    size = 25
+    try:
+        delegations = fetch_delegations()
+        if enabled_only:
+            statement = select(OperatorAccess, User).join(User, User.id == OperatorAccess.user_id).where(User.active.is_(True))
+            if q.strip():
+                term = q.strip().lower()
+                statement = statement.where(func.lower(OperatorAccess.exit_code).contains(term, autoescape=True) | func.lower(User.email).contains(term, autoescape=True) | func.lower(User.full_name).contains(term, autoescape=True))
+            total = db.scalar(select(func.count()).select_from(statement.subquery())) or 0
+            items = [user_payload({'code': access.exit_code, 'username': account.access_code or account.email, 'name': account.full_name}, account, access)
+                     for access, account in db.execute(statement.order_by(OperatorAccess.exit_code).offset((page-1)*size).limit(size))]
+        else:
+            result = fetch_exit_users(q, page, size)
+            total = result['total']; items = []
+            codes = [row['code'] for row in result['items']]
+            accounts = {access.exit_code.casefold(): (account, access) for access, account in db.execute(select(OperatorAccess, User).join(User, User.id == OperatorAccess.user_id).where(OperatorAccess.exit_code.in_(codes)))} if codes else {}
+            for source in result['items']:
+                items.append(user_payload(source, *accounts.get(source['code'].casefold(), (None, None))))
+    except Exception as exc:
+        raise HTTPException(503, 'No se pudo leer MCusuarios o las delegaciones de EXIT. Revisa la conexión y los campos configurados.') from exc
+    return {'items': items, 'total': total, 'page_size': size, 'modules': MODULES,
+            'delegations': [{'company': d.company, 'code': d.code, 'name': d.name} for d in delegations]}
+
+
+@router.put('')
+def save(data: AccessIn, user: User = Depends(manager), db=Depends(get_db)):
+    source = lookup(data.code)
+    try:
+        valid_store = any(d.company == data.company_code and d.code == data.delegation_code for d in fetch_delegations())
+    except Exception as exc:
+        raise HTTPException(503, 'No se pudieron consultar las sedes de EXIT') from exc
+    if not valid_store:
+        raise HTTPException(422, 'Selecciona una sede válida de EXIT')
+    access = linked(db, source['code'])
+    account = db.get(User, access.user_id) if access else None
+    if account and account.id == user.id and (not data.active or not data.permissions.get('users')):
+        raise HTTPException(409, 'No puedes deshabilitar tu propio acceso ni quitarte la gestión de usuarios')
+    password = None
+    if account is None:
+        login = source['username'].strip().lower()
+        if not login or len(login) > 40:
+            raise HTTPException(422, 'El usuario de acceso de EXIT debe tener entre 1 y 40 caracteres')
+        collision = db.scalar(select(User.id).where((func.lower(User.email) == login) | (func.lower(User.access_code) == login)))
+        if collision:
+            raise HTTPException(409, 'El usuario de acceso ya pertenece a otra cuenta')
+        password = secrets.token_urlsafe(12)
+        account = User(email=login, access_code=source['username'], full_name=source['name'][:160] or source['username'],
+                       role='OPERADOR_TIENDA', password_hash=hash_password(password), must_change_password=True,
+                       initial_password_expires_at=datetime.now(timezone.utc)+timedelta(hours=settings.initial_password_ttl_hours))
+        db.add(account)
+        try:
+            db.flush()
+        except IntegrityError as exc:
+            db.rollback()
+            raise HTTPException(409, 'El usuario de acceso ya pertenece a otra cuenta') from exc
+        access = OperatorAccess(user_id=account.id, exit_code=source['code'], permissions={})
+        db.add(access)
+    account.company_code = data.company_code; account.delegation_code = data.delegation_code
+    account.full_name = source['name'][:160] or source['username']
+    account.active = data.active
+    access.permissions = data.permissions
+    revoke(db, account)
+    audit(db, user, 'OPERATOR_ACCESS_SAVED', 'USER', account.public_id, {'exit_code': source['code'], 'active': data.active, 'permissions': data.permissions, 'company': data.company_code, 'delegation': data.delegation_code})
+    commit(db)
+    return {**user_payload(source, account, access), 'initial_password': password}
+
+
+@router.post('/password')
+def password(data: PasswordIn, user: User = Depends(manager), db=Depends(get_db)):
+    source = lookup(data.code)
+    access = linked(db, source['code'])
+    account = db.get(User, access.user_id) if access else None
+    if not account or not account.active:
+        raise HTTPException(409, 'Habilita primero el acceso del usuario')
+    if account.id == user.id:
+        raise HTTPException(409, 'Para cambiar tu propia contraseña utiliza Mi cuenta')
+    value = data.password or secrets.token_urlsafe(12)
+    account.password_hash = hash_password(value)
+    account.must_change_password = True
+    account.initial_password_ciphertext = None
+    account.initial_password_expires_at = datetime.now(timezone.utc)+timedelta(hours=settings.initial_password_ttl_hours)
+    revoke(db, account)
+    audit(db, user, 'OPERATOR_PASSWORD_RESET', 'USER', account.public_id, {'exit_code': source['code']})
+    commit(db)
+    return {'login': account.access_code or account.email, 'initial_password': value, 'expires_at': account.initial_password_expires_at}
+
+
+def provision_rpa(db):
+    """Traslado inicial, una sola vez. Se verifica RPA en EXIT antes de tocar el acceso antiguo."""
+    rows = fetch_exit_users(exact_identity='RPA', page_size=2)['items']
+    matches = [row for row in rows if row['username'].casefold() == 'rpa' or row['code'].casefold() == 'rpa']
+    if len(matches) != 1:
+        raise RuntimeError('No se encontró un único usuario RPA en MCusuarios')
+    source = matches[0]
+    existing = linked(db, source['code'])
+    if existing:
+        return False  # No restablecer claves, permisos ni accesos deshabilitados al reiniciar.
+    legacy = db.scalar(select(User).where(func.lower(User.email) == 'operador@bermudez.test'))
+    collisions = db.scalar(select(User.id).where((func.lower(User.email) == 'rpa') | (func.lower(User.access_code) == 'rpa')))
+    if collisions:
+        raise RuntimeError('RPA ya está asignado a otra cuenta; revisar sin sobrescribirla')
+    stores = fetch_delegations()
+    if not stores:
+        raise RuntimeError('EXIT no devuelve delegaciones para RPA')
+    account = legacy or User(role='OPERADOR_TIENDA', email='rpa', password_hash='', full_name='RPA')
+    if legacy and legacy.role != 'OPERADOR_TIENDA':
+        raise RuntimeError('La cuenta anterior no es un operador')
+    store = next((d for d in stores if legacy and (d.company, d.code) == (legacy.company_code, legacy.delegation_code)), stores[0])
+    account.email = 'rpa'; account.access_code = 'RPA'; account.full_name = source['name'][:160] or 'RPA'
+    account.company_code = store.company; account.delegation_code = store.code
+    account.password_hash = hash_password('123456'); account.active = True
+    account.must_change_password = True
+    account.initial_password_ciphertext = None
+    account.initial_password_expires_at = None
+    db.add(account); db.flush()
+    db.add(OperatorAccess(user_id=account.id, exit_code=source['code'], permissions=dict.fromkeys(MODULES, True)))
+    revoke(db, account)
+    audit(db, None, 'OPERATOR_RPA_MIGRATED', 'USER', account.public_id, {'exit_code': source['code'], 'legacy_reused': legacy is not None})
+    db.commit()
+    return True

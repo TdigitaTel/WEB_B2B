@@ -452,3 +452,10 @@ class ReplenishmentSettings(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(primary_key=True)
     article_limit: Mapped[int] = mapped_column(Integer, default=20000)
     updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+
+
+class OperatorAccess(Base, TimestampMixin):
+    __tablename__ = "operator_access"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    exit_code: Mapped[str] = mapped_column(String(200), unique=True, index=True)
+    permissions: Mapped[dict] = mapped_column(JSON, default=dict)
