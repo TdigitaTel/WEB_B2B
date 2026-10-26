@@ -48,4 +48,15 @@ def can_operate_delegation(user, db, company, delegation):
     if user.role != 'OPERADOR_TIENDA':
         return False
     access = db.get(OperatorAccess, user.id)
-    return bool(access and access.permissions.get('all_delegations') is True) or (user.company_code, user.delegation_code) == (company, delegation)
+    return bool(access and (access.permissions.get('all_delegations') is True or
+        f'{company}:{delegation}' in access.permissions.get('delegation_ids', []))) or (user.company_code, user.delegation_code) == (company, delegation)
+
+
+def delegation_scope(user, db):
+    if user.role == 'ADMIN':return None
+    access = db.get(OperatorAccess, user.id)
+    if access and access.permissions.get('all_delegations') is True:return None
+    ids = set(access.permissions.get('delegation_ids', [])) if access else set()
+    if user.company_code is not None and user.delegation_code is not None:
+        ids.add(f'{user.company_code}:{user.delegation_code}')
+    return [tuple(value.split(':', 1)) for value in ids]

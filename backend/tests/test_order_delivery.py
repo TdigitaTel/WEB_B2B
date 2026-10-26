@@ -138,7 +138,7 @@ def test_printed_exit_order_stays_attended_until_web_confirmation(monkeypatch):
     assert same_time(live['closed_at'], attended_stamp)
 
 
-def test_non_web_uses_exit_delivered_state_and_date(monkeypatch):
+def test_non_web_uses_exit_delivered_state_and_date(monkeypatch, operator_with_almeiras_access):
     from app import main as module
     operator=TestClient(app)
     operator.post('/api/v1/auth/login',json={'email':'operador@bermudez.test','password':'123456'})

@@ -24,6 +24,7 @@ class AccessIn(BaseModel):
     company_code: int
     delegation_code: str = Field(min_length=1, max_length=40)
     permissions: dict[str, bool]
+    delegation_ids: list[str] = Field(default_factory=list, max_length=200)
 
     @field_validator('permissions')
     @classmethod
@@ -62,7 +63,8 @@ def linked(db, code):
 def user_payload(source, account=None, access=None):
     return {**source, 'configured': access is not None, 'enabled': bool(account and account.active), 'login': account.access_code or account.email if account else source['username'],
             'company_code': account.company_code if account else None, 'delegation_code': account.delegation_code if account else None,
-            'permissions': access.permissions if access else dict.fromkeys(MODULES, False),
+            'permissions': {key: access.permissions.get(key) is True for key in MODULES} if access else dict.fromkeys(MODULES, False),
+            'delegation_ids': access.permissions.get('delegation_ids', []) if access else [],
             'must_change_password': bool(account and account.must_change_password)}
 
 
@@ -118,7 +120,11 @@ def listing(q: str = Query('', max_length=200), page: int = Query(1, ge=1), enab
 def save(data: AccessIn, user: User = Depends(manager), db=Depends(get_db)):
     source = lookup(data.code)
     try:
-        valid_store = any(d.company == data.company_code and d.code == data.delegation_code for d in fetch_delegations())
+        stores = fetch_delegations()
+        valid_store = any(d.company == data.company_code and d.code == data.delegation_code for d in stores)
+        valid_ids = {f'{d.company}:{d.code}' for d in stores}
+        if set(data.delegation_ids) - valid_ids:raise HTTPException(422, 'Selecciona delegaciones válidas de EXIT')
+    except HTTPException:raise
     except Exception as exc:
         raise HTTPException(503, 'No se pudieron consultar las sedes de EXIT') from exc
     if not valid_store:
@@ -154,9 +160,9 @@ def save(data: AccessIn, user: User = Depends(manager), db=Depends(get_db)):
     account.company_code = data.company_code; account.delegation_code = data.delegation_code
     account.full_name = source['name'][:160] or source['username']
     account.active = data.active
-    access.permissions = data.permissions
+    access.permissions = {**data.permissions, 'delegation_ids': sorted(set(data.delegation_ids))}
     revoke(db, account)
-    audit(db, user, 'OPERATOR_ACCESS_SAVED', 'USER', account.public_id, {'exit_code': source['code'], 'active': data.active, 'permissions': data.permissions, 'company': data.company_code, 'delegation': data.delegation_code})
+    audit(db, user, 'OPERATOR_ACCESS_SAVED', 'USER', account.public_id, {'exit_code': source['code'], 'active': data.active, 'permissions': data.permissions, 'delegation_ids': data.delegation_ids, 'company': data.company_code, 'delegation': data.delegation_code})
     commit(db)
     return {**user_payload(source, account, access), 'initial_password': password}
 
