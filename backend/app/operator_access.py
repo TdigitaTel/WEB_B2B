@@ -1,6 +1,7 @@
 """Accesos web para usuarios de MCusuarios. Credenciales independientes de EXIT."""
 from datetime import datetime, timedelta, timezone
 import secrets
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select, func, update
@@ -15,6 +16,7 @@ from .delegations import fetch_delegations
 
 router = APIRouter(prefix='/api/v1/store/operator-access', tags=['Accesos de usuarios'])
 manager = require_roles('ADMIN', 'OPERADOR_TIENDA')
+logger = logging.getLogger(__name__)
 
 class AccessIn(BaseModel):
     code: str = Field(min_length=1, max_length=200)
@@ -41,7 +43,8 @@ def lookup(code):
     try:
         row = fetch_exit_user(code.strip())
     except Exception as exc:
-        raise HTTPException(503, 'No se pudo consultar MCusuarios de EXIT. Revisa la conexión y el mapa de campos.') from exc
+        logger.exception('Error consultando CodigoUsuario, NombreCorto y Correo de MCUsuarios')
+        raise HTTPException(503, 'No se pudo consultar MCUsuarios de EXIT (CodigoUsuario, NombreCorto, Correo). Revisa la conexión y el registro de la API.') from exc
     if not row:
         raise HTTPException(404, 'El usuario no existe o su código no es único en MCusuarios')
     return row
@@ -76,25 +79,38 @@ def listing(q: str = Query('', max_length=200), page: int = Query(1, ge=1), enab
             user: User = Depends(manager), db=Depends(get_db)):
     size = 25
     try:
-        delegations = fetch_delegations()
         if enabled_only:
             statement = select(OperatorAccess, User).join(User, User.id == OperatorAccess.user_id).where(User.active.is_(True))
             if q.strip():
                 term = q.strip().lower()
                 statement = statement.where(func.lower(OperatorAccess.exit_code).contains(term, autoescape=True) | func.lower(User.email).contains(term, autoescape=True) | func.lower(User.full_name).contains(term, autoescape=True))
             total = db.scalar(select(func.count()).select_from(statement.subquery())) or 0
-            items = [user_payload({'code': access.exit_code, 'username': account.access_code or account.email, 'name': account.full_name}, account, access)
+            items = [user_payload({'code': access.exit_code, 'username': account.access_code or account.email, 'name': account.full_name, 'email': account.email if '@' in account.email else ''}, account, access)
                      for access, account in db.execute(statement.order_by(OperatorAccess.exit_code).offset((page-1)*size).limit(size))]
         else:
-            result = fetch_exit_users(q, page, size)
+            try:
+                result = fetch_exit_users(q, page, size)
+            except Exception as exc:
+                logger.exception('Fallo consultando MCUsuarios: CodigoUsuario, NombreCorto, Correo')
+                raise HTTPException(503, 'No se pudo consultar MCUsuarios de EXIT (CodigoUsuario, NombreCorto, Correo). Revisa la conexión y el registro de la API.') from exc
             total = result['total']; items = []
             codes = [row['code'] for row in result['items']]
             accounts = {access.exit_code.casefold(): (account, access) for access, account in db.execute(select(OperatorAccess, User).join(User, User.id == OperatorAccess.user_id).where(OperatorAccess.exit_code.in_(codes)))} if codes else {}
             for source in result['items']:
                 items.append(user_payload(source, *accounts.get(source['code'].casefold(), (None, None))))
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(503, 'No se pudo leer MCusuarios o las delegaciones de EXIT. Revisa la conexión y los campos configurados.') from exc
-    return {'items': items, 'total': total, 'page_size': size, 'modules': MODULES,
+        logger.exception('Error consultando los accesos web en PostgreSQL')
+        raise HTTPException(503, 'No se pudieron consultar los accesos web en PostgreSQL. Revisa el registro de la API.') from exc
+    warning = None
+    try:
+        delegations = fetch_delegations()
+    except Exception:
+        logger.exception('Usuarios cargados, pero fallo al consultar las delegaciones de EXIT')
+        delegations = []
+        warning = 'Usuarios cargados. No se pudieron consultar las sedes de EXIT; no se puede guardar la asignación de sede hasta recuperar esa consulta.'
+    return {'items': items, 'total': total, 'page_size': size, 'modules': MODULES, 'warning': warning,
             'delegations': [{'company': d.company, 'code': d.code, 'name': d.name} for d in delegations]}
 
 
@@ -112,15 +128,17 @@ def save(data: AccessIn, user: User = Depends(manager), db=Depends(get_db)):
     if account and account.id == user.id and (not data.active or not data.permissions.get('users')):
         raise HTTPException(409, 'No puedes deshabilitar tu propio acceso ni quitarte la gestión de usuarios')
     password = None
+    login = source['username'].strip()
+    email = (source.get('email') or login).strip().lower()
+    if not login or len(login)>40 or not email or len(email)>200:
+        raise HTTPException(422, 'NombreCorto debe tener entre 1 y 40 caracteres y Correo un máximo de 200')
+    collision_query = select(User.id).where((func.lower(User.email).in_([login.lower(),email])) | (func.lower(User.access_code).in_([login.lower(),email])))
+    if account:collision_query = collision_query.where(User.id != account.id)
+    if db.scalar(collision_query):
+        raise HTTPException(409, 'NombreCorto o Correo ya pertenece a otra cuenta; revisa los datos en EXIT')
     if account is None:
-        login = source['username'].strip().lower()
-        if not login or len(login) > 40:
-            raise HTTPException(422, 'El usuario de acceso de EXIT debe tener entre 1 y 40 caracteres')
-        collision = db.scalar(select(User.id).where((func.lower(User.email) == login) | (func.lower(User.access_code) == login)))
-        if collision:
-            raise HTTPException(409, 'El usuario de acceso ya pertenece a otra cuenta')
         password = secrets.token_urlsafe(12)
-        account = User(email=login, access_code=source['username'], full_name=source['name'][:160] or source['username'],
+        account = User(email=email, access_code=login, full_name=source['name'][:160] or login,
                        role='OPERADOR_TIENDA', password_hash=hash_password(password), must_change_password=True,
                        initial_password_expires_at=datetime.now(timezone.utc)+timedelta(hours=settings.initial_password_ttl_hours))
         db.add(account)
@@ -128,9 +146,11 @@ def save(data: AccessIn, user: User = Depends(manager), db=Depends(get_db)):
             db.flush()
         except IntegrityError as exc:
             db.rollback()
-            raise HTTPException(409, 'El usuario de acceso ya pertenece a otra cuenta') from exc
+            raise HTTPException(409, 'El usuario o correo de acceso ya pertenece a otra cuenta') from exc
         access = OperatorAccess(user_id=account.id, exit_code=source['code'], permissions={})
         db.add(access)
+    account.email = email
+    account.access_code = login
     account.company_code = data.company_code; account.delegation_code = data.delegation_code
     account.full_name = source['name'][:160] or source['username']
     account.active = data.active
@@ -172,7 +192,11 @@ def provision_rpa(db):
     if existing:
         return False  # No restablecer claves, permisos ni accesos deshabilitados al reiniciar.
     legacy = db.scalar(select(User).where(func.lower(User.email) == 'operador@bermudez.test'))
-    collisions = db.scalar(select(User.id).where((func.lower(User.email) == 'rpa') | (func.lower(User.access_code) == 'rpa')))
+    email = (source.get('email') or 'rpa').strip().lower()
+    if len(email)>200:raise RuntimeError('El correo de RPA supera 200 caracteres')
+    collision_query = select(User.id).where((func.lower(User.email).in_(['rpa',email])) | (func.lower(User.access_code).in_(['rpa',email])))
+    if legacy:collision_query = collision_query.where(User.id != legacy.id)
+    collisions = db.scalar(collision_query)
     if collisions:
         raise RuntimeError('RPA ya está asignado a otra cuenta; revisar sin sobrescribirla')
     stores = fetch_delegations()
@@ -182,7 +206,7 @@ def provision_rpa(db):
     if legacy and legacy.role != 'OPERADOR_TIENDA':
         raise RuntimeError('La cuenta anterior no es un operador')
     store = next((d for d in stores if legacy and (d.company, d.code) == (legacy.company_code, legacy.delegation_code)), stores[0])
-    account.email = 'rpa'; account.access_code = 'RPA'; account.full_name = source['name'][:160] or 'RPA'
+    account.email = email; account.access_code = 'RPA'; account.full_name = source['name'][:160] or 'RPA'
     account.company_code = store.company; account.delegation_code = store.code
     account.password_hash = hash_password('123456'); account.active = True
     account.must_change_password = True
