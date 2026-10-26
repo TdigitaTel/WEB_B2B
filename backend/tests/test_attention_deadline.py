@@ -1,3 +1,5 @@
+import pytest
+pytestmark = pytest.mark.usefixtures("operator_with_almeiras_access")
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo

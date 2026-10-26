@@ -1,3 +1,4 @@
+from .operator_permissions import can_operate_delegation, delegation_scope
 from datetime import date, datetime, timezone, timedelta
 from decimal import Decimal
 from functools import lru_cache
@@ -13,7 +14,7 @@ from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
-from sqlalchemy import func, select, text, update
+from sqlalchemy import func, select, text, update, or_
 from sqlalchemy.orm import Session
 
 from .auth import audit, create_access_token, current_user, hash_password, require_roles, verify_password
@@ -1298,8 +1299,16 @@ def web_store_orders(db: Session, user: User, date_from: date | None, date_to: d
     if date_from and date_to and date_from > date_to:
         raise HTTPException(422, "La fecha desde no puede ser posterior a la fecha hasta")
     query = select(Order).where(Order.origen_pedido == "B2B")
+    scope = delegation_scope(user, db)
+    if scope is not None:
+        query = query.where(or_(*[(Order.company_code == int(company)) & (Order.delegation_code == code) for company, code in scope]) if scope else Order.id == -1)
     if delegation.strip().upper() != "TODAS":
-        query = query.where(Order.delegation_code == delegation.strip())
+        reference = delegation.strip()
+        if ':' in reference:
+            company, code = reference.split(':', 1)
+            if not company.isdigit():raise HTTPException(422, 'Empresa inválida')
+            query = query.where(Order.company_code == int(company), Order.delegation_code == code)
+        else:query = query.where(Order.delegation_code == reference)
     if date_from:
         query = query.where(func.date(Order.created_at) >= date_from)
     if date_to:
@@ -1377,6 +1386,11 @@ def web_store_orders(db: Session, user: User, date_from: date | None, date_to: d
     return result
 
 
+@app.get("/api/v1/store/orders/delegations")
+def order_delegations(user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
+    return [row for row in stores(user, db) if can_operate_delegation(user, db, row['company_code'], row['code'])]
+
+
 @app.get("/api/v1/store/orders")
 def store_orders(view: str = Query("active_kardex", pattern="^(active_kardex|active_sga|attended|web)$"),
                  date_from: date | None = None, date_to: date | None = None,
@@ -1387,6 +1401,7 @@ def store_orders(view: str = Query("active_kardex", pattern="^(active_kardex|act
         return web_store_orders(db, user, date_from, date_to, state, delegation)
     try:
         records = fetch_exit_orders_live(view, date_from, date_to)
+        records = [record for record in records if can_operate_delegation(user, db, record.company_code, record.store_code)]
     except Exception:
         if view != "web":
             raise
@@ -1474,9 +1489,9 @@ def store_orders(view: str = Query("active_kardex", pattern="^(active_kardex|act
     return result
 
 
-def operator_web_order(db: Session, order_id: str) -> Order:
+def operator_web_order(db: Session, order_id: str, user: User) -> Order:
     order = db.scalar(select(Order).where(Order.public_id == order_id, Order.origen_pedido == "B2B").with_for_update())
-    if not order:
+    if not order or not can_operate_delegation(user, db, order.company_code, order.delegation_code):
         raise HTTPException(404, "Pedido WEB no encontrado")
     return order
 
@@ -1485,7 +1500,7 @@ def operator_web_order(db: Session, order_id: str) -> Order:
 def operator_order_delivery_note(order_id: str, number: str = Query(min_length=1, max_length=100),
         user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
     order = db.scalar(select(Order).where(Order.public_id == order_id, Order.origen_pedido == "B2B"))
-    if not order or not order.nro_pedido_exit or not order.customer_code:
+    if not order or not can_operate_delegation(user, db, order.company_code, order.delegation_code) or not order.nro_pedido_exit or not order.customer_code:
         raise HTTPException(404, "Pedido EXIT no encontrado")
     def key(value):
         return str(value or "").replace("~", "/").replace("-", "/").strip().upper()
@@ -1504,7 +1519,7 @@ def operator_order_delivery_note(order_id: str, number: str = Query(min_length=1
 def change_web_pickup(order_id: str, data: PickupChange,
                       user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
     order = db.scalar(select(Order).where(Order.public_id == order_id, Order.origen_pedido == "B2B").with_for_update())
-    if not order:
+    if not order or not can_operate_delegation(user, db, order.company_code, order.delegation_code):
         raise HTTPException(404, "Pedido WEB no encontrado")
     if order.delivered_at or order.estado_registro_exit in {"ENTREGADO", "FACTURADO"}:
         raise HTTPException(409, "No se puede cambiar la recogida de un pedido ya entregado")
@@ -1529,7 +1544,7 @@ def change_web_pickup(order_id: str, data: PickupChange,
 @app.patch("/api/v1/store/orders/{order_id}/registration")
 def change_web_registration(order_id: str, data: WebOrderRegistrationChange,
                             user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
-    order = operator_web_order(db, order_id)
+    order = operator_web_order(db, order_id, user)
     if data.state == "PENDIENTE" and (order.estado_registro_exit not in {"REGISTRADO", "BLOQUEADO"} or order.delivered_at):
         raise HTTPException(409, "Solo se puede volver a PENDIENTE desde REGISTRADO o BLOQUEADO y sin entrega confirmada")
     previous = {"state": order.estado_registro_exit, "exit_order_number": order.nro_pedido_exit, "exit_registered_at": order.fecha_registro_exit.isoformat() if order.fecha_registro_exit else None}
@@ -1594,7 +1609,7 @@ def change_web_registration(order_id: str, data: WebOrderRegistrationChange,
 
 @app.delete("/api/v1/store/orders/{order_id}")
 def delete_operator_web_order(order_id: str, user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
-    order = operator_web_order(db, order_id)
+    order = operator_web_order(db, order_id, user)
     if order.estado_registro_exit != "PENDIENTE" or order.nro_pedido_exit:
         raise HTTPException(409, "Solo se pueden eliminar pedidos WEB pendientes sin vínculo EXIT")
     number = order.order_number
@@ -1615,7 +1630,7 @@ def delete_operator_web_order(order_id: str, user: User = Depends(require_roles(
 @app.post("/api/v1/store/orders/{order_id}/retry")
 def retry_web_order(order_id: str, user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
     order = db.scalar(select(Order).where(Order.public_id == order_id).with_for_update())
-    if not order or (user.role == "OPERADOR_TIENDA" and (order.company_code, order.delegation_code) != (user.company_code, user.delegation_code)):
+    if not order or (not can_operate_delegation(user, db, order.company_code, order.delegation_code)):
         raise HTTPException(404, "Pedido no encontrado")
     if order.origen_pedido != "B2B" or order.nro_pedido_exit or order.delivered_at or order.estado_registro_exit not in {"PENDIENTE", "REGISTRADO", "EN_PROCESO"}:
         raise HTTPException(409, "Solo se pueden reactivar pedidos WEB sin registro en EXIT")
@@ -1649,13 +1664,13 @@ def confirm_delivery(data: DeliveryConfirmation, user: User = Depends(require_ro
         if not record or "PEDIDOGENERADOWEBB2B" not in "".join(str(record.auxiliary_reference or "").upper().split()):
             raise HTTPException(404, "Pedido WEB no encontrado")
         store = resolve_delegation(record.store_code, company_code=record.company_code)
-        if not store or (user.role == "OPERADOR_TIENDA" and (store.company, store.code) != (user.company_code, user.delegation_code)):
+        if not store or (not can_operate_delegation(user, db, store.company, store.code)):
             raise HTTPException(404, "Pedido no encontrado")
         linked = db.scalar(select(Order).where(Order.order_number == record.customer_reference, Order.origen_pedido == "B2B")) if record.customer_reference else None
         if linked:
             record = record.model_copy(update={"web_order_number": linked.order_number})
         order = upsert_exit_order(db, record, user)
-    if user.role == "OPERADOR_TIENDA" and (order.company_code, order.delegation_code) != (user.company_code, user.delegation_code):
+    if not can_operate_delegation(user, db, order.company_code, order.delegation_code):
         raise HTTPException(404, "Pedido no encontrado")
     if order.delivered_at:
         return order_payload(order, db, True)
@@ -1675,7 +1690,7 @@ def confirm_delivery(data: DeliveryConfirmation, user: User = Depends(require_ro
 @app.post("/api/v1/store/orders/{order_id}/transitions")
 def transition(order_id: str, data: StatusChange, user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
     order = db.scalar(select(Order).where(Order.public_id == order_id))
-    if not order or (user.role == "OPERADOR_TIENDA" and (order.company_code, order.delegation_code) != (user.company_code, user.delegation_code)): raise HTTPException(404, "Pedido no encontrado")
+    if not order or (not can_operate_delegation(user, db, order.company_code, order.delegation_code)): raise HTTPException(404, "Pedido no encontrado")
     new_status = data.estado_registro_exit.strip().upper()
     if new_status not in ALLOWED_TRANSITIONS.get(order.estado_registro_exit, set()):
         raise HTTPException(409, f"No se puede pasar de {order.estado_registro_exit} a {new_status}")

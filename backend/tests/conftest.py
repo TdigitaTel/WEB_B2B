@@ -180,3 +180,30 @@ def classified_catalog():
     with SessionLocal() as db:
         for row in db.scalars(select(Product).where(Product.id.in_(ids))).all():row.material_area_id=None
         db.commit()
+
+
+@pytest.fixture
+def operator_with_almeiras_access():
+    """Pruebas funcionales antiguas autorizan expresamente la sede de sus pedidos."""
+    from sqlalchemy import select
+    from app.db import SessionLocal
+    from app.models import User, OperatorAccess
+    with SessionLocal() as db:
+        actor=db.scalar(select(User).where(User.email=='operador@bermudez.test'))
+        access=db.get(OperatorAccess,actor.id)
+        previous=dict(access.permissions) if access else None
+        if access is None:
+            from app.operator_permissions import MODULES
+            access=OperatorAccess(user_id=actor.id,exit_code='TEST-SCOPE',permissions={key:key!='all_delegations' for key in MODULES})
+            db.add(access)
+        from app.delegations import fetch_delegations
+        allowed=[f'{d.company}:{d.code}' for d in fetch_delegations()]
+        access.permissions={**access.permissions,'delegation_ids':[*allowed,f'{actor.company_code}:00',f'{actor.company_code}:01']}
+        pk=actor.id;db.commit()
+    try:yield
+    finally:
+        with SessionLocal() as db:
+            access=db.get(OperatorAccess,pk)
+            if previous is None:db.delete(access)
+            else:access.permissions=previous
+            db.commit()
