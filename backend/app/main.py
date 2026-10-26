@@ -28,7 +28,7 @@ from .kardex_timing import fetch_kardex_timings, sales_order_number
 from .order_timeline import exit_events, sync_history, instant, dispatch_timing, is_web_order
 from .delegations import fetch_delegations, resolve_delegation
 from .erp_db import (
-    fetch_catalog_articles, fetch_catalog_articles_by_codes,
+    fetch_catalog_articles, fetch_catalog_articles_by_codes, fetch_catalog_brands,
     fetch_customer, fetch_customer_delivery_notes, fetch_customer_delivery_statuses, fetch_customer_invoices,
     fetch_delivery_statuses_for_orders,
     fetch_customer_favorite_articles, fetch_product_image, fetch_product_prices,
@@ -61,6 +61,10 @@ from .subusers import router as subusers_router
 from .account_permissions import identity, principal_for
 from .price_visibility import protect_payload
 app.include_router(subusers_router)
+from .replenishment import router as replenishment_router
+app.include_router(replenishment_router)
+from .login_appearance import router as login_appearance_router
+app.include_router(login_appearance_router)
 logger = logging.getLogger(__name__)
 
 @lru_cache(maxsize=2000)
@@ -346,6 +350,15 @@ def stores(user: User = Depends(current_user), db: Session = Depends(get_db)):
     return [{"id": s.id, "code": s.code, "name": s.name, "address": s.address,
              "company_code": s.company, "warehouse_code": s.warehouse_code,
              "warehouse_name": s.warehouse_name} for s in live_delegations()]
+
+
+@app.get("/api/v1/store/catalog-brands")
+def catalog_brands(user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN"))):
+    try:
+        return fetch_catalog_brands()
+    except Exception as exc:
+        logger.exception("No se pudieron consultar las marcas de EXIT")
+        raise HTTPException(503, "No se pudieron consultar las marcas de EXIT") from exc
 
 
 @app.get("/api/v1/products")
@@ -1515,8 +1528,8 @@ def change_web_pickup(order_id: str, data: PickupChange,
 def change_web_registration(order_id: str, data: WebOrderRegistrationChange,
                             user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
     order = operator_web_order(db, order_id)
-    if data.state == "PENDIENTE" and (order.estado_registro_exit != "REGISTRADO" or order.delivered_at):
-        raise HTTPException(409, "Solo se puede volver a PENDIENTE desde REGISTRADO y sin entrega confirmada")
+    if data.state == "PENDIENTE" and (order.estado_registro_exit not in {"REGISTRADO", "BLOQUEADO"} or order.delivered_at):
+        raise HTTPException(409, "Solo se puede volver a PENDIENTE desde REGISTRADO o BLOQUEADO y sin entrega confirmada")
     previous = {"state": order.estado_registro_exit, "exit_order_number": order.nro_pedido_exit, "exit_registered_at": order.fecha_registro_exit.isoformat() if order.fecha_registro_exit else None}
     number = (data.exit_order_number or "").strip().replace("~", "/").upper()
     if data.state == "REGISTRADO":

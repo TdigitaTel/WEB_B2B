@@ -3,7 +3,7 @@ import re
 from datetime import date
 
 from .config import settings
-from .erp_schema import ARTICLE, CUSTOMER, CUSTOMER_PURCHASES, IMAGE, SALES_DOCUMENTS, STOCK, WAREHOUSE
+from .erp_schema import BRAND, ARTICLE, CUSTOMER, CUSTOMER_PURCHASES, IMAGE, SALES_DOCUMENTS, STOCK, WAREHOUSE
 from .search import normalize_query, catalog_search_intent, default_search_config
 
 
@@ -73,6 +73,45 @@ def _article_columns(connection) -> dict[str, str | None]:
     if not resolved["code"]:
         raise RuntimeError("No se encontró la columna de código en dbo.articulos")
     return resolved
+
+
+def _brand_columns(connection):
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=%s AND TABLE_NAME=%s",
+                       (BRAND["schema"], BRAND["table"]))
+        existing = {str(row["COLUMN_NAME"]).lower(): str(row["COLUMN_NAME"]) for row in cursor.fetchall()}
+    columns = {key: next((existing[name.lower()] for name in names if name.lower() in existing), None)
+               for key, names in BRAND["columns"].items()}
+    if not columns["code"] or not columns["internet_b2b"]:
+        raise RuntimeError("No se encontraron el código de marca e InternetB2B en dbo.marcas")
+    return columns
+
+
+def _brand_catalog_condition(connection, article_columns):
+    brands = _brand_columns(connection)
+    article_code = article_columns.get("brand_filter_code") or article_columns.get("brand_code")
+    if not article_code:
+        raise RuntimeError("No se encontró el campo Marca/CodigoMarca del artículo")
+    match = f"m.{_discovered_column(brands['code'])} = a.{_discovered_column(article_code)}"
+    if brands["company"] and article_columns.get("company"):
+        match += f" AND m.{_discovered_column(brands['company'])} = a.{_discovered_column(article_columns['company'])}"
+    return (f"NOT EXISTS (SELECT 1 FROM {_identifier(BRAND['schema'])}.{_identifier(BRAND['table'])} m "
+            f"WHERE {match} AND m.{_discovered_column(brands['internet_b2b'])} = -1)")
+
+
+def fetch_catalog_brands():
+    """Visor de parámetros EXIT: no modifica marcas ni el flag InternetB2B."""
+    with connect_sqlserver() as connection, connection.cursor() as cursor:
+        columns = _brand_columns(connection)
+        code = _discovered_column(columns["code"])
+        name = _discovered_column(columns["name"]) if columns["name"] else code
+        company = _discovered_column(columns["company"]) if columns["company"] else "NULL"
+        cursor.execute(f"SELECT {code} AS code, {name} AS name, {company} AS company, "
+                       f"{_discovered_column(columns['internet_b2b'])} AS internet_b2b "
+                       f"FROM {_identifier(BRAND['schema'])}.{_identifier(BRAND['table'])} ORDER BY {code}")
+        return [{"code":str(row.get("code") or "").strip(), "name":str(row.get("name") or "").strip(),
+                 "company":row.get("company"), "internet_b2b":int(row.get("internet_b2b") or 0),
+                 "visible":int(row.get("internet_b2b") or 0) != -1} for row in cursor.fetchall()]
 
 
 def _article_text(column: str | None, alias: str = "a", length: int = 500) -> str:
@@ -161,7 +200,7 @@ def fetch_catalog_articles(query: str = "", page: int = 1, page_size: int = 24,
         brand_expression = _article_text(columns["brand_name"], length=200)
         eligible_prefix = _prepare_eligible_articles(cursor, article_codes)
         eligible_join = f"{eligible_prefix}{code_expression} " if eligible_prefix else ""
-        conditions = [f"{code_expression} <> ''"]
+        conditions = [f"{code_expression} <> ''", _brand_catalog_condition(connection, columns)]
         if excluded_codes:
             cursor.execute("CREATE TABLE #HiddenArticles (article_code nvarchar(100) PRIMARY KEY)")
             _insert_article_filter_codes(cursor, "#HiddenArticles", excluded_codes)
@@ -255,6 +294,8 @@ def fetch_catalog_articles_by_codes(article_codes: list[str], active_only: bool 
             "price_without_tax": _article_number(columns["price_without_tax"]),
         }
         conditions = [f"{code_expression} <> ''"]
+        if active_only:
+            conditions.append(_brand_catalog_condition(connection, columns))
         if active_only and columns["inactive"]:
             conditions.append(f"COALESCE(a.{_discovered_column(columns['inactive'])}, 0) = 0")
         select_sql = ", ".join(f"{expression} AS [{name}]" for name, expression in selections.items())
