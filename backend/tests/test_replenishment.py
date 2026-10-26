@@ -13,7 +13,7 @@ bootstrap()
 
 def source_for(skus=('03009',),values=None,stock=2):
     values=values if values is not None else [10]*30
-    start=date(2026,1,1);end=start+timedelta(days=len(values)-1)
+    start=date(2026,4,1);end=start+timedelta(days=len(values)-1)
     return {'captured_at':'2026-02-01T10:00:00+00:00','sales_delegations':['00','01','02','04','05'],'company':1,'start':start.isoformat(),'end':end.isoformat(),
         'articles':[{'sku':sku,'description':'Material '+sku,'unit_type':'UD','created_at':'2020-01-01','area_id':1,'family_id':2,'subfamily_id':3,'type_id':4} for sku in skus],
         'sales':[{'sku':sku,'delegation':'02','day':(start+timedelta(days=i)).isoformat(),'sold':value,'returned':0} for sku in skus for i,value in enumerate(values) if value],
@@ -41,8 +41,8 @@ def test_regular_formula_and_zero_days_and_pending_inventory():
 
 def test_service_level_sigma_and_constraints():
     row=calculate(source_for(values=[9,10,11]*10),{'service_level':99,'max_coverage_days':2,'multiple':7})
-    expected=ceil(NormalDist().inv_cdf(.99)*row['daily_std']*sqrt(8))
-    assert row['safety_stock']==expected and row['maximum_stock']==20
+    expected=NormalDist().inv_cdf(.99)*row['daily_std']*sqrt(8)
+    assert row['safety_stock']==pytest.approx(expected) and row['maximum_stock']==20
     assert row['final_quantity']==21
     disabled=calculate(source_for(),{'enabled':False})
     assert disabled['final_quantity']==0
@@ -53,7 +53,7 @@ def test_service_level_sigma_and_constraints():
 
 def test_no_sales_returns_missing_and_negative_stock():
     source=source_for(values=[0]*30)
-    source['sales']=[{'sku':'03009','delegation':'02','day':'2026-01-03','sold':0,'returned':12}]
+    source['sales']=[{'sku':'03009','delegation':'02','day':'2026-04-03','sold':0,'returned':12}]
     row=calculate(source)
     assert row['daily_mean']==0 and row['returns']==12 and row['final_quantity']==0
     assert 'DEVOLUCIONES_ANOMALAS' in [item['code'] for item in row['recommendations']]
@@ -226,14 +226,14 @@ def test_point_keeps_minimum_plus_consumption_until_next_replenishment():
     row=calculate(source,{'manual_min':21,'review_days':7,'lead_days':1,'multiple_mode':'NONE'})
     assert row['daily_mean']*30==pytest.approx(63.274)
     assert row['expected_cycle_consumption']==pytest.approx(63.274/30*7)
-    assert row['replenishment_point']==36 and row['target_stock']==36
+    assert row['replenishment_point']==pytest.approx(21+63.274/30*7) and row['target_stock']==pytest.approx(21+63.274/30*7)
     assert row['final_quantity']==12
     assert row['target_stock']!=row['maximum_stock']
     # The lead time is not added a second time after an explicit minimum.
     assert calculate(source,{'manual_min':21,'review_days':7,'lead_days':5,'multiple_mode':'NONE'})['final_quantity']==12
     source['articles'][0]['exit_multiple']=6
     later=calculate(source,{'manual_min':21,'review_days':14,'multiple_mode':'EXIT'})
-    assert later['replenishment_point']==51 and later['quantity_before_rounding']==27
+    assert later['replenishment_point']==pytest.approx(21+63.274/30*14) and later['quantity_before_rounding']==pytest.approx(21+63.274/30*14-24)
     assert later['final_quantity']==30
     enough=calculate(source_for(values=[63.274/30]*30,stock=40),{'manual_min':21,'review_days':7})
     assert enough['final_quantity']==0
@@ -242,7 +242,7 @@ def test_point_keeps_minimum_plus_consumption_until_next_replenishment():
 def test_only_explicit_limits_can_reduce_replenishment_point():
     source=source_for(values=[63.274/30]*30,stock=24)
     row=calculate(source,{'manual_min':21,'manual_max':34,'review_days':7,'multiple_mode':'NONE'})
-    assert row['replenishment_point']==36 and row['target_stock']==34 and row['final_quantity']==10
+    assert row['replenishment_point']==pytest.approx(21+63.274/30*7) and row['target_stock']==34 and row['final_quantity']==10
     assert 'OBJETIVO_LIMITADO' in [note['code'] for note in row['recommendations']]
 
 
@@ -292,10 +292,10 @@ def test_visible_point_and_maximum_formulas_and_no_consumption_option():
     raw=source_for(values=[63.274/30]*30,stock=24)
     point=calculate(raw,{'simple_formula':True,'manual_min':21,'maximum_days':30,'multiple_mode':'NONE'})
     maximum=calculate(raw,{'simple_formula':True,'manual_min':21,'target_mode':'MAXIMUM','maximum_days':30,'multiple_mode':'NONE'})
-    assert point['replenishment_point']==36 and point['maximum_stock']==85
-    assert point['target_stock']==36 and point['final_quantity']==12
-    assert maximum['target_stock']==85 and maximum['final_quantity']==61
-    assert maximum['calculated_quantity']==61 and maximum['target_mode']=='MAXIMUM'
+    assert point['replenishment_point']==pytest.approx(21+63.274/30*7) and point['maximum_stock']==pytest.approx(84.274)
+    assert point['target_stock']==pytest.approx(21+63.274/30*7) and point['final_quantity']==12
+    assert maximum['target_stock']==pytest.approx(84.274) and maximum['final_quantity']==61
+    assert maximum['calculated_quantity']==pytest.approx(60.274) and maximum['target_mode']=='MAXIMUM'
     assert maximum['calculation_model']=='MAXIMUM_COVERAGE'
     assert 'Stock máximo' in maximum['calculation']['formula']
     excess=calculate(source_for(stock=400),{'simple_formula':True,'maximum_days':30})
@@ -395,3 +395,48 @@ def test_filtered_summary_and_export_all_pages_with_exit_control_characters(monk
     assert empty['total']==0 and all(value==0 for value in empty['summary'].values())
     response=client.get(path+'/export.xlsx',params={'consumption':'WITHOUT'})
     assert load_workbook(io.BytesIO(response.content)).active.max_row==1
+
+
+def test_calendar_month_average_estimates_incomplete_month_and_includes_zero_month():
+    raw=source_for(values=[0]*30)
+    raw.update(start='2026-01-01',end='2026-03-10')
+    raw['sales']=[{'sku':'03009','delegation':'02','day':day,'sold':amount,'returned':0} for day,amount in [('2026-01-05',60),('2026-02-05',40),('2026-03-05',20)]]
+    row=calculate(raw,{'simple_formula':True,'multiple_mode':'NONE'})
+    assert row['monthly_mean']==pytest.approx(54) and row['daily_mean']==pytest.approx(1.8)
+    months=row['monthly_consumption']
+    assert [m['observed_days'] for m in months]==[31,28,10]
+    assert [m['monthly_consumption'] for m in months]==pytest.approx([60,40,62])
+    assert [m['estimated'] for m in months]==[False,False,True]
+    raw['sales']=[sale for sale in raw['sales'] if not sale['day'].startswith('2026-02')]
+    assert calculate(raw)['monthly_mean']==pytest.approx((60+0+62)/3)
+
+
+def test_partial_start_and_end_leap_month_and_history_window():
+    raw=source_for(values=[0]*30)
+    raw.update(start='2024-02-15',end='2024-03-10')
+    raw['sales']=[{'sku':'03009','delegation':'02','day':day,'sold':amount,'returned':0} for day,amount in [('2024-02-20',15),('2024-03-05',20)]]
+    row=calculate(raw)
+    assert row['monthly_mean']==pytest.approx((29+62)/2)
+    assert row['monthly_consumption'][0]['observed_days']==15
+    short=calculate(raw,{'history_days':5})
+    assert short['monthly_mean']==0 and short['monthly_consumption'][0]['observed_days']==5
+
+
+@pytest.mark.parametrize('monthly,stock,outgoing,expected',[(32.787,11,5,3),(1.639,3,0,0)])
+def test_rounds_only_final_dispatch_quantity(monthly,stock,outgoing,expected):
+    raw=source_for(values=[monthly/30]*30,stock=stock)
+    raw['stocks'][1]['outgoing']=outgoing
+    row=calculate(raw,{'simple_formula':True,'multiple_mode':'NONE','service_level':50,'lead_days':1,'review_days':7,'maximum_days':30})
+    assert row['minimum_stock']==pytest.approx(monthly/30)
+    assert row['replenishment_point']==pytest.approx(monthly/30*8)
+    assert row['quantity_before_rounding']==pytest.approx(max(0,monthly/30*8-(stock-outgoing)))
+    assert row['final_quantity']==expected
+
+
+def test_statistical_safety_keeps_decimals_until_final_quantity():
+    raw=source_for(values=[0,1,2]*10)
+    row=calculate(raw,{'simple_formula':True,'multiple_mode':'NONE'})
+    expected=NormalDist().inv_cdf(.95)*row['daily_std']*sqrt(8)
+    assert row['safety_stock']==pytest.approx(expected)
+    assert row['minimum_stock']==pytest.approx(row['daily_mean']+expected)
+    assert row['final_quantity']==ceil(max(0,row['target_stock']-row['inventory_position']))
