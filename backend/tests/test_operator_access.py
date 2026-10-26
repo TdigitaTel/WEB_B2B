@@ -131,14 +131,17 @@ def test_rpa_reuses_legacy_identity_and_never_resets_on_restart(monkeypatch):
 
 def test_exit_user_query_is_paginated_parameterized_and_never_reads_password(monkeypatch):
     connection=MagicMock();connection.__enter__.return_value=connection;cursor=connection.cursor.return_value.__enter__.return_value
-    cursor.fetchall.side_effect=[[{'COLUMN_NAME':name} for name in ['CodigoUsuario','Usuario','Nombre','Password']], [{'code':'1','username':'RPA','name':'Robot'}]]
+    cursor.fetchall.return_value=[{'code':0,'username':' RPA ','email':' rpa@example.test '}]
     cursor.fetchone.return_value={'total':1}
     monkeypatch.setattr(exit_users,'connect_sqlserver',lambda:connection)
     result=exit_users.fetch_exit_users("RPA%'",page=2,page_size=25)
-    assert result['items'][0]['username']=='RPA'
+    assert result['items'][0]=={'code':'0','username':'RPA','name':'RPA','email':'rpa@example.test'}
     calls=cursor.execute.call_args_list
     statement,params=calls[-1].args
     assert 'OFFSET %s ROWS FETCH NEXT %s ROWS ONLY' in statement
+    assert 'm.CodigoUsuario AS code, m.NombreCorto AS username, m.Correo AS email' in statement
+    assert 'FROM MCUsuarios m' in statement
+    assert len(calls)==2 and 'INFORMATION_SCHEMA' not in str(calls)
     assert 'Password' not in statement and "RPA%'" not in statement
     assert params[-2:]==(25,25)
     assert params[0]=="%RPA~%'%"
@@ -153,3 +156,44 @@ def test_rpa_missing_in_exit_leaves_legacy_untouched(monkeypatch):
             module.provision_rpa(db)
         assert legacy.email == 'operador@bermudez.test' and legacy.password_hash == previous
         assert not db.get(OperatorAccess, legacy.id)
+
+
+def test_short_name_code_and_email_are_login_aliases_and_update_preserves_password(staff):
+    client=manager();row=staff[4];row['email']='staff-correoreal@example.test'
+    response=client.put('/api/v1/store/operator-access',json=payload(row))
+    assert response.status_code==200,response.text
+    initial=response.json()['initial_password']
+    assert response.json()['email']==row['email']
+    for identifier in [row['code'],row['username'],row['email'].upper()]:
+        assert TestClient(app).post('/api/v1/auth/login',json={'email':identifier,'password':initial}).status_code==200
+    with SessionLocal() as db:
+        account=db.scalar(select(User).where(User.access_code==row['username']))
+        account_id=account.id;previous=account.password_hash
+    row['email']='staff-correonuevo@example.test'
+    response=client.put('/api/v1/store/operator-access',json=payload(row))
+    assert response.status_code==200 and response.json()['initial_password'] is None
+    with SessionLocal() as db:
+        account=db.get(User,account_id)
+        assert account.email==row['email'] and account.password_hash==previous
+    assert TestClient(app).post('/api/v1/auth/login',json={'email':row['email'],'password':initial}).status_code==200
+    listed=client.get('/api/v1/store/operator-access?enabled_only=true&q=correonuevo').json()['items']
+    assert len(listed)==1 and listed[0]['email']==row['email']
+
+
+def test_users_still_listed_when_delegation_query_fails(staff,monkeypatch):
+    def failing():raise RuntimeError('Test delegation failure')
+    monkeypatch.setattr(module,'fetch_delegations',failing)
+    response=manager().get('/api/v1/store/operator-access')
+    assert response.status_code==200,response.text
+    data=response.json()
+    assert len(data['items'])==25 and data['delegations']==[]
+    assert 'sedes' in data['warning']
+
+
+def test_user_query_failure_is_distinct_from_delegation_failure(staff,monkeypatch):
+    def failing(*args,**kwargs):raise RuntimeError('Test MCUsuarios failure')
+    monkeypatch.setattr(module,'fetch_exit_users',failing)
+    response=manager().get('/api/v1/store/operator-access')
+    assert response.status_code==503
+    assert 'MCUsuarios' in response.json()['detail'] and 'NombreCorto' in response.json()['detail']
+    assert 'sedes' not in response.json()['detail']
