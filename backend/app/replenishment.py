@@ -9,8 +9,11 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from openpyxl import Workbook
+from openpyxl.cell import WriteOnlyCell
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
+from openpyxl.utils import get_column_letter
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy import select, func, or_
+from sqlalchemy import select, func, or_, case
 from sqlalchemy.orm import Session
 from .auth import require_roles
 from .db import get_db
@@ -206,12 +209,21 @@ def run_simulation(body:RunInput,db:Session=Depends(get_db),user:User=Depends(op
     audit(db,user,'REPLENISHMENT_SIMULATED',scenario.public_id,{'preview_only':body.preview_only,'source_fingerprint':fingerprint})
     db.commit();return scenario_payload(scenario)
 
-@router.get('/simulations/{scenario_id}/results')
-def results(scenario_id:str,q:str='',alerts_only:bool=False,needed_only:bool=False,page:int=Query(1,ge=1),
-        central_only:bool=False,overstock_only:bool=False,consumption:Literal['ALL','WITH','WITHOUT']='ALL',
-        page_size:int=Query(50,ge=1,le=100),sort:Literal['sku','quantity','coverage','alerts']='sku',descending:bool=False,db:Session=Depends(get_db)):
-    scenario=scenario_or_404(db,scenario_id)
-    query=select(Result).where(Result.scenario_id==scenario.id)
+class ResultFilters(BaseModel):
+    q:str=Field(default='',max_length=200)
+    alerts_only:bool=False
+    needed_only:bool=False
+    central_only:bool=False
+    overstock_only:bool=False
+    consumption:Literal['ALL','WITH','WITHOUT']='ALL'
+    sort:Literal['sku','quantity','coverage','alerts']='sku'
+    descending:bool=False
+
+
+def filtered_results(scenario_id,filters):
+    q=filters.q;alerts_only=filters.alerts_only;needed_only=filters.needed_only
+    central_only=filters.central_only;overstock_only=filters.overstock_only;consumption=filters.consumption
+    query=select(Result).where(Result.scenario_id==scenario_id)
     if q:
         query=query.where(or_(func.lower(Result.sku).contains(q.lower(),autoescape=True),
             func.lower(Result.payload['description'].as_string()).contains(q.lower(),autoescape=True)))
@@ -221,12 +233,44 @@ def results(scenario_id:str,q:str='',alerts_only:bool=False,needed_only:bool=Fal
     if overstock_only:query=query.where(Result.payload['overstock'].as_boolean().is_(True))
     if consumption=='WITHOUT':query=query.where(Result.payload['total_demand'].as_float()<=0)
     if consumption=='WITH':query=query.where(Result.payload['total_demand'].as_float()>0)
+    return query
+
+
+def ordered_results(query,sort,descending):
     order={'sku':Result.sku,'quantity':Result.payload['final_quantity'].as_float(),
         'coverage':Result.payload['coverage_days'].as_float(),'alerts':func.json_array_length(Result.payload['recommendations'])}[sort]
-    total=db.scalar(select(func.count()).select_from(query.subquery())) or 0
-    rows=db.scalars(query.order_by(order.desc() if descending else order.asc(),Result.sku,Result.delegation)
-        .offset((page-1)*page_size).limit(page_size)).all()
-    return {'items':[{'id':row.id,**row.payload} for row in rows],'total':total,'page':page,'version':scenario.version}
+    return query.order_by(order.desc() if descending else order.asc(),Result.sku,Result.delegation)
+
+
+def result_summary(db,query):
+    data=query.subquery()
+    payload=data.c.payload
+    count_if=lambda condition:func.coalesce(func.sum(case((condition,1),else_=0)),0)
+    row=db.execute(select(func.count().label('article_delegations'),func.count(func.distinct(data.c.sku)).label('articles_analyzed'),
+        count_if(payload['final_quantity'].as_float()>0).label('to_replenish'),
+        count_if(payload['central_can_supply'].as_boolean().is_(True)).label('central_covered'),
+        count_if(payload['overstock'].as_boolean().is_(True)).label('overstock'),
+        count_if(payload['total_demand'].as_float()<=0).label('without_movement'))).mappings().one()
+    return dict(row)
+
+
+def result_scenario(db,public_id):
+    row=db.execute(select(Scenario.id,Scenario.public_id,Scenario.version,Scenario.filters,Scenario.temporary_parameters,
+        Scenario.policies_snapshot,Scenario.source_fingerprint,Scenario.source_snapshot['captured_at'].as_string().label('captured_at'))
+        .where(Scenario.public_id==public_id)).one_or_none()
+    if row is None:raise HTTPException(404,'Cálculo no encontrado')
+    return row
+
+
+@router.get('/simulations/{scenario_id}/results')
+def results(scenario_id:str,filters:ResultFilters=Depends(),page:int=Query(1,ge=1),
+        page_size:int=Query(50,ge=1,le=100),db:Session=Depends(get_db)):
+    scenario=result_scenario(db,scenario_id)
+    query=filtered_results(scenario.id,filters)
+    summary=result_summary(db,query)
+    rows=db.scalars(ordered_results(query,filters.sort,filters.descending).offset((page-1)*page_size).limit(page_size)).all()
+    return {'items':[{'id':row.id,**row.payload} for row in rows],'total':summary['article_delegations'],
+        'summary':summary,'page':page,'version':scenario.version}
 
 
 def article_context(scenario,result):
@@ -284,25 +328,34 @@ def adjust(scenario_id:str,result_id:int,body:AdjustmentInput,db:Session=Depends
     db.commit();return {'scenario':scenario_payload(scenario),'result':{'id':row.id,**row.payload}}
 
 @router.get('/simulations/{scenario_id}/export.xlsx')
-def export(scenario_id:str,db:Session=Depends(get_db)):
-    scenario=scenario_or_404(db,scenario_id)
-    rows=db.scalars(select(Result).where(Result.scenario_id==scenario.id).order_by(Result.sku,Result.delegation)).all()
-    book=Workbook();sheet=book.active;sheet.title='Reposición'
+def export(scenario_id:str,filters:ResultFilters=Depends(),db:Session=Depends(get_db)):
+    scenario=result_scenario(db,scenario_id)
+    query=ordered_results(filtered_results(scenario.id,filters),filters.sort,filters.descending)
+    rows=db.scalars(query.execution_options(yield_per=500))
+    book=Workbook(write_only=True);sheet=book.create_sheet('Reposición')
+    sheet.freeze_panes='A2'
+    def append(sheet,values):
+        cells=[]
+        for value in values:
+            if isinstance(value,str):
+                value=ILLEGAL_CHARACTERS_RE.sub('',value)
+                cell=WriteOnlyCell(sheet,value=value);cell.data_type='s';cells.append(cell)
+            else:cells.append(value)
+        sheet.append(cells)
     fields=[('sku','Código'),('description','Descripción'),('delegation','Delegación'),('unit_type','Tipo unidad'),('family','Familia'),('target_mode','Objetivo elegido'),
         ('central_stock','Stock Almeiras'),('central_outgoing','Comprometido Almeiras'),('central_incoming','Pendiente recibir Almeiras'),('central_monthly_consumption','Consumo mensual Almeiras'),('central_reserve','Reserva Almeiras'),('central_available','Disponible para despacho Almeiras'),('central_total_requested','Propuesta conjunta'),('central_can_supply','Almeiras cubre propuesta conjunta'),('overstock','Sobrestock'),('excess_stock','Exceso previsto'),('no_consumption','Sin consumo'),('stock','Stock'),('incoming','Pendiente recibir'),('outgoing','Pendiente servir'),('inventory_position','Posición'),('monthly_mean','Consumo mensual medio'),
         ('safety_stock','Seguridad'),('minimum_stock','Mínimo'),('maximum_stock','Stock máximo'),('expected_cycle_consumption','Consumo hasta próxima reposición'),('replenishment_point','Punto de reposición'),('target_stock','Objetivo aplicado'),('calculated_quantity','Cantidad calculada'),
         ('exit_multiple','Múltiplo EXIT'),('effective_multiple','Múltiplo aplicado'),('quantity_before_rounding','Cantidad antes de agrupar'),('recommended_quantity','Cantidad recomendada'),('adjusted_quantity','Ajuste manual'),('final_quantity','Cantidad final'),('method','Método'),('confidence','Confianza')]
-    sheet.append([label for _,label in fields]+['Reglas aplicadas','Recomendaciones'])
+    append(sheet,[label for _,label in fields]+['Reglas aplicadas','Recomendaciones'])
+    count=0
     for result in rows:
         row={**result.payload,'monthly_mean':result.payload['daily_mean']*30};values=[row.get(key) for key,_ in fields]+[' → '.join(row['applied_rules']),'; '.join(item['reason'] for item in row['recommendations'])]
-        sheet.append(values)
-        for cell in sheet[sheet.max_row]:
-            if isinstance(cell.value,str):cell.data_type='s'
-    sheet.freeze_panes='A2';sheet.auto_filter.ref=sheet.dimensions
-    metadata=book.create_sheet('Contexto');metadata.append(['Dato','Valor'])
-    for key,value in [('Cálculo',scenario.public_id),('Corte',scenario.source_snapshot['captured_at']),('Huella de datos',scenario.source_fingerprint),
-        ('Filtros',json.dumps(scenario.filters,ensure_ascii=False)),('Parámetros temporales',json.dumps(scenario.temporary_parameters,ensure_ascii=False)),
+        append(sheet,values);count+=1
+    sheet.auto_filter.ref=f'A1:{get_column_letter(len(fields)+2)}{count+1}'
+    metadata=book.create_sheet('Contexto');append(metadata,['Dato','Valor'])
+    for key,value in [('Cálculo',scenario.public_id),('Corte',scenario.captured_at),('Huella de datos',scenario.source_fingerprint),
+        ('Filtros del resultado',json.dumps(filters.model_dump(),ensure_ascii=False)),('Filas exportadas',count),('Filtros del cálculo',json.dumps(scenario.filters,ensure_ascii=False)),('Parámetros temporales',json.dumps(scenario.temporary_parameters,ensure_ascii=False)),
         ('Políticas',json.dumps(scenario.policies_snapshot,ensure_ascii=False)),('Modo','Solo cálculo; no genera pedidos. Almeiras protegido por su consumo y reserva.')]:
-        metadata.append([key,value]);metadata.cell(metadata.max_row,2).data_type='s'
+        append(metadata,[key,value])
     buffer=io.BytesIO();book.save(buffer)
     return Response(buffer.getvalue(),media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',headers={'Content-Disposition':'attachment; filename="reposicion.xlsx"'})
