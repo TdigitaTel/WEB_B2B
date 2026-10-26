@@ -61,10 +61,6 @@ class RunInput(BaseModel):
     source_id:str|None=None
     preview_only:bool=False
 
-class SaveInput(BaseModel):
-    name:str=Field(min_length=1,max_length=160)
-    expected_version:int=Field(ge=1)
-
 class RecalculateInput(BaseModel):
     parameters:dict=Field(default_factory=dict)
 
@@ -98,7 +94,7 @@ def scenario_payload(row):
         'captured_at':row.source_snapshot['captured_at'],'source_fingerprint':row.source_fingerprint,
         'filters':row.filters,'temporary_parameters':row.temporary_parameters,'summary':row.summary,
         'article_limit':row.source_snapshot.get('article_limit',5000),'source_articles':len(row.source_snapshot['articles']),'read_only_exit':True,
-        'source_notes':['Stock central 00 consolidado: no es disponibilidad transferible.',
+        'source_notes':['Stock transferible Almeiras = stock físico − comprometido − reserva de consumo; no incluye entradas pendientes.',
             'Ventas: empresa 1. La vista de stock se usa con el alcance indicado, sin campo de empresa.',
             'Ventas del periodo elegido y stock consultado en la extracción; no se reconstruye stock histórico.',
             'El vínculo cabecera/líneas usa número, ejercicio y empresa según el esquema facilitado.']}
@@ -194,7 +190,7 @@ def run_simulation(body:RunInput,db:Session=Depends(get_db),user:User=Depends(op
         except Exception as exc:
             logger.exception('Error leyendo fuentes de reposición EXIT')
             raise HTTPException(503,'No se pudieron leer las fuentes EXIT indicadas. Revisa el registro de la API y la conexión') from exc
-    snapshots=[policy_payload(row) for row in db.scalars(select(Policy)).all()]
+    snapshots=[]  # El cálculo simple usa exclusivamente los parámetros visibles enviados.
     fingerprint=hashlib.sha256(json.dumps(source,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
     scenario=Scenario(created_by=user.id,source_snapshot=source,source_fingerprint=fingerprint,filters=filters,
         policies_snapshot=snapshots,temporary_parameters=body.temporary_parameters,summary={})
@@ -210,26 +206,9 @@ def run_simulation(body:RunInput,db:Session=Depends(get_db),user:User=Depends(op
     audit(db,user,'REPLENISHMENT_SIMULATED',scenario.public_id,{'preview_only':body.preview_only,'source_fingerprint':fingerprint})
     db.commit();return scenario_payload(scenario)
 
-@router.get('/simulations')
-def simulations(db:Session=Depends(get_db)):
-    return [scenario_payload(row) for row in db.scalars(select(Scenario).where(Scenario.saved.is_(True)).order_by(Scenario.created_at.desc()).limit(100)).all()]
-
-@router.get('/simulations/{scenario_id}')
-def simulation(scenario_id:str,db:Session=Depends(get_db)):
-    return scenario_payload(scenario_or_404(db,scenario_id))
-
-@router.patch('/simulations/{scenario_id}')
-def save_simulation(scenario_id:str,body:SaveInput,db:Session=Depends(get_db),user:User=Depends(operator)):
-    row=scenario_or_404(db,scenario_id,True)
-    if row.version!=body.expected_version:raise HTTPException(409,'La simulación cambió; actualízala antes de guardar')
-    if not row.summary:raise HTTPException(422,'Ejecuta la simulación antes de guardarla')
-    row.name=body.name.strip()
-    if not row.name:raise HTTPException(422,'Escribe un nombre')
-    row.saved=True;row.version+=1;audit(db,user,'REPLENISHMENT_SCENARIO_SAVED',row.public_id,{'name':row.name})
-    db.commit();return scenario_payload(row)
-
 @router.get('/simulations/{scenario_id}/results')
 def results(scenario_id:str,q:str='',alerts_only:bool=False,needed_only:bool=False,page:int=Query(1,ge=1),
+        central_only:bool=False,overstock_only:bool=False,consumption:Literal['ALL','WITH','WITHOUT']='ALL',
         page_size:int=Query(50,ge=1,le=100),sort:Literal['sku','quantity','coverage','alerts']='sku',descending:bool=False,db:Session=Depends(get_db)):
     scenario=scenario_or_404(db,scenario_id)
     query=select(Result).where(Result.scenario_id==scenario.id)
@@ -238,6 +217,10 @@ def results(scenario_id:str,q:str='',alerts_only:bool=False,needed_only:bool=Fal
             func.lower(Result.payload['description'].as_string()).contains(q.lower(),autoescape=True)))
     if alerts_only:query=query.where(func.json_array_length(Result.payload['recommendations'])>0)
     if needed_only:query=query.where(Result.payload['final_quantity'].as_float()>0)
+    if central_only:query=query.where(Result.payload['central_can_supply'].as_boolean().is_(True))
+    if overstock_only:query=query.where(Result.payload['overstock'].as_boolean().is_(True))
+    if consumption=='WITHOUT':query=query.where(Result.payload['total_demand'].as_float()<=0)
+    if consumption=='WITH':query=query.where(Result.payload['total_demand'].as_float()>0)
     order={'sku':Result.sku,'quantity':Result.payload['final_quantity'].as_float(),
         'coverage':Result.payload['coverage_days'].as_float(),'alerts':func.json_array_length(Result.payload['recommendations'])}[sort]
     total=db.scalar(select(func.count()).select_from(query.subquery())) or 0
@@ -300,43 +283,26 @@ def adjust(scenario_id:str,result_id:int,body:AdjustmentInput,db:Session=Depends
     audit(db,user,'REPLENISHMENT_MANUAL_ADJUSTMENT',scenario.public_id,{'sku':row.sku,'delegation':row.delegation,'reason':body.reason})
     db.commit();return {'scenario':scenario_payload(scenario),'result':{'id':row.id,**row.payload}}
 
-@router.get('/compare')
-def compare(a:str,b:str,db:Session=Depends(get_db)):
-    first=scenario_or_404(db,a);second=scenario_or_404(db,b)
-    if not first.summary or not second.summary:raise HTTPException(422,'Ambos escenarios deben estar calculados')
-    def windows(row):
-        return sorted({(item.payload['calculation']['window_start'],item.payload['calculation']['window_end'])
-            for item in db.scalars(select(Result).where(Result.scenario_id==row.id)).all()})
-    def models(row):
-        return {item.payload.get('calculation_model','LEGACY_MAXIMUM') for item in db.scalars(select(Result).where(Result.scenario_id==row.id)).all()}
-    model_equal=models(first)==models(second)
-    same=first.source_fingerprint==second.source_fingerprint and first.filters==second.filters
-    history_equal=windows(first)==windows(second)
-    return {'a':scenario_payload(first),'b':scenario_payload(second),'same_source_context':same,'same_history_window':history_equal,'same_calculation_model':model_equal,
-        'notice':'Misma instantánea y filtros.' if same and history_equal and model_equal else 'Contextos diferentes: revisa el modelo de cálculo, fechas de corte, filtros y ventanas históricas antes de atribuir diferencias a parámetros.',
-        'differences':{key:second.summary[key]-first.summary[key] if first.summary.get(key) is not None and second.summary.get(key) is not None else None
-            for key in ('to_replenish','units_proposed','target_stock','average_coverage_days','alerts')}}
-
 @router.get('/simulations/{scenario_id}/export.xlsx')
 def export(scenario_id:str,db:Session=Depends(get_db)):
     scenario=scenario_or_404(db,scenario_id)
     rows=db.scalars(select(Result).where(Result.scenario_id==scenario.id).order_by(Result.sku,Result.delegation)).all()
     book=Workbook();sheet=book.active;sheet.title='Reposición'
-    fields=[('sku','Código'),('description','Descripción'),('delegation','Delegación'),('unit_type','Tipo unidad'),('family','Familia'),
-        ('stock','Stock'),('incoming','Pendiente recibir'),('outgoing','Pendiente servir'),('inventory_position','Posición'),('daily_mean','Consumo diario'),
-        ('safety_stock','Seguridad'),('minimum_stock','Mínimo'),('maximum_stock','Máximo de referencia'),('expected_cycle_consumption','Consumo hasta próxima reposición'),('replenishment_point','Punto de reposición'),('target_stock','Objetivo aplicado'),('calculated_quantity','Cantidad calculada'),
+    fields=[('sku','Código'),('description','Descripción'),('delegation','Delegación'),('unit_type','Tipo unidad'),('family','Familia'),('target_mode','Objetivo elegido'),
+        ('central_stock','Stock Almeiras'),('central_outgoing','Comprometido Almeiras'),('central_incoming','Pendiente recibir Almeiras'),('central_monthly_consumption','Consumo mensual Almeiras'),('central_reserve','Reserva Almeiras'),('central_available','Disponible para despacho Almeiras'),('central_total_requested','Propuesta conjunta'),('central_can_supply','Almeiras cubre propuesta conjunta'),('overstock','Sobrestock'),('excess_stock','Exceso previsto'),('no_consumption','Sin consumo'),('stock','Stock'),('incoming','Pendiente recibir'),('outgoing','Pendiente servir'),('inventory_position','Posición'),('monthly_mean','Consumo mensual medio'),
+        ('safety_stock','Seguridad'),('minimum_stock','Mínimo'),('maximum_stock','Stock máximo'),('expected_cycle_consumption','Consumo hasta próxima reposición'),('replenishment_point','Punto de reposición'),('target_stock','Objetivo aplicado'),('calculated_quantity','Cantidad calculada'),
         ('exit_multiple','Múltiplo EXIT'),('effective_multiple','Múltiplo aplicado'),('quantity_before_rounding','Cantidad antes de agrupar'),('recommended_quantity','Cantidad recomendada'),('adjusted_quantity','Ajuste manual'),('final_quantity','Cantidad final'),('method','Método'),('confidence','Confianza')]
     sheet.append([label for _,label in fields]+['Reglas aplicadas','Recomendaciones'])
     for result in rows:
-        row=result.payload;values=[row.get(key) for key,_ in fields]+[' → '.join(row['applied_rules']),'; '.join(item['reason'] for item in row['recommendations'])]
+        row={**result.payload,'monthly_mean':result.payload['daily_mean']*30};values=[row.get(key) for key,_ in fields]+[' → '.join(row['applied_rules']),'; '.join(item['reason'] for item in row['recommendations'])]
         sheet.append(values)
         for cell in sheet[sheet.max_row]:
             if isinstance(cell.value,str):cell.data_type='s'
     sheet.freeze_panes='A2';sheet.auto_filter.ref=sheet.dimensions
     metadata=book.create_sheet('Contexto');metadata.append(['Dato','Valor'])
-    for key,value in [('Escenario',scenario.name),('Corte',scenario.source_snapshot['captured_at']),('Huella de datos',scenario.source_fingerprint),
+    for key,value in [('Cálculo',scenario.public_id),('Corte',scenario.source_snapshot['captured_at']),('Huella de datos',scenario.source_fingerprint),
         ('Filtros',json.dumps(scenario.filters,ensure_ascii=False)),('Parámetros temporales',json.dumps(scenario.temporary_parameters,ensure_ascii=False)),
-        ('Políticas',json.dumps(scenario.policies_snapshot,ensure_ascii=False)),('Modo','Solo simulación; no genera pedidos; stock central no presupone disponibilidad transferible')]:
+        ('Políticas',json.dumps(scenario.policies_snapshot,ensure_ascii=False)),('Modo','Solo cálculo; no genera pedidos. Almeiras protegido por su consumo y reserva.')]:
         metadata.append([key,value]);metadata.cell(metadata.max_row,2).data_type='s'
     buffer=io.BytesIO();book.save(buffer)
     return Response(buffer.getvalue(),media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',headers={'Content-Disposition':'attachment; filename="reposicion.xlsx"'})

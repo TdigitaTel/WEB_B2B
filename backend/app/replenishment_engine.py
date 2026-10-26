@@ -8,6 +8,11 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 class Parameters(BaseModel):
+    target_mode: Literal['POINT','MAXIMUM'] = 'POINT'
+    maximum_days: int | None = Field(None,ge=1,le=1095)
+    central_reserve_days: int = Field(7,ge=1,le=365)
+    exclude_no_consumption: bool = False
+    simple_formula: bool = False
     review_days: int = Field(7,ge=1,le=90)
     lead_days: int = Field(1,ge=0,le=180)
     service_level: float = Field(95,ge=50,le=99.9)
@@ -23,6 +28,8 @@ class Parameters(BaseModel):
     new_policy: Literal['REVIEW','COMPARABLE','NO_REPLENISH'] = 'REVIEW'
     @model_validator(mode='after')
     def valid_range(self):
+        if self.maximum_days is not None and self.maximum_days<self.review_days:
+            raise ValueError('Los días de stock máximo no pueden ser menores que los días hasta la próxima reposición')
         if self.manual_min is not None and self.manual_max is not None and self.manual_min>self.manual_max:
             raise ValueError('El mínimo manual no puede superar el máximo')
         return self
@@ -119,7 +126,7 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
     method='REVISION_PERIODICA';confidence='ALTA' if stats['sales_days']>=30 and not stats['irregular'] else 'MEDIA'
     recs=[];comparable=None
     sparse=stats['sales_days']<5 or stats['new_article']
-    if sparse:
+    if sparse and not parameters["simple_formula"]:
         safety=minimum=maximum=0;confidence='BAJA';method='REVISION_MANUAL'
         policy=parameters['new_policy'] if stats['new_article'] else parameters['no_sales_policy']
         if policy!='NO_REPLENISH':
@@ -131,7 +138,7 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
                     method='MINIMO_ORIENTATIVO_COMPARABLES';break
         recs.append(recommendation('HISTORICO_INSUFICIENTE','Histórico insuficiente: revisar la propuesta orientativa; no representa ventas reales del artículo.',
             {'days':stats['days'],'sales_days':stats['sales_days'],'comparables':comparable},'new_policy' if stats['new_article'] else 'no_sales_policy',policy))
-    elif stats['irregular']:
+    elif stats['irregular'] and not parameters['simple_formula']:
         # Percentil empírico de demanda en ventanas completas del horizonte.
         values=stats['demand_values'];sums=[]
         if len(values)>=horizon:
@@ -152,20 +159,25 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
         maximum=min(maximum,ceil(avg*parameters['max_coverage_days']))
     if parameters['manual_min'] is not None:minimum=parameters['manual_min']
     if parameters['manual_max'] is not None:maximum=parameters['manual_max']
+    if parameters['maximum_days'] is not None:
+        maximum=ceil(minimum+avg*parameters['maximum_days'])
+        if parameters['manual_max'] is not None:maximum=parameters['manual_max']
+        if parameters['max_coverage_days'] and avg>0:maximum=min(maximum,ceil(avg*parameters['max_coverage_days']))
     maximum=max(minimum,maximum)
     if sparse and (parameters['manual_min'] is not None or parameters['manual_max'] is not None):method='LIMITES_MANUALES';confidence='BAJA'
     expected_consumption=avg*parameters['review_days'] if method!='REVISION_MANUAL' else 0
     replenishment_point=ceil(minimum+expected_consumption)
-    target=replenishment_point
+    target=maximum if parameters["target_mode"]=="MAXIMUM" else replenishment_point
     # Only explicitly configured limits cap the point; calculated maximum is not a target.
     if parameters['max_coverage_days'] and avg>0:
         target=max(minimum,min(target,ceil(avg*parameters['max_coverage_days'])))
     if parameters['manual_max'] is not None:
         target=max(minimum,min(target,parameters['manual_max']))
-    if target<replenishment_point:
+    if parameters["target_mode"]=="POINT" and target<replenishment_point:
         recs.append(recommendation('OBJETIVO_LIMITADO','Un límite explícito reduce el punto de reposición; revisa si cubre el consumo hasta la próxima reposición.',
             {'replenishment_point':replenishment_point,'limited_target':target,'minimum':minimum},'manual_max' if parameters['manual_max'] is not None else 'max_coverage_days',parameters['manual_max'] if parameters['manual_max'] is not None else parameters['max_coverage_days']))
     quantity=max(0,target-position) if position is not None else 0
+    calculated=quantity
     dispatch_multiple=effective_dispatch_multiple(article,parameters)
     before_rounding=max(quantity,parameters['minimum_quantity']) if quantity>0 else 0
     quantity=rounded_dispatch(before_rounding,dispatch_multiple)
@@ -173,19 +185,24 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
         quantity=0
         recs.append(recommendation('MULTIPLO_EXIT_INVALIDO','EX_multiplo no contiene un múltiplo positivo válido. La propuesta queda a cero hasta revisar el formato de despacho.',
             {'exit_multiple':article.get('exit_multiple'),'quantity_before_rounding':before_rounding},'multiple_mode','EXIT'))
+    if parameters['exclude_no_consumption'] and stats['total_demand']<=0:
+        quantity=0
+        recs.append(recommendation('SIN_CONSUMO_EXCLUIDO','Sin consumo neto en el periodo: se ha excluido de la reposición por la opción seleccionada.',{'total_demand':stats['total_demand']}))
     if not parameters['enabled'] or stats['created_in_future'] or (sparse and (parameters['new_policy'] if stats['new_article'] else parameters['no_sales_policy'])=='NO_REPLENISH'):quantity=0
     if quantity>0 and position is not None and position+quantity>target+1e-8:
-        recs.append(recommendation('REDONDEO_SOBRE_MAXIMO','El múltiplo o la cantidad mínima elevan el inventario por encima del punto de reposición objetivo.',
+        recs.append(recommendation('REDONDEO_SOBRE_MAXIMO','El múltiplo o la cantidad mínima elevan el inventario por encima del objetivo elegido.',
             {'quantity':quantity,'position_after':position+quantity,'target':target,'effective_multiple':dispatch_multiple},'multiple_mode',parameters['multiple_mode']))
+    overstock=bool(position is not None and position>maximum+1e-8)
+    excess=max(0,position-maximum) if position is not None else 0
     coverage=position/avg if position is not None and avg>0 else None
     if coverage is not None and coverage>max(90,3*horizon):
         recs.append(recommendation('EXCESO_STOCK',f'El inventario equivale a {coverage:.1f} días de demanda observada.',
             {'coverage_days':coverage,'replenishment_point':replenishment_point},'review_days',parameters['review_days'],confidence=confidence))
     if position is not None and avg>0 and position<target:
-        recs.append(recommendation('STOCK_INSUFICIENTE','El disponible previsto está por debajo del objetivo mínimo más consumo hasta la próxima reposición.',
+        recs.append(recommendation('STOCK_INSUFICIENTE','El disponible previsto está por debajo del objetivo de reposición elegido.',
             {'position':position,'target':target,'minimum':minimum,'expected_cycle_consumption':expected_consumption},'review_days',parameters['review_days'],confidence=confidence))
     if stats['irregular']:
-        recs.append(recommendation('DEMANDA_IRREGULAR','Ventas intermitentes: se utiliza un percentil empírico o se requiere revisión, no el modelo normal de forma ciega.',
+        recs.append(recommendation('DEMANDA_IRREGULAR','Ventas irregulares: revisa la seguridad calculada con la desviación observada.' if parameters['simple_formula'] else 'Ventas intermitentes: se utiliza un percentil empírico o se requiere revisión, no el modelo normal de forma ciega.',
             {'sales_days':stats['sales_days'],'observed_days':stats['days'],'method':method}))
     if stats['gross_sales']==0:
         recs.append(recommendation('SIN_MOVIMIENTO',f"No registra ventas en los {stats['days']} días observados; revisar mínimo de exposición.",
@@ -200,7 +217,7 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
     if not article.get('area_id'):
         recs.append(recommendation('SIN_CLASIFICACION','El artículo no tiene área comercial B2B.',{'sku':article['sku']}))
     if avg>0 and (safety>3*avg*horizon or target/avg>max(90,3*horizon)):
-        recs.append(recommendation('PARAMETROS_REVISAR','La seguridad o el punto de reposición generan una cobertura elevada respecto a la demanda.',
+        recs.append(recommendation('PARAMETROS_REVISAR','La seguridad o el objetivo de reposición generan una cobertura elevada respecto a la demanda.',
             {'safety':safety,'horizon_demand':avg*horizon,'target_coverage':target/avg},'max_coverage_days',parameters['max_coverage_days']))
     if quantity>max(1000,avg*horizon*10) or (stats['gross_sales']==0 and quantity>0) or (avg>0 and quantity==0 and position is not None and position<minimum):
         recs.append(recommendation('PROPUESTA_REVISAR','Revisar una cantidad elevada, una reposición sin ventas o una reposición cero bajo el mínimo.',
@@ -209,33 +226,69 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
         'outgoing':stock['outgoing'] if stock else None,'inventory_position':position,'gross_sales':stats['gross_sales'],
         'returns':stats['returns'],'total_demand':stats['total_demand'],'daily_mean':avg,'daily_std':std,'sales_days':stats['sales_days'],
         'last_sale':stats['last_sale'],'observed_days':stats['days'],'irregular':stats['irregular'],'new_article':stats['new_article'],
-        'calculation_model':'MINIMUM_PLUS_CYCLE_DEMAND','replenishment_point':replenishment_point,'target_stock':target,'expected_cycle_consumption':expected_consumption,'safety_stock':safety,'minimum_stock':minimum,'maximum_stock':maximum,'calculated_quantity':calculated,
+        'overstock':overstock,'excess_stock':excess,'no_consumption':stats['total_demand']<=0,'target_mode':parameters['target_mode'],
+        'calculation_model':'MAXIMUM_COVERAGE' if parameters['target_mode']=='MAXIMUM' else 'MINIMUM_PLUS_CYCLE_DEMAND','replenishment_point':replenishment_point,'target_stock':target,'expected_cycle_consumption':expected_consumption,'safety_stock':safety,'minimum_stock':minimum,'maximum_stock':maximum,'calculated_quantity':calculated,
         'recommended_quantity':round(quantity,6),'adjusted_quantity':None,'final_quantity':round(quantity,6),'coverage_days':coverage,
         'confidence':confidence,'method':method,'comparables':comparable,'parameters':parameters,'applied_rules':rules,
         'parameter_origins':origins,'recommendations':recs,'manual_parameters':{},'effective_multiple':dispatch_multiple,'quantity_before_rounding':before_rounding,
-        'calculation':{'horizon':horizon,'z':z,'formula':'Punto de reposición = ceil(stock mínimo + consumo diario × días hasta próxima reposición); cantidad = max(0, objetivo − disponible previsto). Solo los límites explícitos pueden reducir el objetivo.',
+        'calculation':{'horizon':horizon,'z':z,'formula':('Stock máximo = ceil(stock mínimo + consumo diario × días de cobertura máxima)' if parameters['target_mode']=='MAXIMUM' else 'Punto de reposición = ceil(stock mínimo + consumo diario × días hasta próxima reposición)') + '; cantidad = max(0, objetivo − disponible previsto).',
             'safety_formula':'ceil(Z × desviación diaria × sqrt(horizonte))' if method=='REVISION_PERIODICA' else 'Modelo alternativo explicado en método y recomendaciones',
-            'dispatch_days':parameters['review_days'],'lead_days':parameters['lead_days'],'raw_maximum':raw_maximum,'window_start':stats['start'],'window_end':stats['end']}}
+            'maximum_formula':'ceil(stock mínimo + consumo diario × días de cobertura máxima)', 'minimum_formula':'ceil(consumo diario × plazo de llegada + stock de seguridad)', 'dispatch_days':parameters['review_days'],'lead_days':parameters['lead_days'],'raw_maximum':raw_maximum,'window_start':stats['start'],'window_end':stats['end']}}
     if include_daily:result['daily_sales']=stats['daily']
     return result
 
 def annotate_central(results,source):
+    """Comprueba la propuesta conjunta sin prometer entradas pendientes ni asignar dos veces stock."""
     central={row['sku']:row for row in source['stocks'] if row['delegation']=='00'}
-    totals=defaultdict(float)
-    for row in results:totals[row['sku']]+=row['final_quantity']
-    for row in results:
-        row['recommendations']=[r for r in row['recommendations'] if r['code'] not in ('CENTRAL_INSUFICIENTE','CENTRAL_SIN_DATOS')]
-        stock=central.get(row['sku']);available=stock['stock']+stock['incoming']-stock['outgoing'] if stock else None
-        row['central_position']=available;row['central_total_requested']=totals[row['sku']]
-        if totals[row['sku']]>0 and (available is None or totals[row['sku']]>max(0,available)):
-            row['recommendations'].append(recommendation('CENTRAL_SIN_DATOS' if available is None else 'CENTRAL_INSUFICIENTE',
-                'La propuesta conjunta requiere revisar existencias consolidadas de Almeiras; no se supone stock transferible.',
-                {'total_requested':totals[row['sku']],'central_position':available}))
+    articles={row['sku']:row for row in source['articles']}
+    groups=defaultdict(list);sales_index={}
+    for row in source['sales']:
+        key=(row['sku'],row['delegation'],row['day']);old=sales_index.get(key,(0,0))
+        sales_index[key]=(old[0]+row['sold'],old[1]+row['returned'])
+    central_sales_known='00' in source.get('sales_delegations',[]) or any(row['delegation']=='00' for row in source['sales'])
+    for row in results:groups[row['sku']].append(row)
+    for sku,rows in groups.items():
+        stock=central.get(sku);total=sum(row['final_quantity'] for row in rows)
+        stats_cache={};reserve=0;central_avg=0;reserve_days=0;central_std=0
+        for row in rows:
+            params=Parameters.model_validate(row['parameters']).model_dump()
+            history=params['history_days']
+            if history not in stats_cache:
+                stats_cache[history]=demand_statistics(articles[sku],'00',source,params,sales_index)
+            stats=stats_cache[history];avg=stats['daily_mean'];std=stats['daily_std']
+            risk=params['lead_days']+params['central_reserve_days']
+            safety=ceil(NormalDist().inv_cdf(params['service_level']/100)*std*sqrt(risk))
+            required=ceil(avg*(params['lead_days']+params['central_reserve_days'])+safety)
+            reserve=max(reserve,required);central_avg=max(central_avg,avg);central_std=max(central_std,std)
+            reserve_days=max(reserve_days,params['central_reserve_days'])
+        valid_stock=stock is not None and stock['stock']>=0 and stock['outgoing']>=0 and stock['incoming']>=0
+        valid_history=central_sales_known and not any(stats['created_in_future'] for stats in stats_cache.values())
+        # PendienteRecibir se muestra, pero no se promete como stock físico transferible.
+        physical=max(0,stock['stock']-stock['outgoing']) if valid_stock else None
+        available=max(0,physical-reserve) if physical is not None and valid_history else None
+        covered=bool(total>0 and available is not None and total<=available+1e-8)
+        for row in rows:
+            row['recommendations']=[r for r in row['recommendations'] if r['code'] not in ('CENTRAL_INSUFICIENTE','CENTRAL_SIN_DATOS')]
+            row.update(central_stock=stock['stock'] if stock else None,central_incoming=stock['incoming'] if stock else None,
+                central_outgoing=stock['outgoing'] if stock else None,
+                central_position=stock['stock']+stock['incoming']-stock['outgoing'] if stock else None,
+                central_physical_available=physical,central_monthly_consumption=central_avg*30 if valid_history else None,
+                central_daily_mean=central_avg if valid_history else None,central_daily_std=central_std if valid_history else None,
+                central_reserve=reserve if valid_history else None,central_reserve_days=reserve_days,
+                central_available=available,central_total_requested=total,central_can_supply=covered and row['final_quantity']>0,
+                central_shortage=max(0,total-available) if available is not None else None)
+            if total>0 and not covered:
+                row['recommendations'].append(recommendation('CENTRAL_SIN_DATOS' if available is None else 'CENTRAL_INSUFICIENTE',
+                    'No se puede asegurar despacho: faltan datos de stock o consumo de Almeiras.' if available is None else
+                    'Almeiras no cubre la propuesta conjunta después de reservar su consumo. No despachar esta propuesta completa sin provocar una rotura de stock.',
+                    {'total_requested':total,'central_available':available,'central_stock':row['central_stock'],
+                     'central_reserve':row['central_reserve'],'central_monthly_consumption':row['central_monthly_consumption']}))
 
 def summarize(results):
     coverage=[row.get('target_stock',row['maximum_stock'])/row['daily_mean'] for row in results if row['daily_mean']>0]
     return {'articles_analyzed':len({row['sku'] for row in results}),'article_delegations':len(results),
         'to_replenish':sum(row['final_quantity']>0 for row in results),'units_proposed':sum(row['final_quantity'] for row in results),
-        'without_movement':sum(row['gross_sales']==0 for row in results),'irregular':sum(row['irregular'] for row in results),
+        'overstock':sum(row.get('overstock',False) for row in results),'central_covered':sum(row.get('central_can_supply',False) for row in results),
+        'without_movement':sum(row.get('no_consumption',row['gross_sales']==0) for row in results),'irregular':sum(row['irregular'] for row in results),
         'alerts':sum(len(row['recommendations']) for row in results),'target_stock':sum(row.get('target_stock',row['maximum_stock']) for row in results),
         'average_coverage_days':mean(coverage) if coverage else None}

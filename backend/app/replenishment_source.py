@@ -28,7 +28,7 @@ def read_replenishment_source(start: date, end: date, skus: list[str] | None = N
         raise ValueError('El límite debe estar entre 1 y 100.000 artículos')
     captured=datetime.now(timezone.utc).isoformat()
     if skus == []:
-        return {'captured_at':captured,'article_limit':max_articles,'company':1,'start':start.isoformat(),'end':end.isoformat(),'articles':[],'sales':[],'stocks':[]}
+        return {'captured_at':captured,'article_limit':max_articles,'sales_delegations':['00','01','02','04','05'],'company':1,'start':start.isoformat(),'end':end.isoformat(),'articles':[],'sales':[],'stocks':[]}
     if skus is not None and len(skus)>max_articles:
         raise ValueError(f'La selección supera el límite configurado de {max_articles:,} artículos. Amplíalo en Configuración o acota los filtros')
     article_rows=[]; sales=[]; stocks=[]
@@ -65,7 +65,7 @@ def read_replenishment_source(start: date, end: date, skus: list[str] | None = N
                 ON avc.NumeroAlbaran=avl.NumeroAlbaran AND avc.EjercicioAlbaran=avl.EjercicioAlbaran
                 AND avc.CodigoEmpresa=avl.CodigoEmpresa
                 WHERE avc.CodigoEmpresa=1 AND avc.FechaAlbaran>=%s AND avc.FechaAlbaran<%s
-                AND avc.IdDelegacion IN ('01','02','04','05') AND avl.CodigoArticulo IN ({marks})
+                AND avc.IdDelegacion IN ('00','01','02','04','05') AND avl.CodigoArticulo IN ({marks})
                 GROUP BY avl.CodigoArticulo,avc.IdDelegacion,CONVERT(date,avc.FechaAlbaran)''',
                 (start,end+timedelta(days=1),*batch))
             sales.extend({'sku':str(row['sku']).strip(),'delegation':str(row['delegation']).strip(),
@@ -78,5 +78,5 @@ def read_replenishment_source(start: date, end: date, skus: list[str] | None = N
     keys=[(row['sku'],row['delegation']) for row in stocks]
     if len(keys)!=len(set(keys)):
         raise ValueError('La vista de stock devuelve más de una fila por artículo/delegación. No se sumará stock consolidado duplicado')
-    return {'captured_at':datetime.now(timezone.utc).isoformat(),'extraction_started_at':captured,'article_limit':max_articles,'company':1,'start':start.isoformat(),'end':end.isoformat(),
+    return {'captured_at':datetime.now(timezone.utc).isoformat(),'extraction_started_at':captured,'article_limit':max_articles,'sales_delegations':['00','01','02','04','05'],'company':1,'start':start.isoformat(),'end':end.isoformat(),
             'articles':articles,'sales':sales,'stocks':stocks}
