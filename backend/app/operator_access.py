@@ -190,7 +190,13 @@ def provision_rpa(db):
     source = matches[0]
     existing = linked(db, source['code'])
     if existing:
-        return False  # No restablecer claves, permisos ni accesos deshabilitados al reiniciar.
+        if existing.permissions.get('all_delegations') is not True:
+            existing.permissions = {**existing.permissions, 'all_delegations': True}
+            account = db.get(User, existing.user_id)
+            revoke(db, account)
+            audit(db, None, 'OPERATOR_RPA_ALL_DELEGATIONS', 'USER', account.public_id, {'exit_code': source['code']})
+            db.commit()
+        return False  # Conserva contraseña, estado activo y permisos de las opciones.
     legacy = db.scalar(select(User).where(func.lower(User.email) == 'operador@bermudez.test'))
     email = (source.get('email') or 'rpa').strip().lower()
     if len(email)>200:raise RuntimeError('El correo de RPA supera 200 caracteres')

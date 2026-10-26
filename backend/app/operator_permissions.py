@@ -3,7 +3,7 @@ from fastapi import HTTPException
 from .models import OperatorAccess
 
 MODULES = {'orders': 'Pedidos', 'replenishment': 'Reposición', 'settings': 'Parámetros',
-           'customers': 'Accesos de clientes', 'categories': 'Categorías e imágenes', 'users': 'Accesos de usuarios'}
+           'customers': 'Accesos de clientes', 'categories': 'Categorías e imágenes', 'users': 'Accesos de usuarios', 'all_delegations': 'Operar en todas las delegaciones'}
 
 
 def permissions_for(user, db):
@@ -40,3 +40,12 @@ def check_operator_path(user, db, path, method):
         module = 'settings'
     if module and not permissions_for(user, db).get(module):
         raise HTTPException(403, 'No tienes permiso para acceder a ' + MODULES[module])
+
+
+def can_operate_delegation(user, db, company, delegation):
+    if user.role == 'ADMIN':
+        return True
+    if user.role != 'OPERADOR_TIENDA':
+        return False
+    access = db.get(OperatorAccess, user.id)
+    return bool(access and access.permissions.get('all_delegations') is True) or (user.company_code, user.delegation_code) == (company, delegation)

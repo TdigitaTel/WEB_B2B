@@ -1,3 +1,4 @@
+from .operator_permissions import can_operate_delegation
 from datetime import date, datetime, timezone, timedelta
 from decimal import Decimal
 from functools import lru_cache
@@ -1615,7 +1616,7 @@ def delete_operator_web_order(order_id: str, user: User = Depends(require_roles(
 @app.post("/api/v1/store/orders/{order_id}/retry")
 def retry_web_order(order_id: str, user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
     order = db.scalar(select(Order).where(Order.public_id == order_id).with_for_update())
-    if not order or (user.role == "OPERADOR_TIENDA" and (order.company_code, order.delegation_code) != (user.company_code, user.delegation_code)):
+    if not order or (not can_operate_delegation(user, db, order.company_code, order.delegation_code)):
         raise HTTPException(404, "Pedido no encontrado")
     if order.origen_pedido != "B2B" or order.nro_pedido_exit or order.delivered_at or order.estado_registro_exit not in {"PENDIENTE", "REGISTRADO", "EN_PROCESO"}:
         raise HTTPException(409, "Solo se pueden reactivar pedidos WEB sin registro en EXIT")
@@ -1649,13 +1650,13 @@ def confirm_delivery(data: DeliveryConfirmation, user: User = Depends(require_ro
         if not record or "PEDIDOGENERADOWEBB2B" not in "".join(str(record.auxiliary_reference or "").upper().split()):
             raise HTTPException(404, "Pedido WEB no encontrado")
         store = resolve_delegation(record.store_code, company_code=record.company_code)
-        if not store or (user.role == "OPERADOR_TIENDA" and (store.company, store.code) != (user.company_code, user.delegation_code)):
+        if not store or (not can_operate_delegation(user, db, store.company, store.code)):
             raise HTTPException(404, "Pedido no encontrado")
         linked = db.scalar(select(Order).where(Order.order_number == record.customer_reference, Order.origen_pedido == "B2B")) if record.customer_reference else None
         if linked:
             record = record.model_copy(update={"web_order_number": linked.order_number})
         order = upsert_exit_order(db, record, user)
-    if user.role == "OPERADOR_TIENDA" and (order.company_code, order.delegation_code) != (user.company_code, user.delegation_code):
+    if not can_operate_delegation(user, db, order.company_code, order.delegation_code):
         raise HTTPException(404, "Pedido no encontrado")
     if order.delivered_at:
         return order_payload(order, db, True)
@@ -1675,7 +1676,7 @@ def confirm_delivery(data: DeliveryConfirmation, user: User = Depends(require_ro
 @app.post("/api/v1/store/orders/{order_id}/transitions")
 def transition(order_id: str, data: StatusChange, user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
     order = db.scalar(select(Order).where(Order.public_id == order_id))
-    if not order or (user.role == "OPERADOR_TIENDA" and (order.company_code, order.delegation_code) != (user.company_code, user.delegation_code)): raise HTTPException(404, "Pedido no encontrado")
+    if not order or (not can_operate_delegation(user, db, order.company_code, order.delegation_code)): raise HTTPException(404, "Pedido no encontrado")
     new_status = data.estado_registro_exit.strip().upper()
     if new_status not in ALLOWED_TRANSITIONS.get(order.estado_registro_exit, set()):
         raise HTTPException(409, f"No se puede pasar de {order.estado_registro_exit} a {new_status}")
