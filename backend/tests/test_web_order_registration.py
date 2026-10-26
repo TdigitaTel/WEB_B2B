@@ -145,7 +145,7 @@ def test_manual_exit_rejects_invalid_future_and_nonexistent_madrid_time():
         assert not db.scalars(select(OrderStatusHistory).where(OrderStatusHistory.order_id==pk)).all()
 
 
-def test_only_registered_can_be_reset_to_pending():
+def test_only_registered_or_blocked_can_be_reset_to_pending():
     from datetime import datetime, timezone
     operator=TestClient(app)
     operator.post('/api/v1/auth/login',json={'email':'operador@bermudez.test','password':'123456'})
@@ -160,10 +160,31 @@ def test_only_registered_can_be_reset_to_pending():
         db.commit()
     for public_id,pk,state,number in cases:
         response=operator.patch(f'/api/v1/store/orders/{public_id}/registration',json={'state':'PENDIENTE'})
-        assert response.status_code==(200 if state=='REGISTRADO' else 409),response.text
+        assert response.status_code==(200 if state in {'REGISTRADO','BLOQUEADO'} else 409),response.text
         with SessionLocal() as db:
             row=db.get(Order,pk)
-            assert row.estado_registro_exit==('PENDIENTE' if state=='REGISTRADO' else state)
-            assert row.nro_pedido_exit==(None if state=='REGISTRADO' else number)
-            if state!='REGISTRADO':
+            assert row.estado_registro_exit==('PENDIENTE' if state in {'REGISTRADO','BLOQUEADO'} else state)
+            assert row.nro_pedido_exit==(None if state in {'REGISTRADO','BLOQUEADO'} else number)
+            if state not in {'REGISTRADO','BLOQUEADO'}:
                 assert not db.scalars(select(OrderStatusHistory).where(OrderStatusHistory.order_id==pk)).all()
+
+
+def test_delivered_registered_or_blocked_cannot_be_reset_to_pending():
+    from datetime import datetime, timezone
+    operator = TestClient(app)
+    operator.post('/api/v1/auth/login', json={'email': 'operador@bermudez.test', 'password': '123456'})
+    for state in ('REGISTRADO', 'BLOQUEADO'):
+        with SessionLocal() as db:
+            actor = db.scalar(select(User).where(User.role == 'OPERADOR_TIENDA'))
+            row = Order(order_number='WEB-DELIVERED-RESET-' + state, company_code=actor.company_code,
+                        delegation_code='00', origen_pedido='B2B', estado_registro_exit=state,
+                        delivered_at=datetime.now(timezone.utc))
+            db.add(row); db.commit()
+            public_id, pk = row.public_id, row.id
+        response = operator.patch(f'/api/v1/store/orders/{public_id}/registration', json={'state': 'PENDIENTE'})
+        assert response.status_code == 409, response.text
+        with SessionLocal() as db:
+            row = db.get(Order, pk)
+            assert row.estado_registro_exit == state
+            assert row.delivered_at is not None
+            assert not db.scalars(select(OrderStatusHistory).where(OrderStatusHistory.order_id == pk)).all()

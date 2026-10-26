@@ -1528,8 +1528,8 @@ def change_web_pickup(order_id: str, data: PickupChange,
 def change_web_registration(order_id: str, data: WebOrderRegistrationChange,
                             user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
     order = operator_web_order(db, order_id)
-    if data.state == "PENDIENTE" and (order.estado_registro_exit != "REGISTRADO" or order.delivered_at):
-        raise HTTPException(409, "Solo se puede volver a PENDIENTE desde REGISTRADO y sin entrega confirmada")
+    if data.state == "PENDIENTE" and (order.estado_registro_exit not in {"REGISTRADO", "BLOQUEADO"} or order.delivered_at):
+        raise HTTPException(409, "Solo se puede volver a PENDIENTE desde REGISTRADO o BLOQUEADO y sin entrega confirmada")
     previous = {"state": order.estado_registro_exit, "exit_order_number": order.nro_pedido_exit, "exit_registered_at": order.fecha_registro_exit.isoformat() if order.fecha_registro_exit else None}
     number = (data.exit_order_number or "").strip().replace("~", "/").upper()
     if data.state == "REGISTRADO":
