@@ -12,6 +12,12 @@ def number(value):
         raise ValueError('EXIT devolvió una cantidad no finita')
     return result
 
+def dispatch_multiple(value):
+    try:
+        return number(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
 def stamp(value):
     return value.isoformat() if isinstance(value,(date,datetime)) else str(value) if value is not None else None
 
@@ -31,7 +37,7 @@ def read_replenishment_source(start: date, end: date, skus: list[str] | None = N
             if batch is not None:
                 where+=' AND codigoarticulo IN ('+','.join(['%s']*len(batch))+')';params.extend(batch)
             cursor.execute(f'''SELECT TOP {MAX_ARTICLES+1} codigoarticulo, descripcionarticulo, EX_tipounidad,
-                inactivo, fechaalta, codigoalternativo7, codigoalternativo8, codigoalternativo9, codigoalternativo10
+                inactivo, fechaalta, EX_multiplo, codigoalternativo7, codigoalternativo8, codigoalternativo9, codigoalternativo10
                 FROM dbo.articulos WHERE {where} ORDER BY codigoarticulo''',tuple(params))
             article_rows.extend(cursor.fetchall())
         if len(article_rows)>MAX_ARTICLES:
@@ -43,7 +49,7 @@ def read_replenishment_source(start: date, end: date, skus: list[str] | None = N
             if sku in seen:raise ValueError(f'Código de artículo duplicado en EXIT: {sku}')
             seen.add(sku)
             articles.append({'sku':sku,'description':str(row.get('descripcionarticulo') or sku),
-                'unit_type':str(row.get('ex_tipounidad') or ''),'created_at':stamp(row.get('fechaalta')),
+                'exit_multiple':dispatch_multiple(row.get('ex_multiplo')),'unit_type':str(row.get('ex_tipounidad') or ''),'created_at':stamp(row.get('fechaalta')),
                 'alternatives':{str(i):str(row.get(f'codigoalternativo{i}') or '') for i in range(7,11)}})
         codes=[row['sku'] for row in articles]
         for offset in range(0,len(codes),1000):
