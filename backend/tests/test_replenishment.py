@@ -146,7 +146,7 @@ def test_source_sql_is_read_only_uses_prompt_fields_and_rejects_duplicate_stock(
         def __exit__(self,*args):pass
         def execute(self,sql,params=()):self.sql=sql;calls.append((sql,params))
         def fetchall(self):
-            if 'FROM dbo.articulos' in self.sql:return [{'codigoarticulo':'03009','descripcionarticulo':'Material','EX_tipounidad':'UD','inactivo':0,'fechaalta':date(2020,1,1)}]
+            if 'FROM dbo.articulos' in self.sql:return [{'codigoarticulo':'03009','descripcionarticulo':'Material','EX_tipounidad':'UD','inactivo':0,'fechaalta':date(2020,1,1),'EX_multiplo':6}]
             if 'AlbaranVentaCabecera' in self.sql:return [{'sku':'03009','delegation':'02','day':date(2026,1,5),'sold':4,'returned':1}]
             rows=[{'sku':'03009','delegation':'00','stock':10,'incoming':2,'outgoing':1}]
             return rows*2 if duplicate else rows
@@ -157,6 +157,8 @@ def test_source_sql_is_read_only_uses_prompt_fields_and_rejects_duplicate_stock(
     monkeypatch.setattr(module,'connect_sqlserver',connect)
     result=module.read_replenishment_source(date(2026,1,1),date(2026,1,31),['03009'])
     assert result['articles'][0]['sku']=='03009'
+    assert result['articles'][0]['exit_multiple']==6
+    assert 'EX_multiplo' in calls[0][0]
     assert result['sales'][0]['sold']==4 and result['sales'][0]['returned']==1
     assert len(result['stocks'])==1 and result['stocks'][0]['stock']==10
     assert all(sql.strip().upper().startswith('SELECT') for sql,params in calls)
@@ -181,3 +183,48 @@ def test_source_context_and_history_differences_are_disclosed(monkeypatch):
     assert not client.get(prefix+'/compare',params={'a':a['id'],'b':c['id']}).json()['same_source_context']
     rows=client.get(f"{prefix}/simulations/{a['id']}/results",params={'needed_only':True,'alerts_only':True,'q':'Material','sort':'quantity'}).json()
     assert rows['total']==1 and len(rows['items'])==1
+
+@pytest.mark.parametrize('mode,expected', [('EXIT',84),('MANUAL',80),('NONE',78)])
+def test_dispatch_multiple_modes(mode,expected):
+    source=source_for();source['articles'][0]['exit_multiple']=12
+    row=calculate(source,{'multiple_mode':mode,'multiple':10})
+    assert row['quantity_before_rounding']==78
+    assert row['final_quantity']==expected
+    assert row['effective_multiple']==({'EXIT':12,'MANUAL':10,'NONE':None}[mode])
+    # A full dispatch group must not add an extra group.
+    source['stocks'][1]['stock']=8
+    assert calculate(source,{'multiple_mode':'EXIT'})['final_quantity']==72
+
+@pytest.mark.parametrize('value', [None,0,-1,'bad'])
+def test_invalid_exit_multiple_requires_review(value):
+    source=source_for();source['articles'][0]['exit_multiple']=value
+    row=calculate(source,{'multiple_mode':'EXIT'})
+    assert row['final_quantity']==0 and row['effective_multiple'] is None
+    assert 'MULTIPLO_EXIT_INVALIDO' in [note['code'] for note in row['recommendations']]
+    # The same data must not block an explicitly ungrouped calculation.
+    assert calculate(source,{'multiple_mode':'NONE'})['final_quantity']==78
+
+
+def test_dispatch_days_and_decimal_exit_multiple():
+    source=source_for();source['articles'][0]['exit_multiple']=2.5
+    row=calculate(source,{'multiple_mode':'EXIT','review_days':3,'lead_days':1})
+    assert row['calculation']['horizon']==4 and row['maximum_stock']==40
+    assert row['quantity_before_rounding']==38 and row['final_quantity']==40
+    assert row['calculation']['dispatch_days']==3 and row['calculation']['lead_days']==1
+    row=calculate(source,{'multiple_mode':'EXIT','review_days':1,'lead_days':0,'enabled':False})
+    assert row['final_quantity']==0
+
+
+def test_manual_adjustment_must_respect_exit_dispatch_multiple(monkeypatch):
+    import app.replenishment as module
+    raw=source_for();raw['articles'][0]['exit_multiple']=12
+    monkeypatch.setattr(module,'read_replenishment_source',lambda *args:raw)
+    client=login();prefix='/api/v1/store/replenishment'
+    scenario=client.post(prefix+'/simulations',json={'filters':{'date_from':raw['start'],'date_to':raw['end'],'delegations':['02']},'temporary_parameters':{'multiple_mode':'EXIT','review_days':7}}).json()
+    item=client.get(f"{prefix}/simulations/{scenario['id']}/results").json()['items'][0]
+    assert item['final_quantity']==84
+    path=f"{prefix}/simulations/{scenario['id']}/results/{item['id']}/adjustments"
+    response=client.post(path,json={'quantity':5,'reason':'Prueba de formato','expected_version':1})
+    assert response.status_code==422 and 'múltiplo de 12' in response.json()['detail']
+    response=client.post(path,json={'quantity':24,'reason':'Dos agrupaciones','expected_version':1})
+    assert response.status_code==200 and response.json()['result']['final_quantity']==24

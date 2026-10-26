@@ -40,3 +40,11 @@ API: `/api/v1/store/replenishment` (opciones, políticas, simulaciones, resultad
 Por indicación del usuario se confía en las tablas y campos del documento. Las pruebas locales utilizan datos de prueba: no confirman la conexión ni la extracción real de EXIT.
 
 Antes de uso operativo: ejecutar extracción acotada; contrastar un artículo por delegación con albaranes y stock; comprobar unidades, empresa de la vista y unicidad de las tres claves de unión; revisar devoluciones, días sin venta y propuesta conjunta contra 00. Si EXIT devuelve un error de esquema, ajustar explícitamente con ese diagnóstico.
+
+## Formato y periodo de despacho
+
+El periodo de despacho se configura por política (clave compatible `review_days`): días de consumo a cubrir, a los que se suma el plazo de llegada (`lead_days`). Se muestra su suma en el detalle. No es el periodo histórico de ventas.
+
+`multiple_mode` permite NONE (sin agrupación), MANUAL (parámetro `multiple`) o EXIT (campo exacto `dbo.articulos.EX_multiplo`, conservado en la captura). Se redondea hacia arriba al siguiente grupo completo y se advierte si supera el objetivo. Ejemplo: 13 unidades con múltiplo 6 → 18. El modo predeterminado MANUAL conserva las políticas anteriores.
+
+En modo EXIT, un múltiplo ausente, cero, negativo o inválido deja la propuesta en cero con un aviso, sin asumir otro formato. Los ajustes manuales positivos deben respetar ese múltiplo o se rechazan con explicación. Excluir o ajustar a cero continúa permitido. Excel incluye múltiplo de EXIT, aplicado y cantidad previa al redondeo.

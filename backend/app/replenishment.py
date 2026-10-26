@@ -17,7 +17,7 @@ from .db import get_db
 from .models import (AuditEvent, MaterialArea, MaterialFamily, MaterialSubfamily, MaterialProductType, Product,
     ReplenishmentPolicy as Policy, ReplenishmentScenario as Scenario, ReplenishmentResult as Result,
     ReplenishmentAdjustment as Adjustment, User)
-from .replenishment_engine import Parameters, PRECEDENCE, prepare_context, calculate_article, annotate_central, summarize
+from .replenishment_engine import Parameters, PRECEDENCE, prepare_context, calculate_article, annotate_central, summarize, rounded_dispatch
 from .replenishment_source import DELEGATIONS, read_replenishment_source
 
 operator=require_roles('ADMIN','OPERADOR_TIENDA')
@@ -258,6 +258,11 @@ def adjust(scenario_id:str,result_id:int,body:AdjustmentInput,db:Session=Depends
     try:updated=calculate_article(article,row.delegation,context,patch)
     except ValueError as exc:raise HTTPException(422,str(exc)) from exc
     updated['manual_parameters']=patch
+    if not body.excluded and body.quantity is not None and body.quantity>0 and updated['parameters']['multiple_mode']=='EXIT':
+        multiple=updated['effective_multiple']
+        if multiple is None:raise HTTPException(422,'No hay un EX_multiplo válido. Corrige EXIT o selecciona otro modo de agrupación')
+        if abs(rounded_dispatch(body.quantity,multiple)-body.quantity)>1e-8:
+            raise HTTPException(422,f'La cantidad ajustada debe ser múltiplo de {multiple:g}, según EX_multiplo de EXIT')
     updated['adjusted_quantity']=0 if body.excluded else body.quantity
     updated['final_quantity']=updated['recommended_quantity'] if updated['adjusted_quantity'] is None else updated['adjusted_quantity']
     updated['manually_excluded']=body.excluded;updated['calculated_quantity']=previous['calculated_quantity']
@@ -292,7 +297,7 @@ def export(scenario_id:str,db:Session=Depends(get_db)):
     fields=[('sku','Código'),('description','Descripción'),('delegation','Delegación'),('unit_type','Tipo unidad'),('family','Familia'),
         ('stock','Stock'),('incoming','Pendiente recibir'),('outgoing','Pendiente servir'),('inventory_position','Posición'),('daily_mean','Consumo diario'),
         ('safety_stock','Seguridad'),('minimum_stock','Mínimo'),('maximum_stock','Máximo'),('calculated_quantity','Cantidad calculada'),
-        ('recommended_quantity','Cantidad recomendada'),('adjusted_quantity','Ajuste manual'),('final_quantity','Cantidad final'),('method','Método'),('confidence','Confianza')]
+        ('exit_multiple','Múltiplo EXIT'),('effective_multiple','Múltiplo aplicado'),('quantity_before_rounding','Cantidad antes de agrupar'),('recommended_quantity','Cantidad recomendada'),('adjusted_quantity','Ajuste manual'),('final_quantity','Cantidad final'),('method','Método'),('confidence','Confianza')]
     sheet.append([label for _,label in fields]+['Reglas aplicadas','Recomendaciones'])
     for result in rows:
         row=result.payload;values=[row.get(key) for key,_ in fields]+[' → '.join(row['applied_rules']),'; '.join(item['reason'] for item in row['recommendations'])]
