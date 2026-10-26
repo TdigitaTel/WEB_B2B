@@ -14,7 +14,7 @@ bootstrap()
 def source_for(skus=('03009',),values=None,stock=2):
     values=values if values is not None else [10]*30
     start=date(2026,1,1);end=start+timedelta(days=len(values)-1)
-    return {'captured_at':'2026-02-01T10:00:00+00:00','company':1,'start':start.isoformat(),'end':end.isoformat(),
+    return {'captured_at':'2026-02-01T10:00:00+00:00','sales_delegations':['00','01','02','04','05'],'company':1,'start':start.isoformat(),'end':end.isoformat(),
         'articles':[{'sku':sku,'description':'Material '+sku,'unit_type':'UD','created_at':'2020-01-01','area_id':1,'family_id':2,'subfamily_id':3,'type_id':4} for sku in skus],
         'sales':[{'sku':sku,'delegation':'02','day':(start+timedelta(days=i)).isoformat(),'sold':value,'returned':0} for sku in skus for i,value in enumerate(values) if value],
         'stocks':[{'sku':sku,'delegation':delegation,'stock':stock if delegation=='02' else 1000,'incoming':0,'outgoing':0} for sku in skus for delegation in ('00','02')]}
@@ -100,7 +100,7 @@ def login(email='operador@bermudez.test'):
     return client
 
 
-def test_api_scenarios_adjustments_compare_export_and_permissions(monkeypatch):
+def test_api_calculation_export_and_permissions(monkeypatch):
     import app.replenishment as module
     operator=login();client=login('compras001@cliente.test')
     assert client.get('/api/v1/store/replenishment/options').status_code==403
@@ -124,17 +124,13 @@ def test_api_scenarios_adjustments_compare_export_and_permissions(monkeypatch):
     assert result['result']['recommended_quantity']==78 and result['result']['adjusted_quantity']==5
     assert result['scenario']['summary']['units_proposed']==5
     assert operator.post(f'{prefix}/simulations/{sid}/results/{rid}/adjustments',json={'quantity':6,'reason':'Edición obsoleta','expected_version':1}).status_code==409
-    saved=operator.patch(f'{prefix}/simulations/{sid}',json={'name':'Escenario A','expected_version':2}).json()
-    assert saved['saved']
-    second=operator.post(prefix+'/simulations',json={'filters':filters,'source_id':sid,'temporary_parameters':{'service_level':90,'review_days':1}}).json()
-    comparison=operator.get(prefix+'/compare',params={'a':sid,'b':second['id']}).json()
-    assert comparison['same_source_context'] is True
-    assert comparison['differences']['units_proposed']==13
+    assert operator.patch(f'{prefix}/simulations/{sid}',json={'name':'Escenario','expected_version':2}).status_code==404
+    assert operator.get(prefix+'/compare',params={'a':sid,'b':sid}).status_code==404
     exported=operator.get(f'{prefix}/simulations/{sid}/export.xlsx')
     book=load_workbook(io.BytesIO(exported.content));assert book.active['A2'].value=='03009' and book.active['A2'].data_type=='s'
     assert operator.put(prefix+'/policies',json={'scope':'DELEGATION','scope_key':'02','parameters':{'review_days':5}}).status_code==200
     assert operator.put(prefix+'/policies',json={'scope':'DELEGATION','scope_key':'99','parameters':{}}).status_code==422
-    assert operator.get(prefix+'/simulations').json()[0]['name']=='Escenario A'
+    assert operator.get(prefix+'/simulations').status_code==405
 
 
 def test_source_sql_is_read_only_uses_prompt_fields_and_rejects_duplicate_stock(monkeypatch):
@@ -175,12 +171,7 @@ def test_source_context_and_history_differences_are_disclosed(monkeypatch):
     client=login();prefix='/api/v1/store/replenishment';filters={'date_from':raw['start'],'date_to':raw['end'],'delegations':['02']}
     a=client.post(prefix+'/simulations',json={'filters':filters}).json()
     b=client.post(prefix+'/simulations',json={'filters':filters,'source_id':a['id'],'temporary_parameters':{'history_days':10}}).json()
-    compared=client.get(prefix+'/compare',params={'a':a['id'],'b':b['id']}).json()
-    assert compared['same_source_context'] and not compared['same_history_window']
-    assert 'Contextos diferentes' in compared['notice']
-    raw={**raw,'captured_at':'2026-02-02T10:00:00+00:00'}
-    c=client.post(prefix+'/simulations',json={'filters':filters}).json()
-    assert not client.get(prefix+'/compare',params={'a':a['id'],'b':c['id']}).json()['same_source_context']
+    assert client.get(prefix+'/compare',params={'a':a['id'],'b':b['id']}).status_code==404
     rows=client.get(f"{prefix}/simulations/{a['id']}/results",params={'needed_only':True,'alerts_only':True,'q':'Material','sort':'quantity'}).json()
     assert rows['total']==1 and len(rows['items'])==1
 
@@ -295,3 +286,112 @@ def test_source_handles_more_than_5000_and_enforces_configured_limit(monkeypatch
     assert 'TOP 6001' in calls[0]
     with pytest.raises(ValueError,match='límite|más de'):
         module.read_replenishment_source(date(2026,1,1),date(2026,1,31),max_articles=5000)
+
+
+def test_visible_point_and_maximum_formulas_and_no_consumption_option():
+    raw=source_for(values=[63.274/30]*30,stock=24)
+    point=calculate(raw,{'simple_formula':True,'manual_min':21,'maximum_days':30,'multiple_mode':'NONE'})
+    maximum=calculate(raw,{'simple_formula':True,'manual_min':21,'target_mode':'MAXIMUM','maximum_days':30,'multiple_mode':'NONE'})
+    assert point['replenishment_point']==36 and point['maximum_stock']==85
+    assert point['target_stock']==36 and point['final_quantity']==12
+    assert maximum['target_stock']==85 and maximum['final_quantity']==61
+    assert maximum['calculated_quantity']==61 and maximum['target_mode']=='MAXIMUM'
+    assert maximum['calculation_model']=='MAXIMUM_COVERAGE'
+    assert 'Stock máximo' in maximum['calculation']['formula']
+    excess=calculate(source_for(stock=400),{'simple_formula':True,'maximum_days':30})
+    assert excess['overstock'] and excess['excess_stock']==90 and excess['final_quantity']==0
+    with pytest.raises(ValueError):Parameters(review_days=14,maximum_days=7)
+    # No usar comparables ni una reposición contra stock negativo si se excluyen sin consumo.
+    empty=source_for(values=[0]*30,stock=-2)
+    excluded=calculate(empty,{'simple_formula':True,'exclude_no_consumption':True,'maximum_days':30})
+    assert excluded['no_consumption'] and excluded['final_quantity']==0
+    assert 'SIN_CONSUMO_EXCLUIDO' in [r['code'] for r in excluded['recommendations']]
+    assert calculate(empty,{'simple_formula':True,'exclude_no_consumption':False,'maximum_days':30})['final_quantity']==2
+
+
+def test_central_reserves_own_consumption_and_ignores_incoming_for_dispatch():
+    raw=source_for();central=raw['stocks'][0];central.update(stock=100,incoming=999,outgoing=10)
+    raw['sales'] += [{**row,'delegation':'00','sold':2} for row in list(raw['sales'])]
+    row=calculate(raw,{'simple_formula':True,'maximum_days':30,'central_reserve_days':7})
+    row['final_quantity']=30
+    second={**row,'delegation':'01','recommendations':[]}
+    annotate_central([row,second],raw)
+    assert row['central_monthly_consumption']==60
+    assert row['central_reserve']==16 and row['central_physical_available']==90
+    assert row['central_available']==74 and row['central_total_requested']==60
+    assert row['central_can_supply'] and second['central_can_supply']
+    # La propuesta se comprueba conjuntamente, no se ofrece el saldo completo a cada sede.
+    second['final_quantity']=50
+    annotate_central([row,second],raw)
+    assert row['central_total_requested']==80 and row['central_shortage']==6
+    assert not row['central_can_supply'] and not second['central_can_supply']
+    assert 'CENTRAL_INSUFICIENTE' in [r['code'] for r in row['recommendations']]
+    assert row['final_quantity']==30  # Necesidad no se confunde con despacho autorizado.
+
+
+def test_central_missing_history_missing_stock_and_negative_data_do_not_allow_dispatch():
+    raw=source_for();raw.pop('sales_delegations')
+    row=calculate(raw);annotate_central([row],raw)
+    assert row['central_available'] is None and not row['central_can_supply']
+    assert 'CENTRAL_SIN_DATOS' in [r['code'] for r in row['recommendations']]
+    raw['sales_delegations']=['00']
+    raw['stocks'][0]['stock']=-1
+    annotate_central([row],raw)
+    assert row['central_available'] is None and not row['central_can_supply']
+    raw['stocks']=raw['stocks'][1:]
+    annotate_central([row],raw)
+    assert row['central_stock'] is None and not row['central_can_supply']
+
+
+def test_api_filters_central_overstock_and_zero_consumption(monkeypatch):
+    import app.replenishment as module
+    raw=source_for(('FILTER-A','FILTER-B','FILTER-C'))
+    raw['sales']=[r for r in raw['sales'] if r['sku']!='FILTER-C']
+    for stock in raw['stocks']:
+        if stock['sku']=='FILTER-B' and stock['delegation']=='00':stock['stock']=1
+        if stock['sku']=='FILTER-C' and stock['delegation']=='02':stock['stock']=200
+    monkeypatch.setattr(module,'read_replenishment_source',lambda *args:raw)
+    client=login();prefix='/api/v1/store/replenishment'
+    run=client.post(prefix+'/simulations',json={'filters':{'date_from':raw['start'],'date_to':raw['end'],'delegations':['02']},'temporary_parameters':{'simple_formula':True,'maximum_days':30,'exclude_no_consumption':True}})
+    assert run.status_code==201,run.text
+    path=prefix+'/simulations/'+run.json()['id']+'/results'
+    def skus(**query):return [row['sku'] for row in client.get(path,params=query).json()['items']]
+    assert skus(central_only=True)==['FILTER-A']
+    assert skus(overstock_only=True)==['FILTER-C']
+    assert skus(consumption='WITHOUT')==['FILTER-C']
+    assert skus(consumption='WITH')==['FILTER-A','FILTER-B']
+    assert skus(needed_only=True)==['FILTER-A','FILTER-B']
+    assert skus(needed_only=True,consumption='WITHOUT')==[]
+    assert run.json()['summary']['overstock']==1 and run.json()['summary']['central_covered']==1
+    exported=client.get(prefix+'/simulations/'+run.json()['id']+'/export.xlsx')
+    book=load_workbook(io.BytesIO(exported.content))
+    headers=[cell.value for cell in book.active[1]]
+    assert 'Consumo mensual Almeiras' in headers and 'Disponible para despacho Almeiras' in headers
+
+
+def test_filtered_summary_and_export_all_pages_with_exit_control_characters(monkeypatch):
+    import app.replenishment as module
+    raw=source_for(tuple(f'00{i:03}' for i in range(55)))
+    raw['articles'][0]['description']='=Material\x0b de EXIT'
+    monkeypatch.setattr(module,'read_replenishment_source',lambda *args:raw)
+    client=login();prefix='/api/v1/store/replenishment'
+    run=client.post(prefix+'/simulations',json={'filters':{'date_from':raw['start'],'date_to':raw['end'],'delegations':['02']}})
+    assert run.status_code==201,run.text
+    path=prefix+'/simulations/'+run.json()['id']
+    result=client.get(path+'/results',params={'needed_only':True,'page_size':1}).json()
+    assert len(result['items'])==1 and result['total']==55
+    assert result['summary']['articles_analyzed']==55 and result['summary']['to_replenish']==55
+    response=client.get(path+'/export.xlsx',params={'needed_only':True,'sort':'sku','descending':True})
+    assert response.status_code==200
+    book=load_workbook(io.BytesIO(response.content));sheet=book.active
+    assert sheet.max_row==56 and sheet['A2'].value=='00054'
+    assert sheet['A56'].value=='00000' and sheet['A56'].data_type=='s'
+    assert sheet['B56'].value=='=Material de EXIT' and sheet['B56'].data_type=='s'
+    filtered=client.get(path+'/results',params={'q':'00000'}).json()
+    assert filtered['summary']['articles_analyzed']==1
+    response=client.get(path+'/export.xlsx',params={'q':'00000'})
+    assert load_workbook(io.BytesIO(response.content)).active.max_row==2
+    empty=client.get(path+'/results',params={'consumption':'WITHOUT'}).json()
+    assert empty['total']==0 and all(value==0 for value in empty['summary'].values())
+    response=client.get(path+'/export.xlsx',params={'consumption':'WITHOUT'})
+    assert load_workbook(io.BytesIO(response.content)).active.max_row==1

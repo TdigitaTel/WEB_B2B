@@ -31,7 +31,8 @@ def effective_permissions(user, db):
 
 def identity(user, db):
     principal = principal_for(user, db)
-    return {**effective_permissions(user, db), "is_subuser": user.parent_user_id is not None,
+    from .operator_permissions import permissions_for
+    return {"operator_permissions": permissions_for(user, db), **effective_permissions(user, db), "is_subuser": user.parent_user_id is not None,
             "can_manage_subusers": user.role in CUSTOMER_ROLES and user.parent_user_id is None,
             "own_orders_only": bool(user.own_orders_only), "principal_user_name": principal.full_name,
             "login_name": user.full_name, "access_code": user.access_code or official_code(user, db),
