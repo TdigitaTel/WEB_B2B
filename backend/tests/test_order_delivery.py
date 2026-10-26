@@ -138,7 +138,7 @@ def test_printed_exit_order_stays_attended_until_web_confirmation(monkeypatch):
     assert same_time(live['closed_at'], attended_stamp)
 
 
-def test_non_web_uses_exit_delivered_state_and_date(monkeypatch):
+def test_non_web_uses_exit_delivered_state_and_date(monkeypatch, operator_with_almeiras_access):
     from app import main as module
     operator=TestClient(app)
     operator.post('/api/v1/auth/login',json={'email':'operador@bermudez.test','password':'123456'})
@@ -161,3 +161,27 @@ def test_non_web_uses_exit_delivered_state_and_date(monkeypatch):
     assert row['operational_workflow'][-1]['occurred_at']==row['delivered_at']
     assert row['operational_workflow'][2]['occurred_at']==row['closed_at']
     assert row['closed_at']!=row['delivered_at']
+
+
+def test_all_delegations_permission_is_explicit_and_preserves_delivery_history():
+    from app.models import OperatorAccess
+    from sqlalchemy import delete
+    operator=TestClient(app)
+    assert operator.post('/api/v1/auth/login',json={'email':'operador@bermudez.test','password':'123456'}).status_code==200
+    with SessionLocal() as db:
+        user=db.scalar(select(User).where(User.email=='operador@bermudez.test'))
+        user_id=user.id
+        order=Order(order_number='WEB-ALL-DELEGATIONS',company_code=999,delegation_code='999',origen_pedido='B2B',estado_registro_exit='ATENDIDO')
+        db.add(order);db.commit();oid=order.public_id
+        previous=db.get(OperatorAccess,user_id)
+        assert previous is None
+        db.add(OperatorAccess(user_id=user_id,exit_code='TEST-ALL-SCOPE',permissions={'orders':True,'all_delegations':True}));db.commit()
+    try:
+        response=operator.post('/api/v1/store/orders/delivery',json={'order_id':oid,'order_date':'2026-10-26'})
+        assert response.status_code==200,response.text
+        stamp=response.json()['delivered_at']
+        repeat=operator.post('/api/v1/store/orders/delivery',json={'order_id':oid,'order_date':'2026-10-26'})
+        assert same_time(repeat.json()['delivered_at'],stamp)
+    finally:
+        with SessionLocal() as db:
+            db.execute(delete(OperatorAccess).where(OperatorAccess.user_id==user_id));db.commit()

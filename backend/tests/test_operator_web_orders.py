@@ -1,3 +1,5 @@
+import pytest
+pytestmark = pytest.mark.usefixtures("operator_with_almeiras_access")
 from datetime import datetime, timezone
 from sqlalchemy import select
 from app.bootstrap import main as bootstrap

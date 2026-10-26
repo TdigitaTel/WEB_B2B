@@ -1,3 +1,5 @@
+import pytest
+pytestmark = pytest.mark.usefixtures("operator_with_almeiras_access")
 from decimal import Decimal
 from fastapi.testclient import TestClient
 from sqlalchemy import select

@@ -119,9 +119,14 @@ def test_rpa_reuses_legacy_identity_and_never_resets_on_restart(monkeypatch):
             assert client.get('/api/v1/account').status_code==401
             login=TestClient(app).post('/api/v1/auth/login',json={'email':'RPA','password':'123456'})
             assert login.status_code==200 and login.json()['user']['must_change_password']
+            access=db.get(OperatorAccess,pk)
+            assert access.permissions['all_delegations'] is True
+            assert db.scalar(select(User).where(User.email=='operador@bermudez.test')) is None
+            access.permissions={key:value for key,value in access.permissions.items() if key!='all_delegations'}
             rpa.password_hash=hash_password('changed123');rpa.active=False;db.commit()
             assert not module.provision_rpa(db)
             assert verify_password('changed123',rpa.password_hash) and not rpa.active
+            assert db.get(OperatorAccess,pk).permissions['all_delegations'] is True
         finally:
             db.rollback();rpa=db.get(User,pk)
             db.execute(delete(OperatorAccess).where(OperatorAccess.user_id==pk))

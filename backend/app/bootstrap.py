@@ -185,8 +185,8 @@ def main():
         from .models import OperatorAccess, User
         from sqlalchemy import select, func
         with SessionLocal() as db:
-            ready = db.scalar(select(OperatorAccess.user_id).join(User, User.id == OperatorAccess.user_id).where(func.lower(User.access_code) == 'rpa'))
-            if ready is None:
+            ready = db.scalar(select(OperatorAccess).join(User, User.id == OperatorAccess.user_id).where(func.lower(User.access_code) == 'rpa'))
+            if ready is None or ready.permissions.get('all_delegations') is not True:
                 try:
                     provision_rpa(db)
                 except Exception:

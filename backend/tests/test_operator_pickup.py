@@ -1,3 +1,5 @@
+import pytest
+pytestmark = pytest.mark.usefixtures("operator_with_almeiras_access")
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from fastapi.testclient import TestClient
