@@ -361,7 +361,7 @@ export default function Page() {
         <button className="account-button" onClick={()=>setView("account")}><small>Hola, {user.name.split(" ")[0]}</small><b>Mi cuenta</b></button><button className="logout-button" onClick={logout}>Salir</button>
         {!isOperator && <button className="cart-button" onClick={() => setCartOpen(true)}>▤ <span>Mi carrito</span> {cart?.line_count || 0}</button>}
       </div>
-      <nav className="desktop-nav">{(isOperator ? [["ops","Operaciones"],["pickup-settings","Parámetros"],["customer-access","Accesos de clientes"],["category-upload","Carga de categorías"],["category-visibility","Categorías e imágenes"]] : [["home","Inicio"],["catalog","Catálogo"],["orders","Mis pedidos"],["documents","Albaranes y facturas"],["account","Mi cuenta"]]).filter(([id])=>id!=="documents"||user.can_view_delivery_notes!==false||user.can_view_invoices!==false).map(([id,label]) => <button key={id} className={view===id||(id==="ops"&&view==="replenishment")?"active":""} onClick={() => setView(id as View)}>{label}</button>)}</nav>
+      <nav className="desktop-nav">{(isOperator ? [["ops","Operaciones"],["replenishment","Reposición"],["pickup-settings","Parámetros"],["customer-access","Accesos de clientes"],["category-upload","Carga de categorías"],["category-visibility","Categorías e imágenes"]] : [["home","Inicio"],["catalog","Catálogo"],["orders","Mis pedidos"],["documents","Albaranes y facturas"],["account","Mi cuenta"]]).filter(([id])=>id!=="documents"||user.can_view_delivery_notes!==false||user.can_view_invoices!==false).map(([id,label]) => <button key={id} className={view===id?"active":""} onClick={() => setView(id as View)}>{label}</button>)}</nav>
     </header>
     <div className="service-strip"><span>ÁREA PROFESIONAL · Compra a tu ritmo</span><span>Almeiras · Recogida en tienda</span></div>{error && <div className="page error" role="alert">{error}</div>}
     {view === "home" && <Home key={user.id} customer={customer} products={favoriteProducts} classification={classification} onNavigate={setView} onSelectArea={areaId=>selectCatalogCategory({areaId:String(areaId),familyId:"",subfamilyId:"",productTypeId:""})} onAdd={addProduct} />}
@@ -369,13 +369,14 @@ export default function Page() {
     {view === "orders" && <Orders canViewNotes={user.can_view_delivery_notes!==false} onOpenNote={number=>{setSelectedDeliveryNote(number);setView("documents")}} showImages={!!user.show_order_images} orders={orders} refreshing={refreshingOrders} onRefresh={refreshOrders} onRepeat={repeatOrder} onSubmitDraft={submitDraft} onDelete={id=>{const order=orders.find(row=>row.id===id);if(order)setDeleteCandidate(order)}} />}
     {view === "documents" && <Documents initialNote={selectedDeliveryNote} canViewNotes={user.can_view_delivery_notes!==false} canViewInvoices={user.can_view_invoices!==false} canViewPrices={user.can_view_prices!==false} showImages={!!user.show_delivery_note_images} notes={deliveryNotes} invoices={invoices} />}
     {view === "account" && <Account user={user} customer={customer} onPreferences={preferences=>setUser(previous=>previous?{...previous,...preferences}:previous)} />}
-    {isOperator&&(view==="ops"||view==="replenishment")&&<nav className="operations-sections" aria-label="Secciones de Operaciones"><button className={view==="ops"?"active":""} onClick={()=>setView("ops")}>Pedidos</button><span>Logística →</span><button className={view==="replenishment"?"active":""} onClick={()=>setView("replenishment")}>Reposición inteligente</button></nav>}
+
     {view === "replenishment" && isOperator && <Replenishment />}
     {view === "ops" && <Operations orders={opsOrders} onRefresh={refreshOperations} />}
     {view === "pickup-settings" && isOperator && <PickupParameters />}
     {view === "customer-access" && isOperator && <CustomerAccess />}
     {view === "category-upload" && isOperator && <CategoryUpload />}
     {view === "category-visibility" && isOperator && <CategoryVisibility />}
+    {isOperator&&<nav className="mobile-nav" aria-label="Navegación de operador">{[["ops","Pedidos"],["replenishment","Reposición"],["pickup-settings","Parámetros"],["account","Cuenta"]].map(([id,label])=><button key={id} className={view===id?"active":""} onClick={()=>setView(id as View)}>{label}</button>)}</nav>}
     {!isOperator && <nav className="mobile-nav">{[["home","Inicio"],["catalog","Buscar"],["orders","Pedidos"],["account","Cuenta"]].map(([id,label]) => <button key={id} className={view===id?"active":""} onClick={() => setView(id as View)}>{label}</button>)}</nav>}
     {cartOpen && cart && <CartDrawer cart={cart} stores={stores} onClose={() => setCartOpen(false)} onContinue={()=>{setCartOpen(false);setView("catalog")}} onUpdate={updateCart} onRemove={removeCart} onCheckout={checkout} />}
     {deleteCandidate&&<DeleteOrderDialog order={deleteCandidate} onCancel={()=>setDeleteCandidate(null)} onConfirm={()=>deleteOrder(deleteCandidate.id)}/>}
