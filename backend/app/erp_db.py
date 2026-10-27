@@ -96,7 +96,7 @@ def _brand_catalog_condition(connection, article_columns):
     if brands["company"] and article_columns.get("company"):
         match += f" AND m.{_discovered_column(brands['company'])} = a.{_discovered_column(article_columns['company'])}"
     return (f"NOT EXISTS (SELECT 1 FROM {_identifier(BRAND['schema'])}.{_identifier(BRAND['table'])} m "
-            f"WHERE {match} AND m.{_discovered_column(brands['internet_b2b'])} = -1)")
+            f"WHERE {match} AND COALESCE(m.{_discovered_column(brands['internet_b2b'])}, 0) <> -1)")
 
 
 def fetch_catalog_brands():
@@ -111,7 +111,7 @@ def fetch_catalog_brands():
                        f"FROM {_identifier(BRAND['schema'])}.{_identifier(BRAND['table'])} ORDER BY {code}")
         return [{"code":str(row.get("code") or "").strip(), "name":str(row.get("name") or "").strip(),
                  "company":row.get("company"), "internet_b2b":int(row.get("internet_b2b") or 0),
-                 "visible":int(row.get("internet_b2b") or 0) != -1} for row in cursor.fetchall()]
+                 "visible":int(row.get("internet_b2b") or 0) == -1} for row in cursor.fetchall()]
 
 
 def _article_text(column: str | None, alias: str = "a", length: int = 500) -> str:
