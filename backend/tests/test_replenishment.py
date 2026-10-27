@@ -41,7 +41,7 @@ def test_regular_formula_and_zero_days_and_pending_inventory():
 
 def test_service_level_sigma_and_constraints():
     row=calculate(source_for(values=[9,10,11]*10),{'service_level':99,'max_coverage_days':2,'multiple':7})
-    expected=NormalDist().inv_cdf(.99)*row['daily_std']*sqrt(8)
+    expected=NormalDist().inv_cdf(.99)*row['daily_std']*sqrt(row['parameters']['lead_days'])
     assert row['safety_stock']==pytest.approx(expected) and row['maximum_stock']==20
     assert row['final_quantity']==21
     disabled=calculate(source_for(),{'enabled':False})
@@ -436,7 +436,25 @@ def test_rounds_only_final_dispatch_quantity(monthly,stock,outgoing,expected):
 def test_statistical_safety_keeps_decimals_until_final_quantity():
     raw=source_for(values=[0,1,2]*10)
     row=calculate(raw,{'simple_formula':True,'multiple_mode':'NONE'})
-    expected=NormalDist().inv_cdf(.95)*row['daily_std']*sqrt(8)
+    expected=NormalDist().inv_cdf(.95)*row['daily_std']*sqrt(row['parameters']['lead_days'])
     assert row['safety_stock']==pytest.approx(expected)
     assert row['minimum_stock']==pytest.approx(row['daily_mean']+expected)
     assert row['final_quantity']==ceil(max(0,row['target_stock']-row['inventory_position']))
+
+
+def test_review_days_only_change_cycle_consumption_not_statistical_safety():
+    source=source_for(values=[0,1,5]*10)
+    first=calculate(source,{'simple_formula':True,'review_days':7,'lead_days':1})
+    later=calculate(source,{'simple_formula':True,'review_days':14,'lead_days':1})
+    assert first['safety_stock']==pytest.approx(later['safety_stock'])
+    assert first['minimum_stock']==pytest.approx(later['minimum_stock'])
+    assert later['replenishment_point']-first['replenishment_point']==pytest.approx(first['daily_mean']*7)
+    slow=calculate(source,{'simple_formula':True,'review_days':7,'lead_days':4})
+    assert slow['safety_stock']==pytest.approx(first['safety_stock']*2)
+    immediate=calculate(source,{'simple_formula':True,'lead_days':0})
+    assert immediate['safety_stock']==0
+    source['sales'] += [{**sale,'delegation':'00'} for sale in list(source['sales'])]
+    short=calculate(source,{'simple_formula':True,'central_reserve_days':7})
+    long=calculate(source,{'simple_formula':True,'central_reserve_days':14})
+    annotate_central([short],source);annotate_central([long],source)
+    assert long['central_reserve']-short['central_reserve']==pytest.approx(short['central_daily_mean']*7)

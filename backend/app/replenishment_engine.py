@@ -132,7 +132,7 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
     stats=demand_statistics(article,delegation,context['source'],parameters,context['sales_index'],include_daily) if override or include_daily else context['stats'][key]
     avg,std=stats['daily_mean'],stats['daily_std'];horizon=parameters['review_days']+parameters['lead_days']
     z=NormalDist().inv_cdf(parameters['service_level']/100)
-    safety=z*std*sqrt(horizon);minimum=avg*parameters['lead_days']+safety;maximum=avg*horizon+safety
+    safety=z*std*sqrt(parameters['lead_days']);minimum=avg*parameters['lead_days']+safety;maximum=avg*horizon+safety
     method='REVISION_PERIODICA';confidence='ALTA' if stats['sales_days']>=30 and not stats['irregular'] else 'MEDIA'
     recs=[];comparable=None
     sparse=stats['sales_days']<5 or stats['new_article']
@@ -242,7 +242,7 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
         'confidence':confidence,'method':method,'comparables':comparable,'parameters':parameters,'applied_rules':rules,
         'parameter_origins':origins,'recommendations':recs,'manual_parameters':{},'effective_multiple':dispatch_multiple,'quantity_before_rounding':before_rounding,
         'calculation':{'horizon':horizon,'z':z,'formula':('Stock máximo = stock mínimo + consumo diario × días de cobertura máxima' if parameters['target_mode']=='MAXIMUM' else 'Punto de reposición = stock mínimo + consumo diario × días hasta próxima reposición') + '; cantidad = max(0, objetivo − disponible previsto).',
-            'safety_formula':'Z × desviación diaria × sqrt(horizonte)' if method=='REVISION_PERIODICA' else 'Modelo alternativo explicado en método y recomendaciones',
+            'safety_formula':'Z × desviación diaria × sqrt(plazo de llegada)' if method=='REVISION_PERIODICA' else 'Modelo alternativo explicado en método y recomendaciones',
             'maximum_formula':'stock mínimo + consumo diario × días de cobertura máxima', 'minimum_formula':'consumo diario × plazo de llegada + stock de seguridad', 'dispatch_days':parameters['review_days'],'lead_days':parameters['lead_days'],'raw_maximum':raw_maximum,'window_start':stats['start'],'window_end':stats['end']}}
     if include_daily:result['daily_sales']=stats['daily']
     return result
@@ -267,7 +267,7 @@ def annotate_central(results,source):
                 stats_cache[history]=demand_statistics(articles[sku],'00',source,params,sales_index)
             stats=stats_cache[history];avg=stats['daily_mean'];std=stats['daily_std']
             risk=params['lead_days']+params['central_reserve_days']
-            safety=NormalDist().inv_cdf(params['service_level']/100)*std*sqrt(risk)
+            safety=NormalDist().inv_cdf(params['service_level']/100)*std*sqrt(params['lead_days'])
             required=avg*(params['lead_days']+params['central_reserve_days'])+safety
             reserve=max(reserve,required);central_avg=max(central_avg,avg);central_std=max(central_std,std)
             reserve_days=max(reserve_days,params['central_reserve_days'])
