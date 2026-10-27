@@ -3,6 +3,7 @@ import hashlib
 import io
 import json
 import logging
+import math
 from datetime import date, datetime
 from typing import Literal
 from zoneinfo import ZoneInfo
@@ -328,7 +329,7 @@ def adjust(scenario_id:str,result_id:int,body:AdjustmentInput,db:Session=Depends
     db.commit();return {'scenario':scenario_payload(scenario),'result':{'id':row.id,**row.payload}}
 
 @router.get('/simulations/{scenario_id}/export.xlsx')
-def export(scenario_id:str,filters:ResultFilters=Depends(),db:Session=Depends(get_db)):
+def export(scenario_id:str,filters:ResultFilters=Depends(),db:Session=Depends(get_db),mode:Literal["simple","expanded"]="simple"):
     scenario=result_scenario(db,scenario_id)
     query=ordered_results(filtered_results(scenario.id,filters),filters.sort,filters.descending)
     rows=db.scalars(query.execution_options(yield_per=500))
@@ -343,19 +344,37 @@ def export(scenario_id:str,filters:ResultFilters=Depends(),db:Session=Depends(ge
             else:cells.append(value)
         sheet.append(cells)
     fields=[('sku','Código'),('description','Descripción'),('delegation','Delegación'),('unit_type','Tipo unidad'),('family','Familia'),('target_mode','Objetivo elegido'),
-        ('central_stock','Stock Almeiras'),('central_outgoing','Comprometido Almeiras'),('central_incoming','Pendiente recibir Almeiras'),('central_monthly_consumption','Consumo mensual Almeiras'),('central_reserve','Reserva Almeiras'),('central_available','Disponible para despacho Almeiras'),('central_total_requested','Propuesta conjunta'),('central_can_supply','Almeiras cubre propuesta conjunta'),('overstock','Sobrestock'),('excess_stock','Exceso previsto'),('no_consumption','Sin consumo'),('stock','Stock'),('incoming','Pendiente recibir'),('outgoing','Pendiente servir'),('inventory_position','Posición'),('monthly_mean','Consumo mensual medio'),
+        ('central_stock','Stock Almeiras'),('central_outgoing','Comprometido Almeiras'),('central_incoming','Pendiente recibir Almeiras'),('central_monthly_consumption','Consumo mensual Almeiras'),('central_reserve','Reserva Almeiras'),('central_available','Disponible para despacho Almeiras'),('central_total_requested','Propuesta conjunta'),('central_can_supply','Almeiras cubre propuesta conjunta'),('overstock','Sobrestock'),('excess_stock','Exceso previsto'),('no_consumption','Sin consumo'),('stock','Stock'),('incoming','Pendiente recibir'),('outgoing','Pendiente servir'),('inventory_position','Disponible previsto'),('monthly_mean','Consumo mensual medio'),
         ('safety_stock','Seguridad'),('minimum_stock','Mínimo'),('maximum_stock','Stock máximo'),('expected_cycle_consumption','Consumo hasta próxima reposición'),('replenishment_point','Punto de reposición'),('target_stock','Objetivo aplicado'),('calculated_quantity','Cantidad calculada'),
         ('exit_multiple','Múltiplo EXIT'),('effective_multiple','Múltiplo aplicado'),('quantity_before_rounding','Cantidad antes de agrupar'),('recommended_quantity','Cantidad recomendada'),('adjusted_quantity','Ajuste manual'),('final_quantity','Cantidad final'),('method','Método'),('confidence','Confianza')]
-    append(sheet,[label for _,label in fields]+['Reglas aplicadas','Recomendaciones'])
+    if mode=='simple':
+        fields=[('sku','Código'),('description','Descripción'),('delegation','Delegación'),
+            ('stock','Stock'),('incoming','Por recibir'),('outgoing','Por servir'),
+            ('inventory_position','Disponible previsto'),('monthly_mean','Consumo mensual'),
+            ('minimum_stock','Mínimo'),('replenishment_point','Punto reposición'),
+            ('maximum_stock','Stock máximo'),('final_quantity','A reponer'),
+            ('central_available','Disponible para despacho'),('central_status','Cobertura Almeiras'),
+            ('notices','Avisos')]
+    extra=['Reglas aplicadas','Recomendaciones'] if mode=='expanded' else []
+    append(sheet,[label for _,label in fields]+extra)
     count=0
     for result in rows:
-        row={**result.payload,'monthly_mean':result.payload.get('monthly_mean',result.payload['daily_mean']*30)};values=[row.get(key) for key,_ in fields]+[' → '.join(row['applied_rules']),'; '.join(item['reason'] for item in row['recommendations'])]
+        row={**result.payload,'monthly_mean':result.payload.get('monthly_mean',result.payload['daily_mean']*30)}
+        row['central_status']=('Sin necesidad' if not row['final_quantity'] else 'Revisar datos' if row.get('central_available') is None else 'Cubre conjunto' if row.get('central_can_supply') else 'No cubre conjunto')
+        row['notices']='; '.join(item['reason'] for item in row['recommendations'])
+        if mode=='simple':
+            for key in ('minimum_stock','replenishment_point','maximum_stock'):
+                if row.get(key) is not None:row[key]=math.ceil(row[key])
+            row['monthly_mean']=round(row['monthly_mean'],2)
+        values=[row.get(key) for key,_ in fields]
+        if mode=='expanded':values+=[' → '.join(row['applied_rules']),row['notices']]
         append(sheet,values);count+=1
-    sheet.auto_filter.ref=f'A1:{get_column_letter(len(fields)+2)}{count+1}'
-    metadata=book.create_sheet('Contexto');append(metadata,['Dato','Valor'])
+    sheet.auto_filter.ref=f'A1:{get_column_letter(len(fields)+len(extra))}{count+1}'
+    metadata=book.create_sheet('Contexto') if mode=='expanded' else None
+    if metadata is not None:append(metadata,['Dato','Valor'])
     for key,value in [('Cálculo',scenario.public_id),('Corte',scenario.captured_at),('Huella de datos',scenario.source_fingerprint),
         ('Filtros del resultado',json.dumps(filters.model_dump(),ensure_ascii=False)),('Filas exportadas',count),('Filtros del cálculo',json.dumps(scenario.filters,ensure_ascii=False)),('Parámetros temporales',json.dumps(scenario.temporary_parameters,ensure_ascii=False)),
         ('Políticas',json.dumps(scenario.policies_snapshot,ensure_ascii=False)),('Modo','Solo cálculo; no genera pedidos. Almeiras protegido por su consumo y reserva.')]:
-        append(metadata,[key,value])
+        if metadata is not None:append(metadata,[key,value])
     buffer=io.BytesIO();book.save(buffer)
     return Response(buffer.getvalue(),media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',headers={'Content-Disposition':'attachment; filename="reposicion.xlsx"'})
