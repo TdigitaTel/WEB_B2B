@@ -363,7 +363,7 @@ def test_api_filters_central_overstock_and_zero_consumption(monkeypatch):
     assert skus(needed_only=True)==['FILTER-A','FILTER-B']
     assert skus(needed_only=True,consumption='WITHOUT')==[]
     assert run.json()['summary']['overstock']==1 and run.json()['summary']['central_covered']==1
-    exported=client.get(prefix+'/simulations/'+run.json()['id']+'/export.xlsx')
+    exported=client.get(prefix+'/simulations/'+run.json()['id']+'/export.xlsx',params={'mode':'expanded'})
     book=load_workbook(io.BytesIO(exported.content))
     headers=[cell.value for cell in book.active[1]]
     assert 'Consumo mensual Almeiras' in headers and 'Disponible para despacho Almeiras' in headers
@@ -384,6 +384,10 @@ def test_filtered_summary_and_export_all_pages_with_exit_control_characters(monk
     response=client.get(path+'/export.xlsx',params={'needed_only':True,'sort':'sku','descending':True})
     assert response.status_code==200
     book=load_workbook(io.BytesIO(response.content));sheet=book.active
+    assert book.sheetnames==['Reposición']
+    headers=[cell.value for cell in sheet[1]]
+    assert 'Disponible previsto' in headers and 'Posición' not in headers
+    assert 'Seguridad' not in headers and len(headers)==15
     assert sheet.max_row==56 and sheet['A2'].value=='00054'
     assert sheet['A56'].value=='00000' and sheet['A56'].data_type=='s'
     assert sheet['B56'].value=='=Material de EXIT' and sheet['B56'].data_type=='s'
