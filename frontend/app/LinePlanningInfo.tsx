@@ -18,10 +18,12 @@ export function LinePlanningProvider({orderId,customer=false,children}:{orderId:
  },[orderId,customer]);
  return <Context.Provider value={state}><span ref={ref} hidden/>{children}</Context.Provider>
 }
-export function LinePlanningInfo({sku,lineKey,served=false}:{sku:string;lineKey?:string;served?:boolean}){
- const state=useContext(Context);if(served)return null;
+export function LinePlanningInfo({sku,lineKey,served=false,part='note'}:{sku:string;lineKey?:string;served?:boolean;part?:'date'|'stock'|'note'}){
+ const state=useContext(Context);
  const matches=state.lines.filter(line=>line.sku===sku);const line=matches.find(line=>line.line_key===lineKey)||(matches.length===1?matches[0]:undefined);
- if(state.loading)return <small className="line-planning-inline">Consultando fecha y disponibilidad…</small>;
- if(!line)return <small className="line-planning-inline" title={state.error}>Fecha prevista: pendiente de revisión{matches.length>1?' · líneas repetidas: consultar con el operador':''}{state.error?' · no se pudieron consultar los datos':''}</small>;
- return <span className={`line-planning-inline plan-${line.status||'REVISAR'}`}><span><b>Fecha prevista:</b> {line.expected_at?new Date(line.expected_at).toLocaleString('es-ES',{timeZone:'Europe/Madrid',dateStyle:'short',timeStyle:'short'}):'Pendiente de revisión'}{line.manual?' · Manual':''}</span><span><b>{labels[line.status||'REVISAR']}</b>{line.local_available!=null?` · Stock disponible consultado: ${line.local_available.toLocaleString('es-ES')}`:''}</span>{line.observation&&line.observation!==labels[line.status||'REVISAR']&&<span>{line.observation}</span>}</span>
+ if(state.loading)return <span className="line-plan-cell">Cargando…</span>;
+ if(!line)return <span className="line-plan-cell" title={state.error}>{served?'—':state.error?'Consulta no disponible':part==='note'?'Pendiente de planificación':'—'}</span>;
+ if(part==='date')return <span className="line-plan-cell">{line.expected_at?new Date(line.expected_at).toLocaleString('es-ES',{timeZone:'Europe/Madrid',dateStyle:'short',timeStyle:'short'}):'Sin fecha'}{line.manual&&<small>Manual</small>}</span>;
+ if(part==='stock')return <span className="line-plan-cell">{line.local_available!=null?line.local_available.toLocaleString('es-ES'):'—'}<small>Stock consultado</small></span>;
+ return <span className={`line-plan-cell plan-${line.status||'REVISAR'}`}><b>{labels[line.status||'REVISAR']}</b>{line.observation&&line.observation!==labels[line.status||'REVISAR']&&<small>{line.observation}</small>}</span>
 }

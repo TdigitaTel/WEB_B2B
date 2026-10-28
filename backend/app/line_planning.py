@@ -128,7 +128,7 @@ def read(order_id:str=Query(max_length=100),db:Session=Depends(get_db),user:User
     key,_,_,_,lines=resolve(db,user,order_id)
     return payload(db,key,lines)
 
-def proposal(db,context):
+def proposal(db,context,sources=None):
     key,company,delegation,deadline,lines=context
     if len(lines)>2000:raise HTTPException(422,'El pedido supera 2.000 líneas')
     config=db.get(PickupSettings,1);schedules=(config.schedules or {}).get(f'{company}:{delegation}') if config else None
@@ -137,7 +137,8 @@ def proposal(db,context):
     warning=None
     try:
         if company!=1:raise ValueError('Stock configurado únicamente para empresa 1')
-        stocks,days=source(list(dict.fromkeys(line['sku'] for line in lines if line['pending']>0)))
+        stocks,days=sources if sources is not None else source(list(dict.fromkeys(line['sku'] for line in lines if line['pending']>0)))
+        stocks=dict(stocks)
     except Exception:
         logger.exception('No se pudieron consultar las fuentes de planificación por línea para %s',key)
         stocks,days={},{};warning='No se pudo validar el stock o el plazo en EXIT. Revisa las líneas pendientes.'
@@ -163,16 +164,34 @@ def proposal(db,context):
                     status='PROVEEDOR';expected=next_open(base+timedelta(days=days[sku]),schedules);note=f'En gestión proveedor · plazo EXIT {days[sku]} días naturales'
                 else:note='Sin stock suficiente; falta diasreposicion en EXIT'
         if expected is None:status='REVISAR';note+=' · revisar fecha/horario de atención' if not warning else ' · consulta EXIT no disponible'
-        data[line['line_key']]={'sku':sku,'status':status,'expected_at':expected.isoformat() if expected else None,'observation':note,'manual':False,'calculated_at':now.isoformat(),'local_available':local}
+        data[line['line_key']]={'sku':sku,'status':status,'expected_at':expected.isoformat() if expected else None,'observation':note,'manual':False,'calculated_at':now.isoformat(),'local_available':local if not warning else None}
     return data,warning
 
 
 def preview(db,context):
     key,_,_,_,lines=context
-    existing=payload(db,key,lines)
-    if all(line['pending']<=0 or line.get('status') for line in existing['lines']):return existing
-    data,warning=proposal(db,context)
-    return {'lines':[{**line,**data.get(line['line_key'],{})} for line in lines],'version':existing['version'],'warning':warning}
+    return payload(db,key,lines)
+
+
+def initialize_context(db,context,sources=None):
+    """Initial snapshot only. Existing dates and manual changes are never recalculated."""
+    key,_,_,_,lines=context
+    saved=db.get(OrderLinePlanning,key)
+    old=dict(saved.lines) if saved else {}
+    missing=[line for line in lines if line['pending']>0 and old.get(line['line_key'],{}).get('sku')!=line['sku']]
+    if not missing:return False
+    data,warning=proposal(db,context,sources)
+    for line in missing:old[line['line_key']]=data[line['line_key']]
+    old['_version']=old.get('_version',0)+1
+    if saved is None:saved=OrderLinePlanning(order_key=key,lines=old);db.add(saved)
+    else:saved.lines=old
+    db.flush()
+    return True
+
+
+def initialize_order(db,order):
+    db.flush()
+    return initialize_context(db,local_context(db,order))
 
 
 @router.get('/orders/line-planning/preview')
@@ -195,16 +214,6 @@ def customer_preview(order_id:str,db:Session=Depends(get_db),user:User=Depends(c
     order=customer_order(order_id,user,db)
     return preview(db,local_context(db,order))
 
-
-@router.post('/orders/line-planning/calculate')
-def calculate(order_id:str=Query(max_length=100),db:Session=Depends(get_db),user:User=Depends(operator)):
-    context=resolve(db,user,order_id);key,_,_,_,lines=context
-    row=db.scalar(select(OrderLinePlanning).where(OrderLinePlanning.order_key==key).with_for_update())
-    if row is None:row=OrderLinePlanning(order_key=key,lines={});db.add(row);db.flush()
-    data,warning=proposal(db,context)
-    data['_version']=data.get('_version',0)+1;row.lines=data
-    audit(db,user,'ORDER_LINE_PLAN_CALCULATED','ORDER',key,{'warning':warning,'lines':len(lines)})
-    db.commit();return {**payload(db,key,lines),'warning':warning}
 
 @router.patch('/orders/line-planning')
 def manual(body:ManualIn,order_id:str=Query(max_length=100),db:Session=Depends(get_db),user:User=Depends(operator)):
