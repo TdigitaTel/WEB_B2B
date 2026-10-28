@@ -370,6 +370,7 @@ def export(scenario_id:str,filters:ResultFilters=Depends(),db:Session=Depends(ge
             for key in ('minimum_stock','replenishment_point','maximum_stock'):
                 if row.get(key) is not None:row[key]=math.ceil(row[key])
             row['monthly_mean']=round(row['monthly_mean'],2)
+            if row.get('central_available') is not None:row['central_available']=math.floor(row['central_available'])
         values=[row.get(key) for key,_ in fields]
         if mode=='expanded':values+=[' → '.join(row['applied_rules']),row['notices']]
         append(sheet,values);count+=1

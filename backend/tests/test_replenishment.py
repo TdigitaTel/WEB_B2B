@@ -487,6 +487,8 @@ def test_monthly_threshold_uses_unrounded_value_and_includes_equal():
 def test_monthly_threshold_filters_summary_and_excel(monkeypatch,mode):
     import app.replenishment as module
     raw=source_for(('LOW','EQUAL','HIGH'),values=[0]*30,stock=0)
+    for stock in raw['stocks']:
+        if stock['delegation']=='00':stock['stock']=1000.75
     raw['sales']=[{'sku':sku,'delegation':'02','day':'2026-04-01','sold':quantity,'returned':0} for sku,quantity in [('LOW',0.499),('EQUAL',0.5),('HIGH',0.51)]]
     monkeypatch.setattr(module,'read_replenishment_source',lambda *a:raw)
     client=login();prefix='/api/v1/store/replenishment/simulations'
@@ -498,12 +500,16 @@ def test_monthly_threshold_filters_summary_and_excel(monkeypatch,mode):
     assert next(row for row in all_rows['items'] if row['sku']=='LOW')['final_quantity']==0
     filtered=client.get(path+'/results',params={'minimum_monthly_consumption':0.5}).json()
     assert filtered['total']==2 and filtered['summary']['articles_analyzed']==2
+    assert all(row['central_available']==1000.75 for row in filtered['items'])
     assert {row['sku'] for row in filtered['items']}=={'EQUAL','HIGH'}
     exported=client.get(path+'/export.xlsx',params={'minimum_monthly_consumption':0.5,'mode':mode})
     assert exported.status_code==200
     sheet=load_workbook(io.BytesIO(exported.content)).active
     assert sheet.max_row==3 and {sheet['A2'].value,sheet['A3'].value}=={'EQUAL','HIGH'}
-    assert ('Unidad' if mode=='simple' else 'Tipo unidad') in [cell.value for cell in sheet[1]]
+    headers=[cell.value for cell in sheet[1]]
+    assert ('Unidad' if mode=='simple' else 'Tipo unidad') in headers
+    available_column=headers.index('Disponible para despacho' if mode=='simple' else 'Disponible para despacho Almeiras')+1
+    assert sheet.cell(2,available_column).value==(1000 if mode=='simple' else 1000.75)
     assert client.get(path+'/results',params={'minimum_monthly_consumption':-1}).status_code==422
 
 
