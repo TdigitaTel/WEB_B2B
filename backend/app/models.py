@@ -459,3 +459,15 @@ class OperatorAccess(Base, TimestampMixin):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
     exit_code: Mapped[str] = mapped_column(String(200), unique=True, index=True)
     permissions: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class OrderLinePlanning(Base, TimestampMixin):
+    __tablename__ = "order_line_planning"
+    order_key: Mapped[str] = mapped_column(String(180), primary_key=True)
+    lines: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class LinePlanningSettings(Base):
+    __tablename__ = "line_planning_settings"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    transfer_days: Mapped[int] = mapped_column(Integer, default=1)

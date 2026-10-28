@@ -1,0 +1,53 @@
+from datetime import datetime, timezone
+from fastapi.testclient import TestClient
+from app.bootstrap import main as bootstrap
+from app.main import app
+from app.line_planning import next_open,transfer_date,TZ
+bootstrap()
+
+def schedule():
+    return [{'enabled':i<6,'morning_from':'08:00','morning_to':'12:00' if i==5 else '14:00','afternoon_from':'16:00' if i<5 else None,'afternoon_to':'19:00' if i<5 else None} for i in range(7)]
+
+def test_working_dates_respect_saturday_half_day_and_sunday():
+    hours=schedule()
+    assert next_open(datetime(2026,10,31,13,tzinfo=TZ),hours)==datetime(2026,11,2,8,tzinfo=TZ)
+    assert transfer_date(datetime(2026,10,30,10,tzinfo=TZ),1,hours)==datetime(2026,10,31,10,tzinfo=TZ)
+    assert transfer_date(datetime(2026,10,30,13,tzinfo=TZ),1,hours)==datetime(2026,11,2,8,tzinfo=TZ)
+    assert next_open(datetime.now(TZ),None) is None
+
+def test_plan_stock_transfer_supplier_manual_and_conflict(monkeypatch):
+    import app.line_planning as module
+    from app.db import SessionLocal
+    from app.models import PickupSettings,OrderLinePlanning
+    lines=[{'line_key':str(i),'sku':sku,'description':sku,'quantity':2,'pending':2} for i,sku in enumerate(['LOCAL','TRANSFER','SUPPLIER','UNKNOWN'])]
+    deadline=datetime(2030,10,25,10,tzinfo=TZ)
+    monkeypatch.setattr(module,'resolve',lambda *a:('TEST:PLAN',1,'00',deadline,lines))
+    monkeypatch.setattr(module,'source',lambda codes:({('LOCAL','00'):2,('TRANSFER','01'):4},{'SUPPLIER':3}))
+    with SessionLocal() as db:
+        config=db.get(PickupSettings,1)
+        if config is None:
+            config=PickupSettings(id=1,preparation_minutes=60,schedules={});db.add(config)
+        original=config.schedules
+        config.schedules={**(original or {}),'1:00':schedule()};db.commit()
+    client=TestClient(app);assert client.post('/api/v1/auth/login',json={'email':'operador@bermudez.test','password':'123456'}).status_code==200
+    path='/api/v1/store/orders/line-planning?order_id=test'
+    try:
+        response=client.post('/api/v1/store/orders/line-planning/calculate?order_id=test')
+        assert response.status_code==200,response.text
+        data=response.json();assert [r['status'] for r in data['lines']]==['EN_STOCK','TRASLADO','PROVEEDOR','REVISAR']
+        assert data['lines'][0]['expected_at']==deadline.isoformat()
+        body={'line_key':'1','sku':'TRANSFER','version':data['version'],'status':'PROVEEDOR','expected_at':'2030-11-01T10:00:00+01:00','observation':'Confirmado por proveedor'}
+        saved=client.patch(path,json=body);assert saved.status_code==200,saved.text
+        assert client.patch(path,json=body).status_code==409
+        recalculated=client.post('/api/v1/store/orders/line-planning/calculate?order_id=test').json()
+        assert recalculated['lines'][1]['manual'] and recalculated['lines'][1]['observation']==body['observation']
+        assert client.patch(path,json={**body,'version':recalculated['version'],'sku':'WRONG'}).status_code==409
+        monkeypatch.setattr(module,'source',lambda codes:(_ for _ in ()).throw(RuntimeError('offline')))
+        failed=client.post('/api/v1/store/orders/line-planning/calculate?order_id=test').json()
+        assert failed['warning'] and failed['lines'][0]['status']=='REVISAR' and failed['lines'][1]['manual']
+    finally:
+        with SessionLocal() as db:
+            db.get(PickupSettings,1).schedules=original
+            row=db.get(OrderLinePlanning,'TEST:PLAN')
+            if row:db.delete(row)
+            db.commit()

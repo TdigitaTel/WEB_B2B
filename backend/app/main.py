@@ -1703,3 +1703,6 @@ def transition(order_id: str, data: StatusChange, user: User = Depends(require_r
     db.add(Notification(customer_id=order.customer_id, customer_code=order.customer_code, title=f"Pedido {order.order_number}", message=f"Nuevo estado: {new_status.replace('_', ' ')}"))
     audit(db, user, "ORDER_STATUS_CHANGED", "ORDER", order.public_id, {"estado_registro_exit": new_status}); db.commit()
     return order_payload(order, db, True)
+
+from .line_planning import router as line_planning_router
+app.include_router(line_planning_router)
