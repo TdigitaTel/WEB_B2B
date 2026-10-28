@@ -467,20 +467,17 @@ def test_review_days_only_change_cycle_consumption_not_statistical_safety():
     assert long['central_reserve']-short['central_reserve']==pytest.approx(short['central_daily_mean']*7)
 
 
-def test_monthly_threshold_uses_unrounded_value_and_includes_equal():
-    params={'simple_formula':True,'multiple_mode':'NONE','minimum_monthly_consumption':0.5}
+def test_monthly_threshold_does_not_change_calculated_quantity():
     raw=source_for(values=[0.499]+[0]*29,stock=0)
     raw['articles'][0]['unit_type']='ROL'
-    below=calculate(raw,params)
-    assert below['monthly_mean']==pytest.approx(0.499)
-    assert below['final_quantity']==0 and below['below_monthly_threshold']
-    assert any(note['code']=='CONSUMO_BAJO_UMBRAL' for note in below['recommendations'])
-    assert calculate(raw,{**params,'minimum_monthly_consumption':0})['final_quantity']>0
-    raw['sales'][0]['sold']=0.5
-    equal=calculate(raw,params)
-    assert equal['monthly_mean']==0.5 and not equal['below_monthly_threshold'] and equal['final_quantity']>0
-    assert equal['unit_type']=='ROL'
-    with pytest.raises(ValueError):Parameters(minimum_monthly_consumption=-1)
+    params={'simple_formula':True,'multiple_mode':'NONE'}
+    original=calculate(raw,params)
+    legacy=calculate(raw,{**params,'minimum_monthly_consumption':0.5})
+    assert original['monthly_mean']==pytest.approx(0.499)
+    assert legacy['final_quantity']==original['final_quantity'] and original['final_quantity']>0
+    assert legacy['minimum_stock']==original['minimum_stock']
+    assert legacy['unit_type']=='ROL'
+    assert not any(note['code']=='CONSUMO_BAJO_UMBRAL' for note in legacy['recommendations'])
 
 
 @pytest.mark.parametrize('mode',['simple','expanded'])
@@ -497,7 +494,7 @@ def test_monthly_threshold_filters_summary_and_excel(monkeypatch,mode):
     path=prefix+'/'+response.json()['id']
     all_rows=client.get(path+'/results').json()
     assert all_rows['total']==3
-    assert next(row for row in all_rows['items'] if row['sku']=='LOW')['final_quantity']==0
+    assert next(row for row in all_rows['items'] if row['sku']=='LOW')['final_quantity']>0
     filtered=client.get(path+'/results',params={'minimum_monthly_consumption':0.5}).json()
     assert filtered['total']==2 and filtered['summary']['articles_analyzed']==2
     assert all(row['central_available']==1000.75 for row in filtered['items'])
@@ -510,6 +507,9 @@ def test_monthly_threshold_filters_summary_and_excel(monkeypatch,mode):
     assert ('Unidad' if mode=='simple' else 'Tipo unidad') in headers
     available_column=headers.index('Disponible para despacho' if mode=='simple' else 'Disponible para despacho Almeiras')+1
     assert sheet.cell(2,available_column).value==(1000 if mode=='simple' else 1000.75)
+    restored=client.get(path+'/results',params={'minimum_monthly_consumption':0}).json()
+    assert restored['total']==3
+    assert {row['sku']:row['final_quantity'] for row in restored['items']}=={row['sku']:row['final_quantity'] for row in all_rows['items']}
     assert client.get(path+'/results',params={'minimum_monthly_consumption':-1}).status_code==422
 
 

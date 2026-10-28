@@ -13,6 +13,7 @@ class Parameters(BaseModel):
     maximum_days: int | None = Field(None,ge=1,le=1095)
     central_reserve_days: int = Field(7,ge=1,le=365)
     exclude_no_consumption: bool = False
+    # Legacy snapshots may contain this key; it no longer influences calculation.
     minimum_monthly_consumption: float = Field(0,ge=0,le=1e9)
     simple_formula: bool = False
     review_days: int = Field(7,ge=1,le=90)
@@ -199,11 +200,6 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
     if parameters['exclude_no_consumption'] and stats['total_demand']<=0:
         quantity=0
         recs.append(recommendation('SIN_CONSUMO_EXCLUIDO','Sin consumo neto en el periodo: se ha excluido de la reposición por la opción seleccionada.',{'total_demand':stats['total_demand']}))
-    below_threshold=stats['monthly_mean']<parameters['minimum_monthly_consumption']
-    if below_threshold:
-        quantity=0
-        recs.append(recommendation('CONSUMO_BAJO_UMBRAL','No se repone: el consumo mensual medio es inferior al mínimo configurado.',
-            {'monthly_mean':stats['monthly_mean'],'threshold':parameters['minimum_monthly_consumption']},'minimum_monthly_consumption',parameters['minimum_monthly_consumption']))
     if not parameters['enabled'] or stats['created_in_future'] or (sparse and (parameters['new_policy'] if stats['new_article'] else parameters['no_sales_policy'])=='NO_REPLENISH'):quantity=0
     if quantity>0 and position is not None and position+quantity>target+1e-8:
         recs.append(recommendation('REDONDEO_SOBRE_MAXIMO','El múltiplo o la cantidad mínima elevan el inventario por encima del objetivo elegido.',
@@ -235,14 +231,14 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
     if avg>0 and (safety>3*avg*horizon or target/avg>max(90,3*horizon)):
         recs.append(recommendation('PARAMETROS_REVISAR','La seguridad o el objetivo de reposición generan una cobertura elevada respecto a la demanda.',
             {'safety':safety,'horizon_demand':avg*horizon,'target_coverage':target/avg},'max_coverage_days',parameters['max_coverage_days']))
-    if quantity>max(1000,avg*horizon*10) or (stats['gross_sales']==0 and quantity>0) or (avg>0 and quantity==0 and position is not None and position<minimum and not below_threshold):
+    if quantity>max(1000,avg*horizon*10) or (stats['gross_sales']==0 and quantity>0) or (avg>0 and quantity==0 and position is not None and position<minimum):
         recs.append(recommendation('PROPUESTA_REVISAR','Revisar una cantidad elevada, una reposición sin ventas o una reposición cero bajo el mínimo.',
             {'quantity':quantity,'position':position,'minimum':minimum,'horizon_demand':avg*horizon}))
     result={**article,'delegation':delegation,'stock':stock['stock'] if stock else None,'incoming':stock['incoming'] if stock else None,
         'outgoing':stock['outgoing'] if stock else None,'inventory_position':position,'gross_sales':stats['gross_sales'],
         'returns':stats['returns'],'total_demand':stats['total_demand'],'daily_mean':avg,'monthly_mean':stats['monthly_mean'],'monthly_consumption':stats['monthly_consumption'],'daily_std':std,'sales_days':stats['sales_days'],
         'last_sale':stats['last_sale'],'observed_days':stats['days'],'irregular':stats['irregular'],'new_article':stats['new_article'],
-        'below_monthly_threshold':below_threshold,'overstock':overstock,'excess_stock':excess,'no_consumption':stats['total_demand']<=0,'target_mode':parameters['target_mode'],
+        'overstock':overstock,'excess_stock':excess,'no_consumption':stats['total_demand']<=0,'target_mode':parameters['target_mode'],
         'calculation_model':'MAXIMUM_COVERAGE' if parameters['target_mode']=='MAXIMUM' else 'MINIMUM_PLUS_CYCLE_DEMAND','replenishment_point':replenishment_point,'target_stock':target,'expected_cycle_consumption':expected_consumption,'safety_stock':safety,'minimum_stock':minimum,'maximum_stock':maximum,'calculated_quantity':calculated,
         'recommended_quantity':round(quantity,6),'adjusted_quantity':None,'final_quantity':round(quantity,6),'coverage_days':coverage,
         'confidence':confidence,'method':method,'comparables':comparable,'parameters':parameters,'applied_rules':rules,
