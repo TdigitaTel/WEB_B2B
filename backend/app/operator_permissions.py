@@ -32,6 +32,7 @@ def check_operator_path(user, db, path, method):
         ('/api/v1/store/category-visibility', 'categories'),
         ('/api/v1/store/catalog-images', 'categories'),
         ('/api/v1/store/search-settings', 'settings'),
+        ('/api/v1/store/line-planning-settings', 'settings'),
         ('/api/v1/store/catalog-brands', 'settings'),
     ):
         if path == prefix or path.startswith(prefix + '/'):
