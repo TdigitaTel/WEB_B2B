@@ -217,6 +217,7 @@ class ResultFilters(BaseModel):
     central_only:bool=False
     overstock_only:bool=False
     consumption:Literal['ALL','WITH','WITHOUT']='ALL'
+    minimum_monthly_consumption:float=Field(0,ge=0,le=1e9,allow_inf_nan=False)
     sort:Literal['sku','quantity','coverage','alerts']='sku'
     descending:bool=False
 
@@ -232,6 +233,9 @@ def filtered_results(scenario_id,filters):
     if needed_only:query=query.where(Result.payload['final_quantity'].as_float()>0)
     if central_only:query=query.where(Result.payload['central_can_supply'].as_boolean().is_(True))
     if overstock_only:query=query.where(Result.payload['overstock'].as_boolean().is_(True))
+    if filters.minimum_monthly_consumption>0:
+        monthly=func.coalesce(Result.payload['monthly_mean'].as_float(),Result.payload['daily_mean'].as_float()*30)
+        query=query.where(monthly>=filters.minimum_monthly_consumption)
     if consumption=='WITHOUT':query=query.where(Result.payload['total_demand'].as_float()<=0)
     if consumption=='WITH':query=query.where(Result.payload['total_demand'].as_float()>0)
     return query
@@ -350,7 +354,7 @@ def export(scenario_id:str,filters:ResultFilters=Depends(),db:Session=Depends(ge
     if mode=='simple':
         fields=[('sku','Código'),('description','Descripción'),('delegation','Delegación'),
             ('stock','Stock'),('incoming','Por recibir'),('outgoing','Por servir'),
-            ('inventory_position','Disponible previsto'),('monthly_mean','Consumo mensual'),
+            ('inventory_position','Disponible previsto'),('unit_type','Unidad'),('monthly_mean','Consumo mensual'),
             ('minimum_stock','Mínimo'),('replenishment_point','Punto reposición'),
             ('maximum_stock','Stock máximo'),('final_quantity','A reponer'),
             ('central_available','Disponible para despacho'),('central_status','Cobertura Almeiras'),
@@ -366,6 +370,7 @@ def export(scenario_id:str,filters:ResultFilters=Depends(),db:Session=Depends(ge
             for key in ('minimum_stock','replenishment_point','maximum_stock'):
                 if row.get(key) is not None:row[key]=math.ceil(row[key])
             row['monthly_mean']=round(row['monthly_mean'],2)
+            if row.get('central_available') is not None:row['central_available']=math.floor(row['central_available'])
         values=[row.get(key) for key,_ in fields]
         if mode=='expanded':values+=[' → '.join(row['applied_rules']),row['notices']]
         append(sheet,values);count+=1

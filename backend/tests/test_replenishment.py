@@ -142,7 +142,8 @@ def test_source_sql_is_read_only_uses_prompt_fields_and_rejects_duplicate_stock(
         def __exit__(self,*args):pass
         def execute(self,sql,params=()):self.sql=sql;calls.append((sql,params))
         def fetchall(self):
-            if 'FROM dbo.articulos' in self.sql:return [{'codigoarticulo':'03009','descripcionarticulo':'Material','EX_tipounidad':'UD','inactivo':0,'fechaalta':date(2020,1,1),'EX_multiplo':6}]
+            if 'INFORMATION_SCHEMA' in self.sql:return [{'COLUMN_NAME':name} for name in ('UnidadMedida1_','EX_tipounidad')]
+            if 'FROM dbo.articulos' in self.sql:return [{'codigoarticulo':'03009','descripcionarticulo':'Material','replenishment_unit':'ROL','unit_source':'UnidadMedida1_','inactivo':0,'fechaalta':date(2020,1,1),'EX_multiplo':6}]
             if 'AlbaranVentaCabecera' in self.sql:return [{'sku':'03009','delegation':'02','day':date(2026,1,5),'sold':4,'returned':1}]
             rows=[{'sku':'03009','delegation':'00','stock':10,'incoming':2,'outgoing':1}]
             return rows*2 if duplicate else rows
@@ -154,13 +155,15 @@ def test_source_sql_is_read_only_uses_prompt_fields_and_rejects_duplicate_stock(
     result=module.read_replenishment_source(date(2026,1,1),date(2026,1,31),['03009'])
     assert result['articles'][0]['sku']=='03009'
     assert result['articles'][0]['exit_multiple']==6
-    assert 'EX_multiplo' in calls[0][0]
+    assert result['articles'][0]['unit_type']=='ROL' and result['articles'][0]['unit_source']=='UnidadMedida1_'
+    assert calls[1][0].index('[UnidadMedida1_]')<calls[1][0].index('[EX_tipounidad]')
+    assert 'EX_multiplo' in calls[1][0]
     assert result['sales'][0]['sold']==4 and result['sales'][0]['returned']==1
     assert len(result['stocks'])==1 and result['stocks'][0]['stock']==10
     assert all(sql.strip().upper().startswith('SELECT') for sql,params in calls)
-    assert 'avc.CodigoEmpresa=avl.CodigoEmpresa' in calls[1][0]
-    assert 'avc.IdDelegacion' in calls[1][0] and 'CodigoAlmacen' not in calls[2][0]
-    assert calls[1][1][:2]==(date(2026,1,1),date(2026,2,1))
+    assert 'avc.CodigoEmpresa=avl.CodigoEmpresa' in calls[2][0]
+    assert 'avc.IdDelegacion' in calls[2][0] and 'CodigoAlmacen' not in calls[3][0]
+    assert calls[2][1][:2]==(date(2026,1,1),date(2026,2,1))
     duplicate=True
     with pytest.raises(ValueError,match='más de una fila'):module.read_replenishment_source(date(2026,1,1),date(2026,1,31))
 
@@ -283,7 +286,7 @@ def test_source_handles_more_than_5000_and_enforces_configured_limit(monkeypatch
     monkeypatch.setattr(module,'connect_sqlserver',connect)
     result=module.read_replenishment_source(date(2026,1,1),date(2026,1,31),max_articles=6000)
     assert len(result['articles'])==5001 and result['article_limit']==6000
-    assert 'TOP 6001' in calls[0]
+    assert 'TOP 6001' in calls[1]
     with pytest.raises(ValueError,match='límite|más de'):
         module.read_replenishment_source(date(2026,1,1),date(2026,1,31),max_articles=5000)
 
@@ -387,7 +390,7 @@ def test_filtered_summary_and_export_all_pages_with_exit_control_characters(monk
     assert book.sheetnames==['Reposición']
     headers=[cell.value for cell in sheet[1]]
     assert 'Disponible previsto' in headers and 'Posición' not in headers
-    assert 'Seguridad' not in headers and len(headers)==15
+    assert 'Seguridad' not in headers and len(headers)==16
     assert sheet.max_row==56 and sheet['A2'].value=='00054'
     assert sheet['A56'].value=='00000' and sheet['A56'].data_type=='s'
     assert sheet['B56'].value=='=Material de EXIT' and sheet['B56'].data_type=='s'
@@ -462,3 +465,58 @@ def test_review_days_only_change_cycle_consumption_not_statistical_safety():
     long=calculate(source,{'simple_formula':True,'central_reserve_days':14})
     annotate_central([short],source);annotate_central([long],source)
     assert long['central_reserve']-short['central_reserve']==pytest.approx(short['central_daily_mean']*7)
+
+
+def test_monthly_threshold_does_not_change_calculated_quantity():
+    raw=source_for(values=[0.499]+[0]*29,stock=0)
+    raw['articles'][0]['unit_type']='ROL'
+    params={'simple_formula':True,'multiple_mode':'NONE'}
+    original=calculate(raw,params)
+    legacy=calculate(raw,{**params,'minimum_monthly_consumption':0.5})
+    assert original['monthly_mean']==pytest.approx(0.499)
+    assert legacy['final_quantity']==original['final_quantity'] and original['final_quantity']>0
+    assert legacy['minimum_stock']==original['minimum_stock']
+    assert legacy['unit_type']=='ROL'
+    assert not any(note['code']=='CONSUMO_BAJO_UMBRAL' for note in legacy['recommendations'])
+
+
+@pytest.mark.parametrize('mode',['simple','expanded'])
+def test_monthly_threshold_filters_summary_and_excel(monkeypatch,mode):
+    import app.replenishment as module
+    raw=source_for(('LOW','EQUAL','HIGH'),values=[0]*30,stock=0)
+    for stock in raw['stocks']:
+        if stock['delegation']=='00':stock['stock']=1000.75
+    raw['sales']=[{'sku':sku,'delegation':'02','day':'2026-04-01','sold':quantity,'returned':0} for sku,quantity in [('LOW',0.499),('EQUAL',0.5),('HIGH',0.51)]]
+    monkeypatch.setattr(module,'read_replenishment_source',lambda *a:raw)
+    client=login();prefix='/api/v1/store/replenishment/simulations'
+    response=client.post(prefix,json={'filters':{'date_from':raw['start'],'date_to':raw['end'],'delegations':['02']},'temporary_parameters':{'simple_formula':True,'multiple_mode':'NONE','minimum_monthly_consumption':0.5}})
+    assert response.status_code==201,response.text
+    path=prefix+'/'+response.json()['id']
+    all_rows=client.get(path+'/results').json()
+    assert all_rows['total']==3
+    assert next(row for row in all_rows['items'] if row['sku']=='LOW')['final_quantity']>0
+    filtered=client.get(path+'/results',params={'minimum_monthly_consumption':0.5}).json()
+    assert filtered['total']==2 and filtered['summary']['articles_analyzed']==2
+    assert all(row['central_available']==1000.75 for row in filtered['items'])
+    assert {row['sku'] for row in filtered['items']}=={'EQUAL','HIGH'}
+    exported=client.get(path+'/export.xlsx',params={'minimum_monthly_consumption':0.5,'mode':mode})
+    assert exported.status_code==200
+    sheet=load_workbook(io.BytesIO(exported.content)).active
+    assert sheet.max_row==3 and {sheet['A2'].value,sheet['A3'].value}=={'EQUAL','HIGH'}
+    headers=[cell.value for cell in sheet[1]]
+    assert ('Unidad' if mode=='simple' else 'Tipo unidad') in headers
+    available_column=headers.index('Disponible para despacho' if mode=='simple' else 'Disponible para despacho Almeiras')+1
+    assert sheet.cell(2,available_column).value==(1000 if mode=='simple' else 1000.75)
+    restored=client.get(path+'/results',params={'minimum_monthly_consumption':0}).json()
+    assert restored['total']==3
+    assert {row['sku']:row['final_quantity'] for row in restored['items']}=={row['sku']:row['final_quantity'] for row in all_rows['items']}
+    assert client.get(path+'/results',params={'minimum_monthly_consumption':-1}).status_code==422
+
+
+def test_unit_expression_handles_missing_measurement_columns():
+    from app.replenishment_source import unit_expression
+    class Cursor:
+        def execute(self,*a):pass
+        def fetchall(self):return []
+    value,origin=unit_expression(Cursor())
+    assert value==origin=="'Sin unidad'"
