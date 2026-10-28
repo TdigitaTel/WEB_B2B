@@ -76,6 +76,9 @@ for _ in $(seq 1 36); do
     if [[ "$target" == "dev" ]]; then
       "${compose[@]}" exec -T api python -m app.import_category_images /app/data/category-images-initial.zip
     fi
+    if ! "${compose[@]}" exec -T api python -m app.initialize_line_planning --apply; then
+      echo "AVISO: no se pudo completar la planificación inicial de pedidos anteriores; se conservan los bloques guardados. Revisar EXIT y repetir python -m app.initialize_line_planning --apply." >&2
+    fi
     printf '%s' "$IMAGE_TAG" > "$state_file"
     trap - ERR
     echo "Despliegue $target completado: $IMAGE_TAG"

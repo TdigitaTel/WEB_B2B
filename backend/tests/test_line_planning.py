@@ -31,20 +31,32 @@ def test_plan_stock_transfer_supplier_manual_and_conflict(monkeypatch):
         config.schedules={**(original or {}),'1:00':schedule()};db.commit()
     client=TestClient(app);assert client.post('/api/v1/auth/login',json={'email':'operador@bermudez.test','password':'123456'}).status_code==200
     path='/api/v1/store/orders/line-planning?order_id=test'
+    context=('TEST:PLAN',1,'00',deadline,lines)
     try:
-        response=client.post('/api/v1/store/orders/line-planning/calculate?order_id=test')
+        with SessionLocal() as db:
+            assert module.initialize_context(db,context)
+            db.commit()
+        response=client.get(path)
         assert response.status_code==200,response.text
         data=response.json();assert [r['status'] for r in data['lines']]==['EN_STOCK','TRASLADO','PROVEEDOR','REVISAR']
         assert data['lines'][0]['expected_at']==deadline.isoformat()
         body={'line_key':'1','sku':'TRANSFER','version':data['version'],'status':'PROVEEDOR','expected_at':'2030-11-01T10:00:00+01:00','observation':'Confirmado por proveedor'}
         saved=client.patch(path,json=body);assert saved.status_code==200,saved.text
         assert client.patch(path,json=body).status_code==409
-        recalculated=client.post('/api/v1/store/orders/line-planning/calculate?order_id=test').json()
+        with SessionLocal() as db:
+            assert not module.initialize_context(db,context)
+        recalculated=client.get(path).json()
         assert recalculated['lines'][1]['manual'] and recalculated['lines'][1]['observation']==body['observation']
         assert client.patch(path,json={**body,'version':recalculated['version'],'sku':'WRONG'}).status_code==409
         monkeypatch.setattr(module,'source',lambda codes:(_ for _ in ()).throw(RuntimeError('offline')))
-        failed=client.post('/api/v1/store/orders/line-planning/calculate?order_id=test').json()
-        assert failed['warning'] and failed['lines'][0]['status']=='REVISAR' and failed['lines'][1]['manual']
+        stored=client.get('/api/v1/store/orders/line-planning/preview?order_id=test').json()
+        assert stored['lines'][0]['status']=='EN_STOCK' and stored['lines'][1]['manual']
+        assert client.post('/api/v1/store/orders/line-planning/calculate?order_id=test').status_code in (404,405)
+        with SessionLocal() as db:
+            context_missing=('TEST:OFFLINE',1,'00',deadline,lines)
+            assert module.initialize_context(db,context_missing)
+            assert module.payload(db,'TEST:OFFLINE',lines)['lines'][0]['status']=='REVISAR'
+            db.rollback()
     finally:
         with SessionLocal() as db:
             db.get(PickupSettings,1).schedules=original
@@ -71,13 +83,19 @@ def test_customer_preview_is_scoped_read_only_and_reuses_manual_plan(monkeypatch
     url=f'/api/v1/orders/{oid}/line-planning'
     try:
         result=owner.get(url);assert result.status_code==200,result.text
+        assert 'status' not in result.json()['lines'][0]
+        with SessionLocal() as db:
+            order=db.scalar(select(Order).where(Order.public_id==oid))
+            assert module.initialize_order(db,order)
+            db.commit()
+        result=owner.get(url)
         assert result.json()['lines'][0]['status']=='EN_STOCK'
         assert result.json()['lines'][0]['local_available']==4
         assert other.get(url).status_code==404
         assert owner.patch('/api/v1/store/orders/line-planning',params={'order_id':oid},json={}).status_code==403
         with SessionLocal() as db:
-            assert db.get(OrderLinePlanning,'WEB:'+oid) is None
-            db.add(OrderLinePlanning(order_key='WEB:'+oid,lines={line_key:{'sku':'PUBLIC','status':'TRASLADO','expected_at':'2030-10-26T10:00:00+02:00','observation':'Traslado confirmado','manual':True},'_version':1}));db.commit()
+            plan=db.get(OrderLinePlanning,'WEB:'+oid)
+            plan.lines={line_key:{'sku':'PUBLIC','status':'TRASLADO','expected_at':'2030-10-26T10:00:00+02:00','observation':'Traslado confirmado','manual':True},'_version':1};db.commit()
         monkeypatch.setattr(module,'source',lambda codes:(_ for _ in ()).throw(AssertionError('Should reuse saved plan')))
         assert owner.get(url).json()['lines'][0]['observation']=='Traslado confirmado'
     finally:

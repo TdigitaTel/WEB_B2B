@@ -715,6 +715,9 @@ def create_order(data: OrderCreate, user: User = Depends(current_user), db: Sess
         db.add(Notification(customer_id=legacy_customer_id(user), customer_code=customer_code, user_id=user.id, title="Pedido recibido", message=f"Hemos recibido el pedido {order.order_number}."))
         db.add(IntegrationOutbox(aggregate_type="ORDER", aggregate_id=order.public_id, event_type="ORDER_CREATED",
                                  payload={"order_number": order.order_number, "customer_erp_id": customer_code, "store": store.code, "fulfillment_method": order.fulfillment_method, "delivery_address": order.delivery_address}, sync_status=SyncStatus.pending))
+    if not data.draft:
+        from .line_planning import initialize_order
+        initialize_order(db, order)
     cart.status = "CONVERTED"
     audit(db, user, "ORDER_CREATED", "ORDER", order.public_id, {"number": order.order_number, "store": store.code})
     db.commit()
@@ -759,6 +762,8 @@ def submit_draft_order(order_id: str, user: User = Depends(current_user), db: Se
     db.add(IntegrationOutbox(aggregate_type="ORDER", aggregate_id=order.public_id, event_type="ORDER_CREATED",
                              payload={"order_number": order.order_number, "customer_erp_id": order.customer_code,
                                       "store": store.code if store else "", "fulfillment_method": order.fulfillment_method, "delivery_address": order.delivery_address}, sync_status=SyncStatus.pending))
+    from .line_planning import initialize_order
+    initialize_order(db, order)
     audit(db, user, "ORDER_SUBMITTED", "ORDER", order.public_id, {"number": order.order_number})
     db.commit()
     return order_payload(order, db, True)
