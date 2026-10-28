@@ -29,6 +29,17 @@ def test_customer_can_search_add_and_order(monkeypatch, pickup_schedule, classif
     assert order.json()["company_code"] == stores[0]["company_code"]
     assert order.json()["delegation_code"] == stores[0]["code"]
     assert ":" not in order.json()["delegation_code"]
+    from app.db import SessionLocal
+    from app.models import OrderLinePlanning
+    with SessionLocal() as db:
+        plan=db.get(OrderLinePlanning,'WEB:'+order.json()['id'])
+        assert plan is not None and plan.lines['_version']==1
+        stored=dict(plan.lines)
+    import app.line_planning as planning
+    monkeypatch.setattr(planning,'source',lambda codes:(_ for _ in ()).throw(AssertionError('Reading must not calculate')))
+    dates=client.get(f"/api/v1/orders/{order.json()['id']}/line-planning")
+    assert dates.status_code==200 and len(dates.json()['lines'])>0
+    with SessionLocal() as db:assert db.get(OrderLinePlanning,'WEB:'+order.json()['id']).lines==stored
 
 
 def test_customer_cannot_open_another_customer_order():

@@ -16,6 +16,7 @@ from .models import Order, OrderItem, OrderStatusHistory, Product, SyncStatus, U
 
 
 class ExitOrderLineInput(BaseModel):
+    line_number: str | None = None
     sku: str
     description: str
     quantity: Decimal = Field(gt=0)
