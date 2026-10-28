@@ -13,6 +13,8 @@ class Parameters(BaseModel):
     maximum_days: int | None = Field(None,ge=1,le=1095)
     central_reserve_days: int = Field(7,ge=1,le=365)
     exclude_no_consumption: bool = False
+    # Legacy snapshots may contain this key; it no longer influences calculation.
+    minimum_monthly_consumption: float = Field(0,ge=0,le=1e9)
     simple_formula: bool = False
     review_days: int = Field(7,ge=1,le=90)
     lead_days: int = Field(1,ge=0,le=180)

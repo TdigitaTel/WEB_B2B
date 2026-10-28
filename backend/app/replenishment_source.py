@@ -22,6 +22,17 @@ def dispatch_multiple(value):
 def stamp(value):
     return value.isoformat() if isinstance(value,(date,datetime)) else str(value) if value is not None else None
 
+def unit_expression(cursor):
+    # Quantities are EXIT Unidades/UnidadSaldo: use the article base unit, never infer rolls from the description.
+    cursor.execute("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=%s AND TABLE_NAME=%s",('dbo','articulos'))
+    existing={str(row['COLUMN_NAME']).lower():str(row['COLUMN_NAME']) for row in cursor.fetchall()}
+    candidates=[existing[name.lower()] for name in ('UnidadMedida1_','UnidadMedidaVentas','UnidadMedida','UnidadVenta','EX_tipounidad') if name.lower() in existing]
+    values=["NULLIF(LTRIM(RTRIM(CONVERT(varchar(80),["+name.replace("]","]]")+"]))),'')" for name in candidates]
+    expression='COALESCE('+','.join([*values,"'Sin unidad'"])+')' if values else "'Sin unidad'"
+    origin='CASE '+ ' '.join(f"WHEN {value} IS NOT NULL THEN '{name.replace(chr(39),chr(39)*2)}'" for name,value in zip(candidates,values))+" ELSE 'Sin unidad' END" if values else "'Sin unidad'"
+    return expression,origin
+
+
 def read_replenishment_source(start: date, end: date, skus: list[str] | None = None, max_articles: int = MAX_ARTICLES):
     """Empresa 1 para ventas. La vista de stock no tiene empresa en el esquema indicado."""
     if not isinstance(max_articles,int) or not 1<=max_articles<=HARD_MAX_ARTICLES:
@@ -33,13 +44,14 @@ def read_replenishment_source(start: date, end: date, skus: list[str] | None = N
         raise ValueError(f'La selección supera el límite configurado de {max_articles:,} artículos. Amplíalo en Configuración o acota los filtros')
     article_rows=[]; sales=[]; stocks=[]
     with connect_sqlserver() as connection, connection.cursor() as cursor:
+        unit,unit_origin=unit_expression(cursor)
         batches=[None] if skus is None else [skus[i:i+1000] for i in range(0,len(skus),1000)]
         for batch in batches:
             where='inactivo=0'
             params=[]
             if batch is not None:
                 where+=' AND codigoarticulo IN ('+','.join(['%s']*len(batch))+')';params.extend(batch)
-            cursor.execute(f'''SELECT TOP {max_articles+1} codigoarticulo, descripcionarticulo, EX_tipounidad,
+            cursor.execute(f'''SELECT TOP {max_articles+1} codigoarticulo, descripcionarticulo, {unit} AS replenishment_unit, {unit_origin} AS unit_source,
                 inactivo, fechaalta, EX_multiplo, codigoalternativo7, codigoalternativo8, codigoalternativo9, codigoalternativo10
                 FROM dbo.articulos WHERE {where} ORDER BY codigoarticulo''',tuple(params))
             article_rows.extend(cursor.fetchall())
@@ -52,7 +64,7 @@ def read_replenishment_source(start: date, end: date, skus: list[str] | None = N
             if sku in seen:raise ValueError(f'Código de artículo duplicado en EXIT: {sku}')
             seen.add(sku)
             articles.append({'sku':sku,'description':str(row.get('descripcionarticulo') or sku),
-                'exit_multiple':dispatch_multiple(row.get('ex_multiplo')),'unit_type':str(row.get('ex_tipounidad') or ''),'created_at':stamp(row.get('fechaalta')),
+                'exit_multiple':dispatch_multiple(row.get('ex_multiplo')),'unit_type':str(row.get('replenishment_unit') or 'Sin unidad').strip(),'unit_source':str(row.get('unit_source') or 'Sin unidad'),'created_at':stamp(row.get('fechaalta')),
                 'alternatives':{str(i):str(row.get(f'codigoalternativo{i}') or '') for i in range(7,11)}})
         codes=[row['sku'] for row in articles]
         for offset in range(0,len(codes),1000):
