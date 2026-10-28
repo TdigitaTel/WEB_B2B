@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, AwareDatetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from .auth import audit, require_roles
+from .auth import audit, require_roles, current_user
 from .db import get_db
 from .models import Order, OrderItem, OrderLinePlanning, LinePlanningSettings, PickupSettings, User
 from .operator_permissions import can_operate_delegation
@@ -16,6 +16,7 @@ from .exit_db import fetch_exit_orders_live
 from .erp_db import connect_sqlserver
 
 router=APIRouter(prefix='/api/v1/store',tags=['line-planning'])
+public_router=APIRouter(prefix='/api/v1/orders',tags=['line-planning'])
 operator=require_roles('OPERADOR_TIENDA','ADMIN')
 TZ=ZoneInfo('Europe/Madrid')
 logger=logging.getLogger(__name__)
@@ -71,20 +72,25 @@ def transfer_date(stamp,days,schedules):
             if days==0:return next_open(datetime.combine(day,current.timetz().replace(tzinfo=None),TZ),schedules)
     return None
 
+def local_context(db,order):
+    company,delegation=order.company_code,order.delegation_code
+    lines=[{'line_key':str(item.id),'sku':item.sku,'description':item.description,'quantity':float(item.quantity),
+            'pending':float(item.pending_quantity if item.pending_quantity is not None else max(0,item.quantity-(item.served_quantity or 0)))}
+           for item in db.scalars(select(OrderItem).where(OrderItem.order_id==order.id).order_by(OrderItem.id))]
+    return f'WEB:{order.public_id}',company,delegation,order.attention_deadline_at,lines
+
 def resolve(db,user,order_id):
     order=db.scalar(select(Order).where(Order.public_id==order_id))
     if order:
-        company,delegation=order.company_code,order.delegation_code
-        if not can_operate_delegation(user,db,company,delegation):raise HTTPException(404,'Pedido no encontrado')
-        lines=[{'line_key':str(item.id),'sku':item.sku,'description':item.description,'quantity':float(item.quantity),
-                'pending':float(item.pending_quantity if item.pending_quantity is not None else max(0,item.quantity-(item.served_quantity or 0)))}
-               for item in db.scalars(select(OrderItem).where(OrderItem.order_id==order.id).order_by(OrderItem.id))]
-        return f'WEB:{order.public_id}',company,delegation,order.attention_deadline_at,lines
+        if not can_operate_delegation(user,db,order.company_code,order.delegation_code):raise HTTPException(404,'Pedido no encontrado')
+        return local_context(db,order)
     try:records=fetch_exit_orders_live('web',exit_order_id=order_id)
     except Exception as exc:raise HTTPException(503,'No se pudo leer el pedido en EXIT') from exc
     records=[r for r in records if can_operate_delegation(user,db,r.company_code,r.store_code)]
     if len(records)!=1:raise HTTPException(404,'Pedido no encontrado o referencia ambigua')
-    record=records[0]
+    return external_context(db,records[0])
+
+def external_context(db,record):
     if len({item.line_number for item in record.lines})!=len(record.lines):raise HTTPException(409,'EXIT devuelve números de línea duplicados')
     if any(not item.line_number for item in record.lines):raise HTTPException(409,'EXIT no proporciona el número de línea; no se puede guardar un ajuste seguro')
     lines=[{'line_key':item.line_number,'sku':item.sku,'description':item.description,'quantity':float(item.quantity),
@@ -122,9 +128,8 @@ def read(order_id:str=Query(max_length=100),db:Session=Depends(get_db),user:User
     key,_,_,_,lines=resolve(db,user,order_id)
     return payload(db,key,lines)
 
-@router.post('/orders/line-planning/calculate')
-def calculate(order_id:str=Query(max_length=100),db:Session=Depends(get_db),user:User=Depends(operator)):
-    key,company,delegation,deadline,lines=resolve(db,user,order_id)
+def proposal(db,context):
+    key,company,delegation,deadline,lines=context
     if len(lines)>2000:raise HTTPException(422,'El pedido supera 2.000 líneas')
     config=db.get(PickupSettings,1);schedules=(config.schedules or {}).get(f'{company}:{delegation}') if config else None
     now=datetime.now(TZ)
@@ -136,9 +141,9 @@ def calculate(order_id:str=Query(max_length=100),db:Session=Depends(get_db),user
     except Exception:
         logger.exception('No se pudieron consultar las fuentes de planificación por línea para %s',key)
         stocks,days={},{};warning='No se pudo validar el stock o el plazo en EXIT. Revisa las líneas pendientes.'
-    row=db.scalar(select(OrderLinePlanning).where(OrderLinePlanning.order_key==key).with_for_update())
-    if row is None:row=OrderLinePlanning(order_key=key,lines={});db.add(row)
-    data=dict(row.lines);transfer=settings(db,user)['transfer_days']
+    saved=db.get(OrderLinePlanning,key)
+    data=dict(saved.lines) if saved else {}
+    transfer=settings(db,None)['transfer_days']
     for line in lines:
         if line['pending']<=0:continue
         old=data.get(line['line_key'],{})
@@ -158,7 +163,45 @@ def calculate(order_id:str=Query(max_length=100),db:Session=Depends(get_db),user
                     status='PROVEEDOR';expected=next_open(base+timedelta(days=days[sku]),schedules);note=f'En gestión proveedor · plazo EXIT {days[sku]} días naturales'
                 else:note='Sin stock suficiente; falta diasreposicion en EXIT'
         if expected is None:status='REVISAR';note+=' · revisar fecha/horario de atención' if not warning else ' · consulta EXIT no disponible'
-        data[line['line_key']]={'sku':sku,'status':status,'expected_at':expected.isoformat() if expected else None,'observation':note,'manual':False,'calculated_at':now.isoformat()}
+        data[line['line_key']]={'sku':sku,'status':status,'expected_at':expected.isoformat() if expected else None,'observation':note,'manual':False,'calculated_at':now.isoformat(),'local_available':local}
+    return data,warning
+
+
+def preview(db,context):
+    key,_,_,_,lines=context
+    existing=payload(db,key,lines)
+    if all(line['pending']<=0 or line.get('status') for line in existing['lines']):return existing
+    data,warning=proposal(db,context)
+    return {'lines':[{**line,**data.get(line['line_key'],{})} for line in lines],'version':existing['version'],'warning':warning}
+
+
+@router.get('/orders/line-planning/preview')
+def operator_preview(order_id:str=Query(max_length=100),db:Session=Depends(get_db),user:User=Depends(operator)):
+    return preview(db,resolve(db,user,order_id))
+
+
+@public_router.get('/{order_id:path}/line-planning')
+def customer_preview(order_id:str,db:Session=Depends(get_db),user:User=Depends(current_user)):
+    from .main import customer_order,customer_for,customer_code_for
+    if order_id.startswith('exit:'):
+        customer_for(user,db);code=customer_code_for(user,db)
+        if user.own_orders_only:raise HTTPException(404,'Pedido no encontrado')
+        try:records=fetch_exit_orders_live('web',exit_order_id=order_id[5:])
+        except Exception as exc:raise HTTPException(503,'No se pudo consultar el pedido') from exc
+        records=[record for record in records if record.customer_code==code]
+        if len(records)!=1:raise HTTPException(404,'Pedido no encontrado')
+        return preview(db,external_context(db,records[0]))
+    # Apply the same customer and subuser ownership restrictions as order detail.
+    order=customer_order(order_id,user,db)
+    return preview(db,local_context(db,order))
+
+
+@router.post('/orders/line-planning/calculate')
+def calculate(order_id:str=Query(max_length=100),db:Session=Depends(get_db),user:User=Depends(operator)):
+    context=resolve(db,user,order_id);key,_,_,_,lines=context
+    row=db.scalar(select(OrderLinePlanning).where(OrderLinePlanning.order_key==key).with_for_update())
+    if row is None:row=OrderLinePlanning(order_key=key,lines={});db.add(row);db.flush()
+    data,warning=proposal(db,context)
     data['_version']=data.get('_version',0)+1;row.lines=data
     audit(db,user,'ORDER_LINE_PLAN_CALCULATED','ORDER',key,{'warning':warning,'lines':len(lines)})
     db.commit();return {**payload(db,key,lines),'warning':warning}
@@ -172,7 +215,7 @@ def manual(body:ManualIn,order_id:str=Query(max_length=100),db:Session=Depends(g
     data=dict(row.lines)
     if data.get('_version',0)!=body.version:raise HTTPException(409,'Otro operador cambió la planificación. Vuelve a abrirla')
     previous=data.get(body.line_key)
-    data[body.line_key]={'sku':body.sku,'status':body.status,'expected_at':body.expected_at.isoformat() if body.expected_at else None,'observation':body.observation,'manual':True}
+    data[body.line_key]={**(previous or {}),'sku':body.sku,'status':body.status,'expected_at':body.expected_at.isoformat() if body.expected_at else None,'observation':body.observation,'manual':True}
     data['_version']=body.version+1;row.lines=data
     audit(db,user,'ORDER_LINE_PLAN_MANUAL','ORDER',key,{'line':body.line_key,'previous':previous,'new':data[body.line_key]})
     db.commit();return payload(db,key,lines)

@@ -220,7 +220,7 @@ def order_payload(order: Order, db: Session, include_items: bool = False, histor
                       if item.pending_quantity is not None else Decimal("0"))
             pending = (item.pending_quantity if item.pending_quantity is not None
                        else max(Decimal("0"), item.quantity - served))
-            result["items"].append({"sku": item.sku, "description": item.description,
+            result["items"].append({"line_key": str(item.id), "sku": item.sku, "description": item.description,
                                     "quantity": float(item.quantity), "served_quantity": float(served),
                                     "pending_quantity": float(pending), "unit": item.unit,
                                     "unit_price": float(item.unit_price), "line_total": float(item.line_total),
@@ -1704,5 +1704,6 @@ def transition(order_id: str, data: StatusChange, user: User = Depends(require_r
     audit(db, user, "ORDER_STATUS_CHANGED", "ORDER", order.public_id, {"estado_registro_exit": new_status}); db.commit()
     return order_payload(order, db, True)
 
-from .line_planning import router as line_planning_router
+from .line_planning import router as line_planning_router, public_router as public_line_planning_router
 app.include_router(line_planning_router)
+app.include_router(public_line_planning_router)

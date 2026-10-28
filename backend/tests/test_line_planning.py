@@ -51,3 +51,38 @@ def test_plan_stock_transfer_supplier_manual_and_conflict(monkeypatch):
             row=db.get(OrderLinePlanning,'TEST:PLAN')
             if row:db.delete(row)
             db.commit()
+
+
+def test_customer_preview_is_scoped_read_only_and_reuses_manual_plan(monkeypatch):
+    import app.line_planning as module
+    from app.db import SessionLocal
+    from app.models import Order,OrderItem,User,OrderLinePlanning
+    from sqlalchemy import select
+    with SessionLocal() as db:
+        user=db.scalar(select(User).where(User.email=='compras001@cliente.test'))
+        order=Order(order_number='WEB-LINE-PUBLIC',customer_id=user.customer_id,user_id=user.id,customer_code='CLI00001',company_code=1,delegation_code='00',attention_deadline_at=datetime(2030,10,25,10,tzinfo=TZ))
+        db.add(order);db.flush();oid=order.public_id
+        item=OrderItem(order_id=order.id,sku='PUBLIC',description='Material',quantity=1,unit='UD',unit_price=1,tax_rate=21,line_total=1)
+        db.add(item);db.flush();line_key=str(item.id);db.commit()
+    monkeypatch.setattr(module,'source',lambda codes:({('PUBLIC','00'):4},{'PUBLIC':2}))
+    owner=TestClient(app);other=TestClient(app)
+    assert owner.post('/api/v1/auth/login',json={'email':'compras001@cliente.test','password':'123456'}).status_code==200
+    assert other.post('/api/v1/auth/login',json={'email':'compras002@cliente.test','password':'123456'}).status_code==200
+    url=f'/api/v1/orders/{oid}/line-planning'
+    try:
+        result=owner.get(url);assert result.status_code==200,result.text
+        assert result.json()['lines'][0]['status']=='EN_STOCK'
+        assert result.json()['lines'][0]['local_available']==4
+        assert other.get(url).status_code==404
+        assert owner.patch('/api/v1/store/orders/line-planning',params={'order_id':oid},json={}).status_code==403
+        with SessionLocal() as db:
+            assert db.get(OrderLinePlanning,'WEB:'+oid) is None
+            db.add(OrderLinePlanning(order_key='WEB:'+oid,lines={line_key:{'sku':'PUBLIC','status':'TRASLADO','expected_at':'2030-10-26T10:00:00+02:00','observation':'Traslado confirmado','manual':True},'_version':1}));db.commit()
+        monkeypatch.setattr(module,'source',lambda codes:(_ for _ in ()).throw(AssertionError('Should reuse saved plan')))
+        assert owner.get(url).json()['lines'][0]['observation']=='Traslado confirmado'
+    finally:
+        with SessionLocal() as db:
+            plan=db.get(OrderLinePlanning,'WEB:'+oid)
+            if plan:db.delete(plan)
+            db.delete(db.scalar(select(OrderItem).where(OrderItem.order_id==order.id)))
+            db.delete(db.get(Order,order.id));db.commit()
