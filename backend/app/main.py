@@ -26,6 +26,7 @@ from .db import get_db
 from .schemas import PickupChange, PickupSettingsIn, DeliveryConfirmation, WebOrderRegistrationChange, UserDisplayPreferences
 from .exit_orders import upsert_exit_order
 from .order_identity import linked_customer_order, customer_history_without_shadows
+from .order_search import matches_order_search, order_number_sort_key
 from .exit_order_key import FIELDS as EXIT_KEY_FIELDS, key_payload, apply_key, record_key
 from .kardex_timing import fetch_kardex_timings, sales_order_number
 from .order_timeline import exit_events, sync_history, instant, dispatch_timing, is_web_order
@@ -799,11 +800,14 @@ def delete_order(order_id: str, user: User = Depends(current_user), db: Session 
 
 @app.get("/api/v1/orders")
 def orders(date_from: date | None = None, date_to: date | None = None,
-           state: str = "PENDIENTE", user: User = Depends(current_user), db: Session = Depends(get_db)):
+           state: str = "PENDIENTE", order_query: str = "", user: User = Depends(current_user), db: Session = Depends(get_db)):
     customer_for(user, db); customer_code = customer_code_for(user, db)
-    today = datetime.now().astimezone().date()
+    query = order_query.strip().upper()
+    if len(query) > 80 or (query and not (query.isascii() and query.isdecimal()) and not query.startswith("WEB-")):
+        raise HTTPException(422, "Introduce el código WEB completo o el número EXIT, sin año ni serie")
+    today = datetime.now(ZoneInfo("Europe/Madrid")).date()
     start, end = date_from or today, date_to or date_from or today
-    if start > end:
+    if not query and start > end:
         raise HTTPException(422, "La fecha desde no puede ser posterior a la fecha hasta")
     condition = Order.customer_code == customer_code
     if user.customer_id:
@@ -812,9 +816,23 @@ def orders(date_from: date | None = None, date_to: date | None = None,
         condition = condition & (Order.user_id == user.id)
     if db.bind.dialect.name == "postgresql":
         db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": f"order-history-customer:{customer_code}"})
+    if query:
+        search_condition = func.upper(Order.order_number) == query
+        if query.isdecimal():
+            search_condition = or_(search_condition, Order.exit_order_number == query,
+                Order.nro_pedido_exit == query, Order.nro_pedido_exit.endswith("/" + query),
+                Order.nro_pedido_exit.endswith("~" + query))
+        condition = condition & search_condition
     all_local_rows = db.scalars(select(Order).where(condition).order_by(Order.created_at.desc()).limit(5000)).all()
-    local_rows = [row for row in all_local_rows if start <= row.created_at.date() <= end]
-    exit_rows = fetch_customer_exit_orders(customer_code, start, end)
+    local_rows = list(all_local_rows) if query else [row for row in all_local_rows if start <= row.created_at.date() <= end]
+    if query:
+        numbers = {query} if query.isdecimal() else {
+            str(row.exit_order_number or row.nro_pedido_exit.replace("~", "/").split("/")[-1])
+            for row in local_rows if row.exit_order_number or row.nro_pedido_exit}
+        exit_rows = [record for number in numbers for record in
+                     fetch_customer_exit_orders(customer_code, start, end, order_number=number)]
+    else:
+        exit_rows = fetch_customer_exit_orders(customer_code, start, end)
     notes_available = True
     try:
         delivery_rows = fetch_customer_delivery_statuses(customer_code)
@@ -967,10 +985,12 @@ def orders(date_from: date | None = None, date_to: date | None = None,
     groups = {"BORRADOR": {"BORRADOR"}, "PENDIENTE": {"BORRADOR", "PENDIENTE"},
               "EN_PROCESAMIENTO": {"BLOQUEADO", "REGISTRADO", "EN_PROCESO", "EN_PREPARACION"},
               "PENDIENTE_RECOJO": {"ATENDIDO"}, "ENTREGADO": {"ENTREGADO"}, "FACTURADO": {"FACTURADO"}}
-    if requested not in {"", "TODOS"}:
+    if query:
+        result = [item for item in result if matches_order_search(item, query)]
+    if not query and requested not in {"", "TODOS"}:
         accepted = groups.get(requested, {requested})
         result = [item for item in result if str(item.get("estado_registro_exit") or "").upper() in accepted]
-    return sorted(result, key=lambda item: str(item.get("created_at") or ""), reverse=True)
+    return sorted(result, key=order_number_sort_key, reverse=True)
 
 
 @app.get("/api/v1/orders/{order_id}")
