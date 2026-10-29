@@ -1,0 +1,43 @@
+"use client";
+import {FormEvent, useEffect, useState} from "react";
+import styles from "./ProductTypeSynonyms.module.css";
+
+type ProductType={id:number;code:string;name:string;area:string;family:string;subfamily:string;synonyms:string[];version:number};
+type Preview={applied:boolean;total:number;changed:number;errors:{row:number;code:string;message:string}[];items:{id:number;code:string;name:string;synonyms:string[];changed:boolean}[]};
+const endpoint="/api/v1/store/product-type-synonyms";
+async function result(response:Response){
+ const data=await response.json().catch(()=>null);
+ if(!response.ok)throw new Error(typeof data?.detail==="string"?data.detail:(Array.isArray(data?.detail)?data.detail[0]?.msg:data?.detail?.message)||"No se pudo completar la operación. Revisa los sinónimos e inténtalo de nuevo.");
+ return data;
+}
+export default function ProductTypeSynonyms(){
+ const [rows,setRows]=useState<ProductType[]>([]),[loading,setLoading]=useState(true),[busy,setBusy]=useState(false);
+ const [query,setQuery]=useState(""),[onlyEmpty,setOnlyEmpty]=useState(false),[page,setPage]=useState(1);
+ const [chosen,setChosen]=useState<ProductType|null>(null),[words,setWords]=useState<string[]>(Array(10).fill(""));
+ const [file,setFile]=useState<File|null>(null),[mode,setMode]=useState("merge"),[preview,setPreview]=useState<Preview|null>(null);
+ const [error,setError]=useState(""),[message,setMessage]=useState("");
+ async function load(){setLoading(true);try{setRows(await result(await fetch(endpoint,{credentials:"include"})))}catch(e){setError((e as Error).message)}finally{setLoading(false)}}
+ useEffect(()=>{void load()},[]);
+ function choose(row:ProductType){setChosen(row);setWords([...row.synonyms,...Array(10-row.synonyms.length).fill("")]);setError("");setMessage("")}
+ async function save(event:FormEvent){event.preventDefault();if(!chosen)return;setBusy(true);setError("");setMessage("");try{
+  const updated=await result(await fetch(`${endpoint}/${chosen.id}`,{method:"PUT",credentials:"include",headers:{"Content-Type":"application/json"},body:JSON.stringify({synonyms:words.map(word=>word.trim()).filter(Boolean),version:chosen.version})}));
+  const row={...chosen,...updated};setChosen(row);setRows(old=>old.map(item=>item.id===row.id?row:item));setPreview(null);setMessage(`Sinónimos de ${row.name} guardados.`);
+ }catch(e){setError((e as Error).message)}finally{setBusy(false)}}
+ async function importFile(apply=false){if(!file)return;setBusy(true);setError("");setMessage("");try{
+  const form=new FormData();form.append("file",file);form.append("mode",mode);form.append("apply",String(apply));
+  const data:Preview=await result(await fetch(`${endpoint}/import`,{method:"POST",credentials:"include",body:form}));
+  setPreview(data);if(apply){setChosen(null);await load();setMessage(`Carga terminada: ${data.changed} tipos actualizados.`)}
+ }catch(e){setError((e as Error).message);setPreview(null)}finally{setBusy(false)}}
+ const key=(value:string)=>value.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
+ const filtered=rows.filter(row=>(!onlyEmpty||!row.synonyms.length)&&key([row.code,row.name,row.area,row.family,row.subfamily,...row.synonyms].join(" ")).includes(key(query)));
+ const pages=Math.max(1,Math.ceil(filtered.length/25)),current=Math.min(page,pages);
+ return <section className={styles.panel} aria-labelledby="synonyms-title"><header className={styles.heading}><div><h2 id="synonyms-title">Sinónimos por tipo de producto</h2><p>Hasta 10 palabras o expresiones por tipo. Al buscar un sinónimo se encuentran los materiales asociados a ese tipo, respetando las categorías visibles y los demás filtros.</p></div><a className="secondary" href={`${endpoint}/export.xlsx`}>Descargar Excel / plantilla</a></header>
+ {error&&<p className="error" role="alert">{error}</p>}{message&&<p role="status">{message}</p>}
+ <div className={styles.layout}><section><div className={styles.filters}><label>Buscar tipo o sinónimo<input className="input" type="search" value={query} onChange={e=>{setQuery(e.target.value);setPage(1)}} placeholder="Código, nombre, familia o sinónimo"/></label><label><input type="checkbox" checked={onlyEmpty} onChange={e=>{setOnlyEmpty(e.target.checked);setPage(1)}}/> Sin sinónimos</label><button className="ghost" disabled={busy||loading} onClick={()=>{setChosen(null);void load()}}>Actualizar</button></div>
+ <div className={styles.table}><table><thead><tr><th>Tipo de producto</th><th>Sinónimos</th><th/></tr></thead><tbody>{filtered.slice((current-1)*25,current*25).map(row=><tr key={row.id}><td><b>{row.code} · {row.name}</b><small>{row.area} / {row.family} / {row.subfamily}</small></td><td>{row.synonyms.length?<div className={styles.chips}>{row.synonyms.map(word=><span key={word}>{word}</span>)}</div>:<span>Sin sinónimos</span>}</td><td><button className="secondary" disabled={busy} onClick={()=>choose(row)}>Editar</button></td></tr>)}{!filtered.length&&<tr><td colSpan={3}>{loading?"Cargando tipos…":"No hay tipos para este filtro."}</td></tr>}</tbody></table></div>
+ <div className={styles.pagination}><span>{filtered.length} tipos · Página {current} de {pages}</span><button className="ghost" disabled={current<=1} onClick={()=>setPage(current-1)}>Anterior</button><button className="ghost" disabled={current>=pages} onClick={()=>setPage(current+1)}>Siguiente</button></div></section>
+ <aside className={styles.editor}>{chosen?<form onSubmit={save}><h3>{chosen.code} · {chosen.name}</h3><p className="small">{chosen.area} / {chosen.family} / {chosen.subfamily}</p><p>Una palabra o expresión por campo. Deja vacío para quitarla. No repitas sinónimos con distintos acentos o mayúsculas.</p><div className={styles.words}>{words.map((word,index)=><label key={index}>Sinónimo {index+1}<input className="input" maxLength={100} value={word} disabled={busy} onChange={e=>setWords(old=>old.map((item,i)=>i===index?e.target.value:item))}/></label>)}</div><div className={styles.actions}><button className="primary" disabled={busy}>{busy?"Guardando…":"Guardar sinónimos"}</button><button className="ghost" type="button" disabled={busy} onClick={()=>setChosen(null)}>Cerrar</button></div></form>:<><h3>Edición individual</h3><p>Pulsa Editar en un tipo de producto para añadir o cambiar sus sinónimos.</p><p className="small">Ejemplo: tipo «Válvulas de esfera» → «llave de paso», «llave de corte».</p></>}</aside></div>
+ <details className={styles.import}><summary>Cargar sinónimos desde Excel</summary><p>Descarga el Excel, conserva el código del tipo y completa las columnas Sinonimo1 a Sinonimo10. Los nombres y la clasificación son informativos. Máximo 10.000 filas y 5 MB.</p><div className={styles.filters}><label>Archivo Excel<input type="file" accept=".xlsx" disabled={busy} onChange={e=>{setFile(e.target.files?.[0]||null);setPreview(null)}}/></label><label>Cómo aplicar la carga<select className="input" value={mode} disabled={busy} onChange={e=>{setMode(e.target.value);setPreview(null)}}><option value="merge">Añadir a los sinónimos existentes</option><option value="replace">Reemplazar los sinónimos de los tipos incluidos</option></select></label><button className="secondary" disabled={!file||busy} onClick={()=>void importFile()}>{busy?"Procesando…":"Revisar archivo"}</button></div><p className="small">{mode==="merge"?"Se conservan los existentes y se añaden los nuevos. Las celdas vacías no borran datos.":"Se sustituye la lista de cada tipo incluido. Si sus 10 celdas están vacías, se eliminan sus sinónimos. Los tipos que no aparecen en el archivo no cambian."}</p>
+ {preview&&<div><p>{preview.total} tipos leídos · {preview.changed} cambios · {preview.errors.length} errores</p>{preview.errors.length>0&&<ul role="alert">{preview.errors.slice(0,100).map((item,index)=><li key={index}>Fila {item.row} · {item.code}: {item.message}</li>)}</ul>}{preview.items.length>0&&<div className={styles.preview}><table><thead><tr><th>Tipo</th><th>Sinónimos resultantes</th><th>Cambio</th></tr></thead><tbody>{preview.items.slice(0,100).map(item=><tr key={item.id}><td>{item.code} · {item.name}</td><td>{item.synonyms.join(" · ")||"Sin sinónimos"}</td><td>{item.changed?"Sí":"No"}</td></tr>)}</tbody></table></div>}{preview.items.length>100&&<p>Vista previa de los primeros 100 tipos; se aplican todos los tipos del archivo.</p>}{!preview.applied&&<button className="primary" disabled={busy||preview.errors.length>0||preview.changed===0} onClick={()=>void importFile(true)}>Guardar {preview.changed} cambios</button>}<p className="small">Si hay errores, no se guarda ningún cambio. La carga se vuelve a validar al guardar.</p></div>}
+ </details></section>;
+}
