@@ -171,6 +171,13 @@ class ProductTypeSynonyms(Base, TimestampMixin):
     version: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class ProductTypeNameSynonyms(Base, TimestampMixin):
+    __tablename__ = "product_type_name_synonyms"
+    type_name_key: Mapped[str] = mapped_column(String(500), primary_key=True)
+    synonyms: Mapped[list] = mapped_column(JSON, default=list)
+    version: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class Product(Base, TimestampMixin):
     __tablename__ = "products"
     id: Mapped[int] = mapped_column(primary_key=True)
