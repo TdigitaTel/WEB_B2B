@@ -66,6 +66,23 @@ def test_staff_access_pagination_login_and_server_permissions(staff):
     assert staff_client.post('/api/v1/auth/login',json={'email':staff[0]['username'],'password':'staff-valid-123'}).status_code==401
 
 
+def test_delegation_code_is_stored_separately_from_company(staff):
+    client = manager()
+    data = payload(staff[0])
+    assert client.put('/api/v1/store/operator-access', json=data).status_code == 200
+    with SessionLocal() as db:
+        link = db.scalar(select(OperatorAccess).where(OperatorAccess.exit_code == staff[0]['code']))
+        account = db.get(User, link.user_id)
+        assert account.company_code == data['company_code']
+        assert account.delegation_code == data['delegation_code']
+        assert ':' not in account.delegation_code
+    invalid = dict(data, delegation_code=f"{data['company_code']}:{data['delegation_code']}")
+    assert client.put('/api/v1/store/operator-access', json=invalid).status_code == 422
+    with SessionLocal() as db:
+        link = db.scalar(select(OperatorAccess).where(OperatorAccess.exit_code == staff[0]['code']))
+        assert db.get(User, link.user_id).delegation_code == data['delegation_code']
+
+
 def test_staff_password_generation_assignment_and_revocation(staff):
     client=manager();row=staff[1]
     result=client.put('/api/v1/store/operator-access',json=payload(row)).json()
