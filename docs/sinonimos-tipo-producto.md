@@ -2,7 +2,7 @@
 
 Pantalla: **Parámetros → Sinónimos de producto**. Un nombre como MACHÓN aparece una sola vez aunque exista en varias cadenas. Se agrupa ignorando acentos, mayúsculas y espacios repetidos; no se fusionan singular/plural ni nombres diferentes automáticamente.
 
-Cada fila muestra el nombre comercial, el número de cadenas y todas las rutas con etiquetas: **Área → Categoría / familia → Subfamilia**. Esos son los tres niveles anteriores al tipo en la jerarquía actual. No se inventa un nivel adicional. Los códigos TIP-… son identificadores técnicos por cadena; siguen existiendo internamente y no encabezan la pantalla ni el nuevo Excel.
+La lista principal muestra solo el nombre del tipo y sus sinónimos. **Ver familias** abre una pantalla independiente con columnas **Área → Categoría / familia → Subfamilia**, búsqueda por texto y filtros propios por cada nivel. Los selectores son dependientes (cambiar de área limpia familia y subfamilia). Se muestran 25 clasificaciones por página y el contador se ajusta a los filtros. Al volver se conservan la búsqueda de tipos y los sinónimos que se estaban editando. Esos son los tres niveles anteriores al tipo en la jerarquía actual. No se inventa un nivel adicional. Los códigos TIP-… son identificadores técnicos por cadena; siguen existiendo internamente y no encabezan la pantalla ni el nuevo Excel.
 
 ## Guardado y conservación de datos
 
