@@ -164,6 +164,13 @@ class MaterialProductType(Base, TimestampMixin):
     __table_args__ = (UniqueConstraint("subfamily_id", "name"),)
 
 
+class ProductTypeSynonyms(Base, TimestampMixin):
+    __tablename__ = "product_type_synonyms"
+    product_type_id: Mapped[int] = mapped_column(ForeignKey("material_product_types.id"), primary_key=True)
+    synonyms: Mapped[list] = mapped_column(JSON, default=list)
+    version: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class Product(Base, TimestampMixin):
     __tablename__ = "products"
     id: Mapped[int] = mapped_column(primary_key=True)

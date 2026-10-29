@@ -56,8 +56,10 @@ from .customer_access import router as customer_access_router
 app.include_router(customer_access_router)
 from .operator_access import router as operator_access_router
 app.include_router(operator_access_router)
-from .search_settings import router as search_settings_router, get_search_config
+from .search_settings import router as search_settings_router
 app.include_router(search_settings_router)
+from .product_type_synonyms import router as product_type_synonyms_router, catalog_search_config
+app.include_router(product_type_synonyms_router)
 from .qr_access import router as qr_access_router
 app.include_router(qr_access_router)
 from .subusers import router as subusers_router
@@ -381,7 +383,7 @@ def products(q: str = "", family: str | None = None, area_id: int | None = None,
             Product.material_area_id.is_(None) | Product.material_area_id.in_(unclassified_area_ids(db)))).all())
     classification_codes = visible_catalog_codes(db, classification_codes)
     try:
-        articles, total = fetch_catalog_articles(q, page, page_size, classification_codes, excluded_codes=hidden_codes(db), search_config=get_search_config(db))
+        articles, total = fetch_catalog_articles(q, page, page_size, classification_codes, excluded_codes=hidden_codes(db), search_config=catalog_search_config(db, q))
     except Exception as exc:
         logger.exception("Error consultando la maestra de artículos EXIT")
         raise HTTPException(503, "No se pudo consultar el catálogo en EXIT") from exc
@@ -496,7 +498,7 @@ def catalog_classification(user: User = Depends(current_user), db: Session = Dep
 def suggestions(q: str = Query(min_length=2), user: User = Depends(current_user), db: Session = Depends(get_db)):
     customer_for(user, db)
     try:
-        articles, _ = fetch_catalog_articles(q, 1, 8, visible_catalog_codes(db), excluded_codes=hidden_codes(db), search_config=get_search_config(db))
+        articles, _ = fetch_catalog_articles(q, 1, 8, visible_catalog_codes(db), excluded_codes=hidden_codes(db), search_config=catalog_search_config(db, q))
     except Exception as exc:
         logger.exception("Error consultando sugerencias en EXIT")
         raise HTTPException(503, "No se pudieron consultar las sugerencias en EXIT") from exc
