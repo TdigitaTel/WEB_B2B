@@ -10,7 +10,8 @@
     "test:delivery-deadline": "node --test scripts/test-delivery-deadline.mjs",
     "test:qr-camera": "node scripts/test-qr-camera.cjs",
     "test:home-orders": "node scripts/test-home-orders.cjs",
-    "test:quantity-input": "node scripts/test-quantity-input.cjs"
+    "test:quantity-input": "node scripts/test-quantity-input.cjs",
+    "test:login-image": "node scripts/test-login-image-upload.cjs"
   },
   "dependencies": {
     "jsqr": "^1.4.0",
