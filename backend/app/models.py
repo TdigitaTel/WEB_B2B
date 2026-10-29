@@ -62,6 +62,12 @@ class CustomerDeliverySetting(Base, TimestampMixin):
     delivery_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
 
+class CustomerCatalogSetting(Base, TimestampMixin):
+    __tablename__ = "customer_catalog_settings"
+    customer_code: Mapped[str] = mapped_column(String(40), primary_key=True)
+    highlight_price_without_tax: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+
+
 class User(Base, TimestampMixin):
     __tablename__ = "users"
     id: Mapped[int] = mapped_column(primary_key=True)

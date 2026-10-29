@@ -62,6 +62,7 @@ from .qr_access import router as qr_access_router
 app.include_router(qr_access_router)
 from .subusers import router as subusers_router
 from .account_permissions import identity, principal_for
+from .customer_catalog import highlight_price_without_tax
 from .price_visibility import protect_payload
 app.include_router(subusers_router)
 from .replenishment import router as replenishment_router
@@ -134,7 +135,7 @@ def customer_for(user: User, db: Session) -> dict:
         raise HTTPException(503, "No se pudo consultar el cliente en EXITERP") from exc
     if not customer:
         raise HTTPException(403, "El cliente no existe o no está disponible en EXITERP")
-    return customer
+    return {**customer, "highlight_price_without_tax": highlight_price_without_tax(db, code)}
 
 
 def legacy_customer_id(user: User) -> int | None:
@@ -494,7 +495,7 @@ def catalog_classification(user: User = Depends(current_user), db: Session = Dep
 
 @app.get("/api/v1/search/suggestions")
 def suggestions(q: str = Query(min_length=2), user: User = Depends(current_user), db: Session = Depends(get_db)):
-    customer_for(user, db)
+    customer = customer_for(user, db)
     try:
         articles, _ = fetch_catalog_articles(q, 1, 8, visible_catalog_codes(db), excluded_codes=hidden_codes(db), search_config=get_search_config(db))
     except Exception as exc:
@@ -511,7 +512,8 @@ def suggestions(q: str = Query(min_length=2), user: User = Depends(current_user)
         result.append({
             "id": product.public_id, "sku": article["article_code"],
             "name": product.short_description if has_homologated_name else article["description"],
-            "price": float(article["price_with_tax"]),
+            "price": float(article["price_without_tax"] if customer["highlight_price_without_tax"] else article["price_with_tax"]),
+            "price_includes_tax": not customer["highlight_price_without_tax"],
             "area_id": product.material_area_id, "family_id": product.material_family_id,
             "subfamily_id": product.material_subfamily_id,
             "product_type_id": product.material_product_type_id,

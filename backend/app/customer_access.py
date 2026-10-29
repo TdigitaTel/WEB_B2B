@@ -7,7 +7,7 @@ import smtplib
 import ssl
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, StrictBool, field_validator
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -18,7 +18,8 @@ from .db import get_db
 from .erp_db import fetch_access_customers, fetch_customer, fetch_access_customers_by_codes
 from .models import CustomerQrAccess, AuthSession, Customer, User
 from .customer_delivery import delivery_enabled
-from .models import CustomerDeliverySetting
+from .models import CustomerDeliverySetting, CustomerCatalogSetting
+from .customer_catalog import highlight_price_without_tax
 from .initial_credentials import encrypt_initial, decrypt_initial
 
 router = APIRouter(prefix="/api/v1/store/customer-access", tags=["Accesos de clientes"])
@@ -281,3 +282,34 @@ def set_delivery_setting(data: DeliverySettingIn, user: User = Depends(operator)
           {"delivery_enabled": data.delivery_enabled})
     db.commit()
     return {"customer_code": data.customer_code, "delivery_enabled": setting.delivery_enabled}
+
+
+class CatalogPriceSettingIn(AccessAction):
+    highlight_price_without_tax: StrictBool
+
+
+@router.get("/catalog-price")
+def get_catalog_price_setting(customer_code: str = Query(min_length=1, max_length=40),
+                              user: User = Depends(operator), db: Session = Depends(get_db)):
+    code = customer_code.strip()
+    customer_lookup(code)
+    return {"customer_code": code, "highlight_price_without_tax": highlight_price_without_tax(db, code)}
+
+
+@router.post("/catalog-price")
+def set_catalog_price_setting(data: CatalogPriceSettingIn, user: User = Depends(operator), db: Session = Depends(get_db)):
+    customer_lookup(data.customer_code)
+    # Serialize first writes as well as updates on PostgreSQL.
+    if db.bind.dialect.name == "postgresql":
+        from sqlalchemy import text
+        db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+                   {"key": "catalog-price:" + data.customer_code})
+    setting = db.get(CustomerCatalogSetting, data.customer_code, populate_existing=True)
+    if setting is None:
+        setting = CustomerCatalogSetting(customer_code=data.customer_code)
+        db.add(setting)
+    setting.highlight_price_without_tax = data.highlight_price_without_tax
+    audit(db, user, "CUSTOMER_CATALOG_PRICE_CHANGED", "CUSTOMER", data.customer_code,
+          {"highlight_price_without_tax": data.highlight_price_without_tax})
+    db.commit()
+    return {"customer_code": data.customer_code, "highlight_price_without_tax": setting.highlight_price_without_tax}
