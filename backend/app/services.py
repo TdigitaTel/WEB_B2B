@@ -238,6 +238,7 @@ def product_view(product: Product, customer: Customer, db: Session, stock: list[
         "customer_price": price_with_tax,
         "price_with_tax": price_with_tax,
         "price_without_tax": price_without_tax,
+        "highlight_price_without_tax": bool(customer.get("highlight_price_without_tax", False)) if isinstance(customer, dict) else False,
         "tax_rate": float(product.tax_rate),
         "attributes": product.attributes,
         "stock": stock,

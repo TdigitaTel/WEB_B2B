@@ -62,6 +62,12 @@ class CustomerDeliverySetting(Base, TimestampMixin):
     delivery_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
 
+class CustomerCatalogSetting(Base, TimestampMixin):
+    __tablename__ = "customer_catalog_settings"
+    customer_code: Mapped[str] = mapped_column(String(40), primary_key=True)
+    highlight_price_without_tax: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
+
+
 class User(Base, TimestampMixin):
     __tablename__ = "users"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -162,6 +168,20 @@ class MaterialProductType(Base, TimestampMixin):
     name: Mapped[str] = mapped_column(String(160))
     subfamily_id: Mapped[int] = mapped_column(ForeignKey("material_subfamilies.id"), index=True)
     __table_args__ = (UniqueConstraint("subfamily_id", "name"),)
+
+
+class ProductTypeSynonyms(Base, TimestampMixin):
+    __tablename__ = "product_type_synonyms"
+    product_type_id: Mapped[int] = mapped_column(ForeignKey("material_product_types.id"), primary_key=True)
+    synonyms: Mapped[list] = mapped_column(JSON, default=list)
+    version: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class ProductTypeNameSynonyms(Base, TimestampMixin):
+    __tablename__ = "product_type_name_synonyms"
+    type_name_key: Mapped[str] = mapped_column(String(500), primary_key=True)
+    synonyms: Mapped[list] = mapped_column(JSON, default=list)
+    version: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class Product(Base, TimestampMixin):
