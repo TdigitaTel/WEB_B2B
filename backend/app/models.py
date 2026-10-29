@@ -544,3 +544,17 @@ class SalesOrderSeriesAssignment(Base, TimestampMixin):
         Index("uq_active_sales_order_series_delegation", "company_code", "delegation_code", "document_type",
             unique=True, postgresql_where=text("active = true"), sqlite_where=text("active = 1")),
     )
+
+
+class HomeCarouselSettings(Base):
+    __tablename__ = "home_carousel_settings"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    revision: Mapped[str] = mapped_column(String(36), default=public_uuid)
+
+
+class HomeCarouselImage(Base):
+    __tablename__ = "home_carousel_images"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=public_uuid)
+    position: Mapped[int] = mapped_column(Integer)
+    image_data: Mapped[bytes] = mapped_column(LargeBinary)
+    revision: Mapped[str] = mapped_column(String(36), default=public_uuid)

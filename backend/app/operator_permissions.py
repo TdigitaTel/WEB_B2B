@@ -44,7 +44,7 @@ def check_operator_path(user, db, path, method):
     ):
         if path == prefix or path.startswith(prefix + '/'):
             module = key; break
-    if (path == '/api/v1/pickup-settings' and method != 'GET') or (path.startswith('/api/v1/login-appearance') and method != 'GET'):
+    if (path == '/api/v1/pickup-settings' and method != 'GET') or (path.startswith('/api/v1/login-appearance') and method != 'GET') or (path.startswith('/api/v1/home-carousel') and method != 'GET'):
         module = 'settings'
     if module and not permissions_for(user, db).get(module):
         raise HTTPException(403, 'No tienes permiso para acceder a ' + MODULES[module])
