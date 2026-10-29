@@ -24,3 +24,7 @@ Los servicios locales y archivos de ejemplo no se incluyen en el cambio. No se m
 Cuando hay imagen personalizada, el acceso y la vista previa muestran exclusivamente ese gráfico, sin añadir logotipo, título, párrafo ni degradado oscuro. Se mantiene la adaptación al espacio (puede recortarse) y la cabecera compacta en móvil. Al restaurar la configuración original vuelve el diseño con logotipo y texto; si falla la carga de la imagen en el acceso también se muestra ese diseño como alternativa.
 
 Comprobados en navegador local el acceso con imagen, la vista previa sin superposiciones y el diseño original sin imagen. Compilación y TypeScript correctos; pruebas existentes de subida correctas. No cambia la subida ni la imagen almacenada; las imágenes guardadas previamente se mostrarán con esta presentación después del despliegue.
+
+### Móvil
+
+Hasta 720 px, el gráfico se muestra completo con `object-fit: contain`, sin recortar ni deformar. Su altura se limita al 35 % de la pantalla y a 240 px para mantener el formulario accesible. El formulario reduce sus márgenes y conserva botones y campos de al menos 44 px de alto. La vista previa también muestra el gráfico completo. Comprobados 320, 390 y 720 px en navegador con gráfico vertical de ejemplo, sin desbordamiento horizontal; restaurado el tamaño del navegador tras la revisión.
