@@ -1,25 +1,23 @@
-# Precio destacado por cliente
+# El cliente elige el precio destacado
 
-En **Accesos de clientes**, seleccionar un cliente de EXIT y abrir **Precios del catálogo**:
+La cuenta principal del cliente configura **Mi cuenta → Preferencias → Precios del catálogo**:
 
 - Con IVA destacado · sin IVA más pequeño (valor por defecto).
 - Sin IVA destacado · con IVA más pequeño.
 
-Guardar afecta al cliente y a todos sus subusuarios. Se aplica cuando se vuelven a cargar productos; refrescar la web para renovar también las tarjetas ya cargadas. No requiere cerrar sesiones.
+Al guardar se actualizan las tarjetas de catálogo y favoritos ya cargadas y se limpian las sugerencias antiguas. Los subusuarios heredan la elección al cargar productos; pueden consultar el valor en Preferencias si tienen acceso a esa pestaña, pero no cambiar la preferencia común. El operador no tiene selector ni API de gestión de este parámetro.
 
-La misma tarjeta se usa en catálogo y favoritos. Las sugerencias muestran el importe elegido y su etiqueta con/sin IVA. La ordenación por precio utiliza el importe destacado. Ambos importes conservan los valores recibidos de EXIT; no se calculan impuestos ni se cambian descuentos, pedidos, carrito o documentos por esta preferencia.
+La tarjeta conserva ambos importes recibidos de EXIT. Las sugerencias muestran el importe elegido y su etiqueta; la ordenación usa el importe destacado. No se cambian descuentos, cálculos de IVA, carrito, pedidos ni documentos por esta preferencia.
 
-## Persistencia y API
+## API y permisos
 
-Tabla complementaria `customer_catalog_settings`, con `customer_code` como clave, booleano `highlight_price_without_tax` y fechas. Una fila por cliente EXIT, compartida por sus cuentas y subusuarios. Sin fila equivale a `false` (resaltar con IVA). El bootstrap existente crea la tabla; no se necesita SQL manual.
+- GET `/api/v1/account/catalog-price`: lee la preferencia del cliente asociado a la sesión.
+- PATCH al mismo endpoint: `{"highlight_price_without_tax":true}`. Solo cuenta principal de cliente con permiso de preferencias.
 
-- GET `/api/v1/store/customer-access/catalog-price?customer_code=00004`
-- POST `/api/v1/store/customer-access/catalog-price` con `{"customer_code":"00004","highlight_price_without_tax":true}`.
+No acepta `customer_code` ni otros campos, ni permite elegir otro cliente. Los operadores reciben 403 y los subusuarios no pueden escribir aunque tengan permiso para sus preferencias personales. Se retiran GET/POST de `/api/v1/store/customer-access/catalog-price`.
 
-Ambos endpoints requieren operador/administrador con permiso de Accesos de clientes y verifican que el cliente existe en EXIT. Se registra auditoría. En PostgreSQL un bloqueo por cliente serializa los primeros guardados y las actualizaciones. No se escribe en EXIT.
-
-El catálogo, detalle y favoritos devuelven la preferencia junto a los dos precios. Sugerencias conserva el campo `price` con el importe destacado y añade `price_includes_tax`. Los permisos existentes siguen ocultando todos los importes cuando el usuario no puede ver precios.
+Se conserva `customer_catalog_settings`, clave `customer_code`; sin fila equivale a destacar con IVA. Se mantienen valores que pudieran estar guardados. El bootstrap crea la tabla, sin SQL manual. Se audita el cambio con el usuario cliente que lo realiza y se serializan escrituras por cliente en PostgreSQL. No se escribe en EXIT.
 
 ## Validación
 
-Pruebas de valor por defecto, guardado, cambio de vuelta, importes sin cambios, detalle, favoritos, sugerencias y etiquetas, subusuarios, ocultación de precios, permisos de módulo y cliente inválido. Pantalla revisada y guardado comprobado en navegador con datos locales de ejemplo. Pendiente verificar con clientes y precios reales de EXIT tras desplegar en desarrollo.
+Pruebas de guardado por el propio cliente, aislamiento entre clientes y rechazo de campos ajenos, permiso de preferencias, rechazo a operadores, retiro del endpoint de gestión, herencia y bloqueo de escritura de subusuarios, valores existentes, precios ocultos y uso en catálogo, detalle, favoritos y sugerencias. Pantalla y guardado comprobados con una sesión local de cliente y datos de ejemplo. Pendiente verificar con el cliente real tras integrar y desplegar en desarrollo.

@@ -64,7 +64,8 @@ from .qr_access import router as qr_access_router
 app.include_router(qr_access_router)
 from .subusers import router as subusers_router
 from .account_permissions import identity, principal_for
-from .customer_catalog import highlight_price_without_tax
+from .customer_catalog import highlight_price_without_tax, router as customer_catalog_router
+app.include_router(customer_catalog_router)
 from .price_visibility import protect_payload
 app.include_router(subusers_router)
 from .replenishment import router as replenishment_router
