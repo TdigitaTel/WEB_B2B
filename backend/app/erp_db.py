@@ -142,7 +142,7 @@ def _article_from_row(row: dict) -> dict:
 
 def _insert_article_filter_codes(cursor, table: str, article_codes: list[str]) -> None:
     """Una sentencia parametrizada por bloque, no un viaje a SQL Server por código."""
-    if table not in {"#EligibleArticles", "#HiddenArticles"}:
+    if table not in {"#EligibleArticles", "#HiddenArticles", "#SynonymArticles"}:
         raise ValueError("Tabla temporal de catálogo no admitida")
     codes = list(dict.fromkeys(str(code).strip() for code in article_codes if str(code).strip()))
     # SQL Server admite hasta 1.000 filas en INSERT ... VALUES y 2.100 parámetros.
@@ -241,9 +241,23 @@ def fetch_catalog_articles(query: str = "", page: int = 1, page_size: int = 24,
             # Usar exactamente el mismo filtro que «latón» evita expandir decenas
             # de LIKE y REPLACE por fila en el conteo y en la página de resultados.
             terms, _ = catalog_search_intent(query, config)
+            text_conditions = []
             for term in terms:
-                conditions.append("(" + " OR ".join(f"{expression} COLLATE Latin1_General_CI_AI LIKE %s" for expression in searchable) + ")")
+                text_conditions.append("(" + " OR ".join(f"{expression} COLLATE Latin1_General_CI_AI LIKE %s" for expression in searchable) + ")")
                 parameters.extend([f"%{term}%"] * len(searchable))
+            text_filter = " AND ".join(text_conditions) or "1=1"
+            synonym = config.get("type_synonym")
+            if synonym and synonym.get("codes"):
+                cursor.execute("CREATE TABLE #SynonymArticles (article_code nvarchar(100) PRIMARY KEY)")
+                _insert_article_filter_codes(cursor, "#SynonymArticles", synonym["codes"])
+                type_conditions = [f"EXISTS (SELECT 1 FROM #SynonymArticles syn WHERE syn.article_code = {code_expression})"]
+                extra_terms, _ = catalog_search_intent(synonym.get("query", ""), config)
+                for term in extra_terms:
+                    type_conditions.append("(" + " OR ".join(f"{expression} COLLATE Latin1_General_CI_AI LIKE %s" for expression in searchable) + ")")
+                    parameters.extend([f"%{term}%"] * len(searchable))
+                conditions.append("((" + text_filter + ") OR (" + " AND ".join(type_conditions) + "))")
+            else:
+                conditions.extend(text_conditions)
         parameters = stock_parameters + parameters
         from_sql = f"FROM {schema}.{table} a {eligible_join}{stock_join}WHERE " + " AND ".join(conditions)
         cursor.execute(f"SELECT COUNT_BIG(*) AS total {from_sql}", tuple(parameters))
