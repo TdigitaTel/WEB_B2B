@@ -16,3 +16,5 @@
 .repl-inputs{border:0;padding:0;margin:0;min-width:0}.repl-inputs>h2{font-size:18px;margin:20px 0 12px}.repl-inputs>h2:first-child{margin-top:0}
 
 .replenishment-page .repl-metrics{grid-template-columns:repeat(5,minmax(0,1fr))}@media(max-width:800px){.replenishment-page .repl-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+.repl-progress{padding:16px 20px;margin:16px 0}.repl-progress-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}.repl-progress progress{display:block;width:100%;height:18px;margin:10px 0;accent-color:#237f5c}.repl-progress p{margin:7px 0}.repl-progress small{color:var(--muted);font-variant-numeric:tabular-nums}

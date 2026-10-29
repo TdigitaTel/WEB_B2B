@@ -33,6 +33,26 @@ def unit_expression(cursor):
     return expression,origin
 
 
+def list_replenishment_codes(skus: list[str] | None, max_articles: int):
+    """Freeze only the active article worklist; do not load sales or stocks here."""
+    if skus == []:
+        return []
+    codes=[]
+    with connect_sqlserver() as connection, connection.cursor() as cursor:
+        batches=[None] if skus is None else [skus[i:i+1000] for i in range(0,len(skus),1000)]
+        for batch in batches:
+            where='inactivo=0';params=()
+            if batch is not None:
+                where+=' AND codigoarticulo IN ('+','.join(['%s']*len(batch))+')';params=tuple(batch)
+            cursor.execute(f'SELECT TOP {max_articles+1} codigoarticulo FROM dbo.articulos WHERE {where} ORDER BY codigoarticulo',params)
+            codes.extend(str(row['codigoarticulo']).strip() for row in cursor.fetchall())
+            if len(codes)>max_articles:
+                raise ValueError(f'La selección supera el límite de {max_articles:,} artículos. Amplía el límite o acota los filtros.')
+    if len(codes)!=len(set(codes)):
+        raise ValueError('EXIT devuelve códigos de artículo duplicados; revisa la selección antes de calcular.')
+    return sorted(codes)
+
+
 def read_replenishment_source(start: date, end: date, skus: list[str] | None = None, max_articles: int = MAX_ARTICLES):
     """Empresa 1 para ventas. La vista de stock no tiene empresa en el esquema indicado."""
     if not isinstance(max_articles,int) or not 1<=max_articles<=HARD_MAX_ARTICLES:

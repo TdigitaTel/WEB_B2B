@@ -17,7 +17,7 @@ services:
   api:
     image: webb2b-api:${IMAGE_TAG:-local}
     build: ./backend
-    environment:
+    environment: &api-environment
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-bermudez}:${POSTGRES_PASSWORD:-cambia_esta_clave}@db:5432/${POSTGRES_DB:-bermudez_b2b}
       INITIAL_PASSWORD_TTL_HOURS: ${INITIAL_PASSWORD_TTL_HOURS:-72}
       CUSTOMER_PORTAL_URL: ${CUSTOMER_PORTAL_URL:-https://extranet.bermudezulloa.es/}
@@ -53,6 +53,17 @@ services:
       timeout: 5s
       retries: 12
       start_period: 20s
+    restart: unless-stopped
+
+  replenishment-worker:
+    image: webb2b-api:${IMAGE_TAG:-local}
+    command: ["python", "-m", "app.replenishment_worker"]
+    environment: *api-environment
+    depends_on:
+      api:
+        condition: service_healthy
+    cpus: "${REPLENISHMENT_WORKER_CPUS:-1.0}"
+    mem_limit: ${REPLENISHMENT_WORKER_MEMORY:-1536m}
     restart: unless-stopped
 
   customer-sync:

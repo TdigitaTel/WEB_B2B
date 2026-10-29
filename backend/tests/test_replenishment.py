@@ -263,7 +263,7 @@ def test_article_limit_is_configurable_audited_and_passed_to_exit(monkeypatch):
     assert response.status_code==200 and response.json()['article_limit']==30000
     assert operator.get(prefix+'/options').json()['article_limit']==30000
     preview=operator.post(prefix+'/simulations',json={'filters':{'date_from':raw['start'],'date_to':raw['end'],'delegations':['02']},'preview_only':True})
-    assert preview.status_code==201 and calls[-1][3]==30000
+    assert preview.status_code==201 and calls[-1][3]==1000  # legacy synchronous path is bounded; /jobs preserves the configured limit
     operator.put(prefix+'/settings',json={'article_limit':20000})
 
 
