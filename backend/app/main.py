@@ -522,7 +522,8 @@ def suggestions(q: str = Query(min_length=2), user: User = Depends(current_user)
 @app.get("/api/v1/products/{product_id}")
 def product_detail(product_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
     product = db.scalar(select(Product).where(Product.public_id == product_id))
-    if not product: raise HTTPException(404, "Producto no encontrado")
+    if not product or not visible_catalog_codes(db, [product.sku]):
+        raise HTTPException(404, "Producto no encontrado")
     try:
         article = fetch_catalog_articles_by_codes([product.sku]).get(product.sku)
     except Exception as exc:

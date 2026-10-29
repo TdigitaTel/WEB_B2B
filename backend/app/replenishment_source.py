@@ -1,7 +1,7 @@
 """Fuentes EXIT del MVP. Exclusivamente SELECT; no usa almacenes para el stock."""
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from .erp_db import connect_sqlserver
+from .erp_db import connect_sqlserver, _insert_article_filter_codes
 
 DELEGATIONS = {'01':'San Diego / A Coruña','02':'Ferrol','04':'Santiago','05':'Sanxenxo'}
 MAX_ARTICLES = 20000
@@ -33,15 +33,23 @@ def unit_expression(cursor):
     return expression,origin
 
 
-def list_replenishment_codes(skus: list[str] | None, max_articles: int):
+def category_exclusion(cursor,excluded_codes):
+    if not excluded_codes:return ''
+    cursor.execute('CREATE TABLE #HiddenArticles (article_code nvarchar(100) PRIMARY KEY)')
+    _insert_article_filter_codes(cursor,'#HiddenArticles',excluded_codes)
+    return " AND NOT EXISTS (SELECT 1 FROM #HiddenArticles hidden WHERE hidden.article_code = LTRIM(RTRIM(CONVERT(nvarchar(100),codigoarticulo))))"
+
+
+def list_replenishment_codes(skus: list[str] | None, max_articles: int, excluded_codes: list[str] | None = None):
     """Freeze only the active article worklist; do not load sales or stocks here."""
     if skus == []:
         return []
     codes=[]
     with connect_sqlserver() as connection, connection.cursor() as cursor:
+        exclusion=category_exclusion(cursor,excluded_codes)
         batches=[None] if skus is None else [skus[i:i+1000] for i in range(0,len(skus),1000)]
         for batch in batches:
-            where='inactivo=0';params=()
+            where='inactivo=0'+exclusion;params=()
             if batch is not None:
                 where+=' AND codigoarticulo IN ('+','.join(['%s']*len(batch))+')';params=tuple(batch)
             cursor.execute(f'SELECT TOP {max_articles+1} codigoarticulo FROM dbo.articulos WHERE {where} ORDER BY codigoarticulo',params)
@@ -53,7 +61,7 @@ def list_replenishment_codes(skus: list[str] | None, max_articles: int):
     return sorted(codes)
 
 
-def read_replenishment_source(start: date, end: date, skus: list[str] | None = None, max_articles: int = MAX_ARTICLES):
+def read_replenishment_source(start: date, end: date, skus: list[str] | None = None, max_articles: int = MAX_ARTICLES, excluded_codes: list[str] | None = None):
     """Empresa 1 para ventas. La vista de stock no tiene empresa en el esquema indicado."""
     if not isinstance(max_articles,int) or not 1<=max_articles<=HARD_MAX_ARTICLES:
         raise ValueError('El límite debe estar entre 1 y 100.000 artículos')
@@ -65,9 +73,10 @@ def read_replenishment_source(start: date, end: date, skus: list[str] | None = N
     article_rows=[]; sales=[]; stocks=[]
     with connect_sqlserver() as connection, connection.cursor() as cursor:
         unit,unit_origin=unit_expression(cursor)
+        exclusion=category_exclusion(cursor,excluded_codes)
         batches=[None] if skus is None else [skus[i:i+1000] for i in range(0,len(skus),1000)]
         for batch in batches:
-            where='inactivo=0'
+            where='inactivo=0'+exclusion
             params=[]
             if batch is not None:
                 where+=' AND codigoarticulo IN ('+','.join(['%s']*len(batch))+')';params.extend(batch)

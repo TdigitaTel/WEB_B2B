@@ -39,7 +39,7 @@ def request():
 
 def setup_source(monkeypatch,codes,callback=None):
     calls=[]
-    monkeypatch.setattr(worker,'list_replenishment_codes',lambda selected,limit:list(codes))
+    monkeypatch.setattr(worker,'list_replenishment_codes',lambda selected,limit,excluded_codes=None:list(codes))
     def read(start,end,selected,limit):
         assert len(selected)<=1000 and limit==1000
         if callback:callback(selected)
@@ -130,7 +130,7 @@ def test_failed_block_never_replaces_previous_result(client,monkeypatch):
 def test_selection_limit_and_invalid_parameters_fail_without_partial_publication(client,monkeypatch):
     body=request();body['temporary_parameters']['review_days']=0
     assert client.post(PREFIX+'/jobs',json=body).status_code==422
-    def over_limit(selected,limit):raise ValueError('La selección supera el límite configurado')
+    def over_limit(selected,limit,excluded_codes=None):raise ValueError('La selección supera el límite configurado')
     monkeypatch.setattr(worker,'list_replenishment_codes',over_limit)
     jid=client.post(PREFIX+'/jobs',json=request()).json()['id'];worker.process_one()
     status=client.get(PREFIX+'/jobs/'+jid).json()
@@ -170,7 +170,7 @@ def test_configured_limit_is_frozen_when_job_is_enqueued(client,monkeypatch):
         jid=client.post(PREFIX+'/jobs',json=request()).json()['id']
         client.put(PREFIX+'/settings',json={'article_limit':10000})
         seen=[]
-        def listing(selected,limit):seen.append(limit);return []
+        def listing(selected,limit,excluded_codes=None):seen.append(limit);return []
         monkeypatch.setattr(worker,'list_replenishment_codes',listing)
         worker.process_one()
         assert seen==[30000]

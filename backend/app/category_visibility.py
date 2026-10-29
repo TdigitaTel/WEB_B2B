@@ -43,13 +43,20 @@ def hidden_areas(db):
 
 def visible_catalog_codes(db, codes=None):
     """La maestra sigue siendo EXIT; PostgreSQL delimita qué clasificación se publica."""
-    if unclassified_visible(db):
-        return codes
-    stmt = select(Product.sku).where(Product.material_area_id.is_not(None),
-        Product.material_area_id.not_in(unclassified_area_ids(db)))
-    if codes is not None:
-        stmt = stmt.where(Product.sku.in_(codes))
-    return list(db.scalars(stmt).all())
+    allow_unclassified=unclassified_visible(db)
+    if allow_unclassified and codes is None:return None
+    hidden=hidden_areas(db)
+    if allow_unclassified:
+        # Unknown EXIT articles belong to the explicitly enabled unclassified group.
+        # Known hidden categories must still be excluded from explicit worklists.
+        stmt=select(Product.sku).where(Product.material_area_id.in_(hidden))
+    else:
+        stmt=select(Product.sku).where(Product.material_area_id.is_not(None),Product.material_area_id.not_in(hidden))
+    if codes is None:return list(db.scalars(stmt).all())
+    matched=set()
+    for offset in range(0,len(codes),1000):
+        matched.update(db.scalars(stmt.where(Product.sku.in_(codes[offset:offset+1000]))).all())
+    return [code for code in codes if (code not in matched if allow_unclassified else code in matched)]
 
 def hidden_codes(db):
     return list(db.scalars(select(Product.sku).where(Product.material_area_id.in_(hidden_areas(db)))).all())
