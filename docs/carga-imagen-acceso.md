@@ -27,4 +27,4 @@ Comprobados en navegador local el acceso con imagen, la vista previa sin superpo
 
 ### Móvil
 
-Hasta 720 px, el gráfico se muestra completo con `object-fit: contain`, sin recortar ni deformar. Su altura se limita al 35 % de la pantalla y a 240 px para mantener el formulario accesible. El formulario reduce sus márgenes y conserva botones y campos de al menos 44 px de alto. La vista previa también muestra el gráfico completo. Comprobados 320, 390 y 720 px en navegador con gráfico vertical de ejemplo, sin desbordamiento horizontal; restaurado el tamaño del navegador tras la revisión.
+Hasta 720 px, el gráfico ocupa todo el ancho de pantalla con su proporción natural y sin una altura máxima que genere franjas laterales. La vista previa usa la misma presentación. El formulario ocupa también todo el ancho, sin tarjeta exterior ni márgenes dobles, con 16 px interiores para los controles y botones de al menos 44 px de alto. Si el gráfico es alto, la página se desplaza normalmente hasta el formulario. Comprobados 320, 390 y 720 px en navegador con gráfico vertical de ejemplo, sin desbordamiento horizontal; restaurado el tamaño del navegador tras la revisión.
