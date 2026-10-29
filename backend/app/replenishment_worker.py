@@ -10,6 +10,7 @@ from sqlalchemy import insert, select, text
 from .db import SessionLocal, engine
 from .models import ReplenishmentJob as Job, ReplenishmentBatch as Batch, ReplenishmentScenario as Scenario, ReplenishmentResult as Result
 from .replenishment import RunInput, enrich_source, selected_product_codes
+from .category_visibility import hidden_codes
 from .replenishment_engine import prepare_context, calculate_article, annotate_central, summarize
 from .replenishment_source import list_replenishment_codes, read_replenishment_source
 
@@ -60,7 +61,7 @@ def initialize(job_id,token):
         request=RunInput.model_validate(job.request)
         job.phase='Identificando los artículos seleccionados en EXIT';db.commit()
         selected=selected_product_codes(db,request.filters)
-        codes=list_replenishment_codes(selected,job.article_limit)
+        codes=list_replenishment_codes(selected,job.article_limit,hidden_codes(db) if selected is None else [])
         job=owned(db,job_id,token)
         source={'batched':True,'source_articles':len(codes),'articles':[], 'sales':[], 'stocks':[],
             'captured_at':now().isoformat(),'extraction_started_at':job.started_at.isoformat(),
