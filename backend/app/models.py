@@ -293,6 +293,10 @@ class Order(Base, TimestampMixin):
     principal_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
     principal_user_name: Mapped[str | None] = mapped_column(String(160))
     creator_user_name: Mapped[str | None] = mapped_column(String(160))
+    exit_company_code = synonym("company_code")
+    exit_order_year: Mapped[int | None] = mapped_column(Integer)
+    exit_series: Mapped[str | None] = mapped_column(String(100))
+    exit_order_number: Mapped[str | None] = mapped_column(String(80))
     nro_pedido_exit: Mapped[str | None] = mapped_column(String(80), index=True)
     fecha_registro_exit: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     fulfillment_method: Mapped[str] = mapped_column(String(20), default="PICKUP", server_default="PICKUP", nullable=False)
@@ -313,7 +317,7 @@ class Order(Base, TimestampMixin):
     __table_args__ = (
         CheckConstraint("(delegation_code IS NULL) = (company_code IS NULL)", name="ck_orders_delegation_company"),
         Index("ix_orders_store_created", "company_code", "delegation_code", "created_at"),
-        Index("ux_orders_nro_pedido_exit", "nro_pedido_exit", unique=True),
+        Index("ix_orders_exit_key", "company_code", "exit_order_year", "exit_series", "exit_order_number", unique=True),
     )
 
 
@@ -321,6 +325,7 @@ class OrderItem(Base, TimestampMixin):
     __tablename__ = "order_items"
     id: Mapped[int] = mapped_column(primary_key=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"), index=True)
+    exit_line_number: Mapped[str | None] = mapped_column(String(40))
     product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"))
     sku: Mapped[str] = mapped_column(String(50))
     description: Mapped[str] = mapped_column(Text)
