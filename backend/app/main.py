@@ -25,6 +25,8 @@ from .pickup import immediate_ready_at, immediate_available, next_open_date, sch
 from .db import get_db
 from .schemas import PickupChange, PickupSettingsIn, DeliveryConfirmation, WebOrderRegistrationChange, UserDisplayPreferences
 from .exit_orders import upsert_exit_order
+from .order_identity import linked_customer_order, customer_history_without_shadows
+from .exit_order_key import FIELDS as EXIT_KEY_FIELDS, key_payload, apply_key, record_key
 from .kardex_timing import fetch_kardex_timings, sales_order_number
 from .order_timeline import exit_events, sync_history, instant, dispatch_timing, is_web_order
 from .delegations import fetch_delegations, resolve_delegation
@@ -209,7 +211,7 @@ def order_payload(order: Order, db: Session, include_items: bool = False, histor
         except Exception:
             logger.exception("No se pudo enriquecer el pedido con el cliente EXITERP %s", order.customer_code)
     creator = db.get(User, order.user_id) if order.user_id else None
-    result = {"id": order.public_id, "number": order.order_number, "server_now": datetime.now(timezone.utc),
+    result = {**key_payload(order), "id": order.public_id, "number": order.order_number, "server_now": datetime.now(timezone.utc),
               "store": store.name if store else order.store_id, "store_code": store.code if store else order.delegation_code, "company_code": order.company_code, "delegation_code": order.delegation_code, "customer_code": order.customer_code, "customer_reference": order.customer_reference,
               "fulfillment_method": order.fulfillment_method, "delivery_address": order.delivery_address, "pickup_date": order.pickup_date, "attention_deadline_at": order.attention_deadline_at, "preparation_minutes_snapshot": order.preparation_minutes_snapshot, "job_name": order.job_name, "notes": order.notes, "subtotal": float(order.subtotal),
               "tax_total": float(order.tax_total), "total": float(order.total), "created_at": order.created_at,
@@ -226,7 +228,7 @@ def order_payload(order: Order, db: Session, include_items: bool = False, histor
                       if item.pending_quantity is not None else Decimal("0"))
             pending = (item.pending_quantity if item.pending_quantity is not None
                        else max(Decimal("0"), item.quantity - served))
-            result["items"].append({"line_key": str(item.id), "sku": item.sku, "description": item.description,
+            result["items"].append({**key_payload(order), "exit_line_number": item.exit_line_number, "line_key": str(item.id), "sku": item.sku, "description": item.description,
                                     "quantity": float(item.quantity), "served_quantity": float(served),
                                     "pending_quantity": float(pending), "unit": item.unit,
                                     "unit_price": float(item.unit_price), "line_total": float(item.line_total),
@@ -829,13 +831,6 @@ def orders(date_from: date | None = None, date_to: date | None = None,
         if key and key not in deliveries:
             deliveries[key] = delivery
             deliveries.setdefault(key.split("/")[-1], delivery)
-    by_exit: dict[str, Order] = {}
-    by_web = {row.order_number.strip().upper(): row for row in all_local_rows}
-    for row in all_local_rows:
-        if row.nro_pedido_exit:
-            raw = row.nro_pedido_exit.strip().upper()
-            by_exit[raw] = row
-            by_exit[raw.split("/")[-1]] = row
     linked: set[int] = set()
     result: list[dict] = []
     def exit_workflow(record, current: str | None = None, delivery: dict | None = None, web_order: bool | None = None) -> list[dict]:
@@ -859,18 +854,20 @@ def orders(date_from: date | None = None, date_to: date | None = None,
                 effective_state = "FACTURADO"
             else:
                 effective_state = "ATENDIDO"
-        local = by_exit.get(external) or by_exit.get(external.split("/")[-1])
-        if not local and record.customer_reference:
-            local = by_web.get(record.customer_reference.strip().upper())
-            if local and not local.nro_pedido_exit:
-                local.nro_pedido_exit = record.exit_order_id
-                local.fecha_registro_exit = record.recorded_at
+        local, shadows = linked_customer_order(all_local_rows, record, exit_rows)
+        if local and not local.nro_pedido_exit:
+            local.nro_pedido_exit = record.exit_order_id
+            local.fecha_registro_exit = record.recorded_at
+        linked.update(row.id for row in shadows)
         if user.own_orders_only and (local is None or local.user_id != user.id):
             continue
         if local is None:
             local = upsert_exit_order(db, record, user)
-            by_exit[external] = local
+            all_local_rows.append(local)
         if local:
+            identity = record_key(record)
+            if identity and local.origen_pedido == 'B2B':
+                apply_key(db, local, dict(zip(EXIT_KEY_FIELDS, identity)), validate_number=False)
             linked.add(local.id)
             local.fecha_registro_exit = record.recorded_at
             if record.prepared_at and not delivery:
@@ -886,6 +883,7 @@ def orders(date_from: date | None = None, date_to: date | None = None,
             local.estado_registro_exit = effective_state
             payload = order_payload(local, db, True)
             payload.update({"nro_pedido_exit": record.exit_order_id, "exit_number": record.exit_order_id,
+                            **(dict(zip(EXIT_KEY_FIELDS, record_key(record))) if record_key(record) else {}),
                             "web_number": local.order_number if local.origen_pedido == "B2B" else None, "number": record.exit_order_id,
                             "fecha_registro_exit": record.recorded_at, "estado_registro_exit": effective_state,
                             "customer_reference": record.customer_reference or local.customer_reference,
@@ -894,7 +892,7 @@ def orders(date_from: date | None = None, date_to: date | None = None,
                             "created_at": record.recorded_at or local.created_at,
                             "created_by": payload["created_by"] if local.origen_pedido == "B2B" else (record.source_created_by or "EXIT"), "local_order": local.origen_pedido == "B2B",
                             "workflow": exit_workflow(record, effective_state, delivery, is_web_order(record, local)),
-                            "items": [{"sku": line.sku, "description": line.description, "quantity": float(line.quantity),
+                            "items": [{**(dict(zip(EXIT_KEY_FIELDS, record_key(record))) if record_key(record) else {}), "exit_line_number": line.line_number, "sku": line.sku, "description": line.description, "quantity": float(line.quantity),
                                        "served_quantity": float(line.served_quantity or 0),
                                        "pending_quantity": float(line.pending_quantity or 0), "unit": line.unit,
                                        "unit_price": float(line.unit_price), "discount_pct": float(line.discount_pct),
@@ -959,6 +957,7 @@ def orders(date_from: date | None = None, date_to: date | None = None,
         payload.update({"web_number": row.order_number if row.origen_pedido == "B2B" else None, "exit_number": row.nro_pedido_exit,
                         "local_order": row.origen_pedido == "B2B"})
         result.append(payload)
+    result = customer_history_without_shadows(result)
     for payload in result:
         key = document_key(payload.get("exit_number") or payload.get("nro_pedido_exit"))
         matched = [row for row in delivery_rows if key and document_key(row.get("order_number")) == key]
@@ -1178,9 +1177,13 @@ def integration_order(db: Session, order_id: str | None = None, order_number: st
             return order
     if order_number:
         identifier = order_number.strip()
-        return db.scalar(select(Order).where(
-            (Order.order_number == identifier) | (Order.nro_pedido_exit == identifier)
-        ))
+        exact = db.scalar(select(Order).where(Order.order_number == identifier))
+        if exact:
+            return exact
+        matches = db.scalars(select(Order).where(Order.nro_pedido_exit == identifier)).all()
+        if len(matches) > 1:
+            raise HTTPException(409, "Referencia EXIT ambigua; utiliza order_id o el número WEB")
+        return matches[0] if matches else None
     return None
 
 
@@ -1225,6 +1228,7 @@ def update_order_status_from_integration(
     order = integration_order(db, data.order_id, data.order_number)
     if not order:
         raise HTTPException(404, "Pedido no encontrado")
+    db.refresh(order, with_for_update=True)
     requested = data.estado_registro_exit.strip().upper()
     if requested not in {"BLOQUEADO", *INTEGRATION_STATUS_SEQUENCE}:
         allowed = ", ".join(INTEGRATION_STATUS_SEQUENCE)
@@ -1235,10 +1239,18 @@ def update_order_status_from_integration(
     if not source:
         raise HTTPException(422, "El origen de la actualización es obligatorio")
 
+    binding_changed = apply_key(db, order, data.model_dump(exclude_unset=True), data.nro_pedido_exit)
+    if data.nro_pedido_exit or any(getattr(data, field) is not None for field in EXIT_KEY_FIELDS):
+        order.fecha_registro_exit = data.occurred_at or order.fecha_registro_exit or datetime.now(timezone.utc)
+    def unchanged_status():
+        if binding_changed:
+            audit(db, None, "ORDER_EXIT_KEY_UPDATED", "ORDER", order.public_id, key_payload(order))
+        db.commit()
+        return {"changed": binding_changed, "recorded_statuses": [], "order": order_payload(order, db, True)}
     current = order.estado_registro_exit.strip().upper()
     if requested == "BLOQUEADO":
         if current == "BLOQUEADO":
-            return {"changed": False, "order": order_payload(order, db, True)}
+            return unchanged_status()
         if current != "PENDIENTE":
             raise HTTPException(409, "Solo se puede bloquear un pedido PENDIENTE")
         statuses = ["BLOQUEADO"]
@@ -1257,7 +1269,7 @@ def update_order_status_from_integration(
         if requested_index < current_index:
             raise HTTPException(409, f"No se puede retroceder de {current} a {requested}")
         if requested_index == current_index:
-            return {"changed": False, "order": order_payload(order, db, True)}
+            return unchanged_status()
         statuses = INTEGRATION_STATUS_SEQUENCE[current_index + 1:requested_index + 1]
 
     if not order.delivered_at:
@@ -1274,9 +1286,6 @@ def update_order_status_from_integration(
         ))
         recorded.append(status)
     order.estado_registro_exit = requested
-    if data.nro_pedido_exit:
-        order.nro_pedido_exit = data.nro_pedido_exit.strip()
-        order.fecha_registro_exit = data.occurred_at or order.fecha_registro_exit or datetime.now(timezone.utc)
     audit(db, None, "ORDER_STATUS_CHANGED_BY_INTEGRATION", "ORDER", order.public_id,
           {"estado_registro_exit": requested, "source": data.source, "recorded": recorded})
     db.commit()
@@ -1575,9 +1584,8 @@ def change_web_registration(order_id: str, data: WebOrderRegistrationChange,
     if data.state == "REGISTRADO":
         if not number:
             raise HTTPException(422, "Introduce el número de pedido EXIT")
-        duplicate = db.scalar(select(Order.id).where(Order.id != order.id, func.upper(func.replace(Order.nro_pedido_exit, "~", "/")) == number))
-        if duplicate:
-            raise HTTPException(409, "Ese número EXIT ya está vinculado a otro pedido")
+        apply_key(db, order, data.model_dump(exclude_unset=True), number)
+        number = order.nro_pedido_exit
         registered = data.exit_registered_at
         if registered is None:
             # Compatibilidad con integraciones existentes que solo envían número.
@@ -1597,15 +1605,19 @@ def change_web_registration(order_id: str, data: WebOrderRegistrationChange,
         if previous_registered and previous_registered.tzinfo is None:
             previous_registered = previous_registered.replace(tzinfo=timezone.utc)
         if order.estado_registro_exit == "REGISTRADO" and order.nro_pedido_exit == number and previous_registered == registered:
+            db.commit()
             return order_payload(order, db, True, history_for_operator=True)
         order.nro_pedido_exit = number
         order.fecha_registro_exit = registered
         order.sync_status = SyncStatus.synced
     else:
         order.nro_pedido_exit = None
+        for field in EXIT_KEY_FIELDS[1:]:
+            setattr(order, field, None)
         order.fecha_registro_exit = None
         order.sync_status = SyncStatus.pending
         for item in db.scalars(select(OrderItem).where(OrderItem.order_id == order.id)).all():
+            item.exit_line_number = None
             item.served_quantity = Decimal("0")
             item.pending_quantity = item.quantity
     order.delivered_at = None

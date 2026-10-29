@@ -94,7 +94,14 @@ class StatusChange(BaseModel):
     note: str | None = Field(default=None, max_length=500)
 
 
-class ExternalStatusChange(BaseModel):
+class ExitOrderKeyFields(BaseModel):
+    exit_company_code: int | None = Field(default=None, ge=0, le=2147483647)
+    exit_order_year: int | None = Field(default=None, ge=1900, le=9999)
+    exit_series: str | None = Field(default=None, max_length=100)
+    exit_order_number: str | None = Field(default=None, min_length=1, max_length=80)
+
+
+class ExternalStatusChange(ExitOrderKeyFields):
     order_id: str | None = Field(default=None, min_length=1, max_length=80)
     order_number: str | None = Field(default=None, min_length=1, max_length=80)
     estado_registro_exit: str
@@ -110,7 +117,7 @@ class ExternalStatusChange(BaseModel):
         return self
 
 
-class WebOrderRegistrationChange(BaseModel):
+class WebOrderRegistrationChange(ExitOrderKeyFields):
     state: str = Field(pattern="^(PENDIENTE|REGISTRADO)$")
     exit_order_number: str | None = Field(default=None, max_length=80)
     exit_registered_at: datetime | None = None

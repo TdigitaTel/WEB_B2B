@@ -272,6 +272,8 @@ def fetch_exit_orders_live(view: str = "active_kardex", date_from: date | None =
         source_status = str(row.get("status") or "").strip().upper()
         local_status = "EN_PREPARACION" if row.get("prepared_at") else "REGISTRADO"
         result.append(ExitOrderInput(
+            exit_company_code=int(row["company"]) if row.get("company") is not None else None,
+            exit_order_year=int(year), exit_series=series, exit_order_number=str(number),
             exit_order_id=external_id, order_number=f"EXIT-{year}-{series}-{number}"[:40],
             customer_code=str(row.get("customer") or "").strip(),
             company_code=int(row["company"]) if row.get("company") is not None else None,
