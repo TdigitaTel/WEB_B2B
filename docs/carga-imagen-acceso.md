@@ -18,3 +18,9 @@ El tratamiento de respuestas tolera cuerpos HTML o inválidos y presenta mensaje
 - Prueba real en Chrome con imagen sintética PNG de 7.211.364 bytes y proxy local de 1 MiB: original sin optimizar → HTTP 413 con HTML; subida desde la pantalla corregida → petición multipart de 736.050 bytes, HTTP 200 y lectura de imagen guardada HTTP 200.
 
 Los servicios locales y archivos de ejemplo no se incluyen en el cambio. No se modificó la imagen ni la configuración de desarrollo o producción. Tras desplegar, probar el archivo original en ambos entornos; si persiste un rechazo, revisar el estado HTTP y los registros del proxy/API. No se necesita un cambio de base de datos.
+
+## Presentación de la imagen personalizada
+
+Cuando hay imagen personalizada, el acceso y la vista previa muestran exclusivamente ese gráfico, sin añadir logotipo, título, párrafo ni degradado oscuro. Se mantiene la adaptación al espacio (puede recortarse) y la cabecera compacta en móvil. Al restaurar la configuración original vuelve el diseño con logotipo y texto; si falla la carga de la imagen en el acceso también se muestra ese diseño como alternativa.
+
+Comprobados en navegador local el acceso con imagen, la vista previa sin superposiciones y el diseño original sin imagen. Compilación y TypeScript correctos; pruebas existentes de subida correctas. No cambia la subida ni la imagen almacenada; las imágenes guardadas previamente se mostrarán con esta presentación después del despliegue.
