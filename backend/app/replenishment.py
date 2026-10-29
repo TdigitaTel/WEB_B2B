@@ -20,7 +20,8 @@ from .auth import require_roles
 from .db import get_db
 from .models import (AuditEvent, MaterialArea, MaterialFamily, MaterialSubfamily, MaterialProductType, Product,
     ReplenishmentPolicy as Policy, ReplenishmentScenario as Scenario, ReplenishmentResult as Result,
-    ReplenishmentAdjustment as Adjustment, ReplenishmentSettings as ModuleSettings, User)
+    ReplenishmentAdjustment as Adjustment, ReplenishmentSettings as ModuleSettings,
+    ReplenishmentJob as Job, ReplenishmentBatch as Batch, User)
 from .replenishment_engine import Parameters, PRECEDENCE, prepare_context, calculate_article, annotate_central, summarize, rounded_dispatch
 from .replenishment_source import DELEGATIONS, MAX_ARTICLES, HARD_MAX_ARTICLES, read_replenishment_source
 
@@ -83,7 +84,12 @@ def scenario_or_404(db,public_id,lock=False):
     if lock:query=query.with_for_update()
     row=db.scalar(query)
     if not row:raise HTTPException(404,'Simulación no encontrada')
+    ensure_published(db,row.id)
     return row
+
+def ensure_published(db,scenario_id):
+    status=db.scalar(select(Job.status).where(Job.scenario_id==scenario_id))
+    if status and status!='COMPLETED':raise HTTPException(409,'El cálculo todavía no está completo. Consulta su progreso.')
 
 def result_or_404(db,scenario,result_id):
     row=db.scalar(select(Result).where(Result.id==result_id,Result.scenario_id==scenario.id))
@@ -95,9 +101,9 @@ def audit(db,user,action,entity,metadata):
 
 def scenario_payload(row):
     return {'id':row.public_id,'name':row.name,'saved':row.saved,'version':row.version,'created_at':row.created_at,
-        'captured_at':row.source_snapshot['captured_at'],'source_fingerprint':row.source_fingerprint,
+        'captured_at':row.source_snapshot['captured_at'],'extraction_started_at':row.source_snapshot.get('extraction_started_at'),'source_fingerprint':row.source_fingerprint,
         'filters':row.filters,'temporary_parameters':row.temporary_parameters,'summary':row.summary,
-        'article_limit':row.source_snapshot.get('article_limit',5000),'source_articles':len(row.source_snapshot['articles']),'read_only_exit':True,
+        'article_limit':row.source_snapshot.get('article_limit',5000),'source_articles':row.source_snapshot.get('source_articles',len(row.source_snapshot['articles'])),'read_only_exit':True,
         'source_notes':['Stock transferible Almeiras = stock físico − comprometido − reserva de consumo; no incluye entradas pendientes.',
             'Ventas: empresa 1. La vista de stock se usa con el alcance indicado, sin campo de empresa.',
             'Ventas del periodo elegido y stock consultado en la extracción; no se reconstruye stock histórico.',
@@ -157,16 +163,23 @@ def save_policy(body:PolicyInput,db:Session=Depends(get_db),user:User=Depends(op
     db.flush();audit(db,user,'REPLENISHMENT_POLICY_SAVED',row.id,{'previous':previous,'new':policy_payload(row)})
     db.commit();return policy_payload(row)
 
-def classified_source(db,filters):
+def selected_product_codes(db,filters):
     query=select(Product.sku)
     for key,column in [('area_id',Product.material_area_id),('family_id',Product.material_family_id),
                        ('subfamily_id',Product.material_subfamily_id),('type_id',Product.material_product_type_id)]:
         if getattr(filters,key) is not None:query=query.where(column==getattr(filters,key))
     selected=list(db.scalars(query).all()) if any(getattr(filters,key) is not None for key in ('area_id','family_id','subfamily_id','type_id')) else None
     if filters.skus:selected=filters.skus if selected is None else sorted(set(selected).intersection(filters.skus))
-    limit=module_settings(db)['article_limit']
+    return selected
+
+def classified_source(db,filters):
+    selected=selected_product_codes(db,filters)
+    limit=min(1000,module_settings(db)['article_limit'])
     source=read_replenishment_source(filters.date_from,filters.date_to,selected,limit)
     source['article_limit']=limit
+    return enrich_source(db,source)
+
+def enrich_source(db,source):
     codes=[row['sku'] for row in source['articles']]
     rows=[]
     for offset in range(0,len(codes),1000):
@@ -180,6 +193,44 @@ def classified_source(db,filters):
         for key in names:article[key]=names[key].get(article.get(key+'_id'))
     return source
 
+def job_payload(db,row):
+    result=scenario_payload(db.get(Scenario,row.scenario_id)) if row.status=='COMPLETED' else None
+    progress=100 if row.status=='COMPLETED' else min(99,int(row.processed_articles*100/max(1,row.total_articles)))
+    return {'id':row.public_id,'status':row.status,'phase':row.phase,'progress':progress,
+        'total_articles':row.total_articles,'processed_articles':row.processed_articles,
+        'total_batches':row.total_batches,'completed_batches':row.completed_batches,'batch_size':1000,
+        'started_at':row.started_at,'finished_at':row.finished_at,'error':row.error,'result':result,
+        'filters':row.request['filters'],'temporary_parameters':row.request['temporary_parameters']}
+
+@router.post('/jobs',status_code=202)
+def enqueue(body:RunInput,db:Session=Depends(get_db),user:User=Depends(operator)):
+    validate_parameters(body.temporary_parameters)
+    if body.source_id or body.preview_only:
+        raise HTTPException(422,'El cálculo por bloques consulta y guarda sus propios datos de EXIT.')
+    # Comparables require the complete population; the current simple calculation never uses them.
+    if body.temporary_parameters.get('simple_formula') is not True:
+        raise HTTPException(422,'El cálculo por bloques utiliza la fórmula simple visible de reposición.')
+    db.scalar(select(User).where(User.id==user.id).with_for_update())
+    existing=db.scalar(select(Job).where(Job.created_by==user.id,Job.status.in_(['QUEUED','RUNNING'])).order_by(Job.id))
+    if existing:return job_payload(db,existing)
+    row=Job(created_by=user.id,request=body.model_dump(mode='json'),article_limit=module_settings(db)['article_limit'])
+    db.add(row);db.flush()
+    audit(db,user,'REPLENISHMENT_QUEUED',row.public_id,{'batch_size':1000,'article_limit':row.article_limit})
+    db.commit();return job_payload(db,row)
+
+@router.get('/jobs/current')
+def current_job(db:Session=Depends(get_db),user:User=Depends(operator)):
+    latest=db.scalar(select(Job).where(Job.created_by==user.id).order_by(Job.id.desc()).limit(1))
+    completed=db.scalar(select(Job).where(Job.created_by==user.id,Job.status=='COMPLETED').order_by(Job.id.desc()).limit(1))
+    return {'job':job_payload(db,latest) if latest else None,
+        'latest_result':scenario_payload(db.get(Scenario,completed.scenario_id)) if completed else None}
+
+@router.get('/jobs/{job_id}')
+def read_job(job_id:str,db:Session=Depends(get_db),user:User=Depends(operator)):
+    row=db.scalar(select(Job).where(Job.public_id==job_id,Job.created_by==user.id))
+    if not row:raise HTTPException(404,'Cálculo no encontrado')
+    return job_payload(db,row)
+
 @router.post('/simulations',status_code=201)
 def run_simulation(body:RunInput,db:Session=Depends(get_db),user:User=Depends(operator)):
     validate_parameters(body.temporary_parameters)
@@ -188,12 +239,15 @@ def run_simulation(body:RunInput,db:Session=Depends(get_db),user:User=Depends(op
         base=scenario_or_404(db,body.source_id)
         if base.filters!=filters:raise HTTPException(422,'Para reutilizar datos conserva los filtros originales o actualiza la extracción')
         source=base.source_snapshot
+        if source.get('batched'):raise HTTPException(422,'Para repetir un cálculo por bloques utiliza /jobs.')
     else:
         try:source=classified_source(db,body.filters)
         except ValueError as exc:raise HTTPException(422,str(exc)) from exc
         except Exception as exc:
             logger.exception('Error leyendo fuentes de reposición EXIT')
             raise HTTPException(503,'No se pudieron leer las fuentes EXIT indicadas. Revisa el registro de la API y la conexión') from exc
+    if len(source['articles'])>1000:
+        raise HTTPException(422,'Para más de 1.000 artículos utiliza el cálculo por bloques (/jobs).')
     snapshots=[]  # El cálculo simple usa exclusivamente los parámetros visibles enviados.
     fingerprint=hashlib.sha256(json.dumps(source,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
     scenario=Scenario(created_by=user.id,source_snapshot=source,source_fingerprint=fingerprint,filters=filters,
@@ -247,15 +301,22 @@ def ordered_results(query,sort,descending):
     return query.order_by(order.desc() if descending else order.asc(),Result.sku,Result.delegation)
 
 
-def result_summary(db,query):
+def result_summary(db,query,full=False):
     data=query.subquery()
     payload=data.c.payload
     count_if=lambda condition:func.coalesce(func.sum(case((condition,1),else_=0)),0)
-    row=db.execute(select(func.count().label('article_delegations'),func.count(func.distinct(data.c.sku)).label('articles_analyzed'),
+    columns=[func.count().label('article_delegations'),func.count(func.distinct(data.c.sku)).label('articles_analyzed'),
         count_if(payload['final_quantity'].as_float()>0).label('to_replenish'),
         count_if(payload['central_can_supply'].as_boolean().is_(True)).label('central_covered'),
         count_if(payload['overstock'].as_boolean().is_(True)).label('overstock'),
-        count_if(payload['total_demand'].as_float()<=0).label('without_movement'))).mappings().one()
+        count_if(payload['total_demand'].as_float()<=0).label('without_movement')]
+    if full:columns.extend([
+        func.coalesce(func.sum(payload['final_quantity'].as_float()),0).label('units_proposed'),
+        count_if(payload['irregular'].as_boolean().is_(True)).label('irregular'),
+        func.coalesce(func.sum(func.json_array_length(payload['recommendations'])),0).label('alerts'),
+        func.coalesce(func.sum(payload['target_stock'].as_float()),0).label('target_stock'),
+        func.coalesce(func.avg(case((payload['daily_mean'].as_float()>0,payload['target_stock'].as_float()/func.nullif(payload['daily_mean'].as_float(),0)),else_=None)),0).label('average_coverage_days')])
+    row=db.execute(select(*columns)).mappings().one()
     return dict(row)
 
 
@@ -264,6 +325,7 @@ def result_scenario(db,public_id):
         Scenario.policies_snapshot,Scenario.source_fingerprint,Scenario.source_snapshot['captured_at'].as_string().label('captured_at'))
         .where(Scenario.public_id==public_id)).one_or_none()
     if row is None:raise HTTPException(404,'Cálculo no encontrado')
+    ensure_published(db,row.id)
     return row
 
 
@@ -278,8 +340,16 @@ def results(scenario_id:str,filters:ResultFilters=Depends(),page:int=Query(1,ge=
         'summary':summary,'page':page,'version':scenario.version}
 
 
-def article_context(scenario,result):
-    source=scenario.source_snapshot
+def source_for_result(db,scenario,result):
+    if not scenario.source_snapshot.get('batched'):return scenario.source_snapshot
+    source=db.scalar(select(Batch.source).join(Job,Job.id==Batch.job_id).where(
+        Job.scenario_id==scenario.id,Batch.number==result.payload.get('source_batch')))
+    if not source:raise HTTPException(404,'Bloque de origen no encontrado')
+    # The simple formula is independent per SKU; detail/adjustments need no other article histories.
+    return {**source,**{key:[row for row in source[key] if row['sku']==result.sku] for key in ('articles','sales','stocks')}}
+
+def article_context(scenario,result,db):
+    source=source_for_result(db,scenario,result)
     article=next((row for row in source['articles'] if row['sku']==result.sku),None)
     if not article:raise HTTPException(404,'Artículo ausente en la instantánea')
     context=prepare_context(source,scenario.filters['delegations'],scenario.policies_snapshot,scenario.temporary_parameters)
@@ -288,7 +358,7 @@ def article_context(scenario,result):
 @router.get('/simulations/{scenario_id}/results/{result_id}')
 def detail(scenario_id:str,result_id:int,db:Session=Depends(get_db)):
     scenario=scenario_or_404(db,scenario_id);row=result_or_404(db,scenario,result_id)
-    article,context=article_context(scenario,row)
+    article,context=article_context(scenario,row,db)
     calculated=calculate_article(article,row.delegation,context,row.payload.get('manual_parameters'),True)
     history=db.scalars(select(Adjustment).where(Adjustment.result_id==row.id).order_by(Adjustment.created_at)).all()
     return {'id':row.id,**row.payload,'daily_sales':calculated['daily_sales'],'scenario_version':scenario.version,
@@ -298,11 +368,11 @@ def detail(scenario_id:str,result_id:int,db:Session=Depends(get_db)):
 def recalculate(scenario_id:str,result_id:int,body:RecalculateInput,db:Session=Depends(get_db)):
     validate_parameters(body.parameters)
     scenario=scenario_or_404(db,scenario_id);row=result_or_404(db,scenario,result_id)
-    article,context=article_context(scenario,row)
+    article,context=article_context(scenario,row,db)
     try:result=calculate_article(article,row.delegation,context,{**row.payload.get('manual_parameters',{}),**body.parameters},True)
     except ValueError as exc:raise HTTPException(422,str(exc)) from exc
-    other=[dict(item.payload) for item in db.scalars(select(Result).where(Result.scenario_id==scenario.id,Result.id!=row.id)).all()]
-    annotate_central([*other,result],scenario.source_snapshot)
+    other=[dict(item.payload) for item in db.scalars(select(Result).where(Result.scenario_id==scenario.id,Result.sku==row.sku,Result.id!=row.id)).all()]
+    annotate_central([*other,result],context['source'])
     return result
 
 @router.post('/simulations/{scenario_id}/results/{result_id}/adjustments')
@@ -310,10 +380,11 @@ def adjust(scenario_id:str,result_id:int,body:AdjustmentInput,db:Session=Depends
     validate_parameters(body.parameters)
     scenario=scenario_or_404(db,scenario_id,True);row=result_or_404(db,scenario,result_id)
     if scenario.version!=body.expected_version:raise HTTPException(409,'Otra persona modificó el escenario. Actualiza los datos')
-    article,context=article_context(scenario,row);previous=dict(row.payload)
+    article,context=article_context(scenario,row,db);previous=dict(row.payload)
     patch={**previous.get('manual_parameters',{}),**body.parameters}
     try:updated=calculate_article(article,row.delegation,context,patch)
     except ValueError as exc:raise HTTPException(422,str(exc)) from exc
+    if 'source_batch' in previous:updated['source_batch']=previous['source_batch']
     updated['manual_parameters']=patch
     if not body.excluded and body.quantity is not None and body.quantity>0 and updated['parameters']['multiple_mode']=='EXIT':
         multiple=updated['effective_multiple']
@@ -324,10 +395,11 @@ def adjust(scenario_id:str,result_id:int,body:AdjustmentInput,db:Session=Depends
     updated['final_quantity']=updated['recommended_quantity'] if updated['adjusted_quantity'] is None else updated['adjusted_quantity']
     updated['manually_excluded']=body.excluded;updated['calculated_quantity']=previous['calculated_quantity']
     row.payload=updated
-    all_rows=db.scalars(select(Result).where(Result.scenario_id==scenario.id)).all()
-    payloads=[dict(item.payload) for item in all_rows];annotate_central(payloads,scenario.source_snapshot)
+    all_rows=db.scalars(select(Result).where(Result.scenario_id==scenario.id,Result.sku==row.sku)).all()
+    payloads=[dict(item.payload) for item in all_rows];annotate_central(payloads,context['source'])
     for item,payload in zip(all_rows,payloads):item.payload=payload
-    scenario.summary=summarize(payloads);scenario.version+=1
+    db.flush()
+    scenario.summary=result_summary(db,filtered_results(scenario.id,ResultFilters()),full=True);scenario.version+=1
     db.add(Adjustment(scenario_id=scenario.id,result_id=row.id,user_id=user.id,reason=body.reason,previous=previous,changes=body.model_dump()))
     audit(db,user,'REPLENISHMENT_MANUAL_ADJUSTMENT',scenario.public_id,{'sku':row.sku,'delegation':row.delegation,'reason':body.reason})
     db.commit();return {'scenario':scenario_payload(scenario),'result':{'id':row.id,**row.payload}}

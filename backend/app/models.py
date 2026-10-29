@@ -428,6 +428,38 @@ class ReplenishmentResult(Base):
     __table_args__ = (UniqueConstraint("scenario_id", "sku", "delegation"),)
 
 
+class ReplenishmentJob(Base, TimestampMixin):
+    __tablename__ = "replenishment_jobs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    public_id: Mapped[str] = mapped_column(String(36), unique=True, default=public_uuid)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="QUEUED", index=True)
+    phase: Mapped[str] = mapped_column(String(200), default="Esperando turno de cálculo")
+    request: Mapped[dict] = mapped_column(JSON)
+    article_limit: Mapped[int] = mapped_column(Integer)
+    total_articles: Mapped[int] = mapped_column(Integer, default=0)
+    processed_articles: Mapped[int] = mapped_column(Integer, default=0)
+    total_batches: Mapped[int] = mapped_column(Integer, default=0)
+    completed_batches: Mapped[int] = mapped_column(Integer, default=0)
+    scenario_id: Mapped[int | None] = mapped_column(ForeignKey("replenishment_scenarios.id"), unique=True)
+    worker_token: Mapped[str | None] = mapped_column(String(36))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(Text)
+
+
+class ReplenishmentBatch(Base):
+    __tablename__ = "replenishment_batches"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("replenishment_jobs.id"), index=True)
+    number: Mapped[int] = mapped_column(Integer)
+    codes: Mapped[list] = mapped_column(JSON)
+    source: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    fingerprint: Mapped[str | None] = mapped_column(String(64))
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    __table_args__ = (UniqueConstraint("job_id", "number"),)
+
+
 class ReplenishmentAdjustment(Base):
     __tablename__ = "replenishment_adjustments"
     id: Mapped[int] = mapped_column(primary_key=True)
