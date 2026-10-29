@@ -20,13 +20,14 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
-from openpyxl import Workbook, load_workbook
+from openpyxl import load_workbook
 from sqlalchemy import or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from .auth import audit, require_roles
 from .db import get_db
+from .excel_download import ExcelTable
 from .erp_db import fetch_catalog_articles_by_codes, fetch_all_catalog_articles_for_export
 from .import_materials import clean, fake_ean, slug
 from .models import (
@@ -439,34 +440,24 @@ def _apply_row(db: Session, row: dict[str, Any], source_file: str, source_sheet:
     }
 
 
+@router.get("/template.xlsx")
 @router.get("/template")
 def category_template(_: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN"))):
-    workbook = Workbook()
-    sheet = workbook.active
-    sheet.title = SOURCE_SHEET
-    sheet.append(TEMPLATE_HEADERS)
-    sheet.append([
+    table=ExcelTable(SOURCE_SHEET,[20,24,28,30,28,20,42,45,24,16])
+    table.writerow(TEMPLATE_HEADERS)
+    table.writerow([
         "01234", "FONTANERÍA", "VÁLVULAS", "VÁLVULAS DE ESFERA", "LATÓN",
-        "MARCA", "VÁLVULA ESFERA LATÓN 1/2\"", "Material + medida + tipo de conexión", "REF-123", "UD",
+        "MARCA", 'VÁLVULA ESFERA LATÓN 1/2"', "Material + medida + tipo de conexión", "REF-123", "UD",
     ])
-    sheet.column_dimensions["A"].width = 20
-    sheet.column_dimensions["B"].width = 24
-    sheet.column_dimensions["C"].width = 28
-    sheet.column_dimensions["D"].width = 30
-    sheet.column_dimensions["E"].width = 28
-    sheet.column_dimensions["F"].width = 20
-    sheet.column_dimensions["G"].width = 42
-    sheet.column_dimensions["H"].width = 45
-    for cell in sheet[1]:
-        cell.font = cell.font.copy(bold=True)
-    output = io.BytesIO()
-    workbook.save(output)
-    output.seek(0)
-    return StreamingResponse(
-        output,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": 'attachment; filename="plantilla_carga_categorias.xlsx"'},
-    )
+    return table.response("plantilla_carga_categorias.xlsx")
+
+
+@router.get("/export.xlsx")
+def export_category_classification_excel(
+    _: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")),
+    db: Session = Depends(get_db),
+):
+    return classification_export(db,excel=True)
 
 
 @router.get("/export.csv")
@@ -474,6 +465,10 @@ def export_category_classification(
     _: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")),
     db: Session = Depends(get_db),
 ):
+    return classification_export(db)
+
+
+def classification_export(db,excel=False):
     """Exporta únicamente materiales de EXIT, complementados con la clasificación web."""
     try:
         articles = fetch_all_catalog_articles_for_export()
@@ -492,7 +487,7 @@ def export_category_classification(
     hidden = set(db.scalars(select(CatalogAreaVisibility.area_id).where(CatalogAreaVisibility.visible.is_(False))).all())
     output = io.StringIO(newline="")
     output.write("\ufeff")
-    writer = csv.writer(output, delimiter=";")
+    writer = ExcelTable("ClasificacionCompleta",[20,55,12,24,20,28,20,30,20,30,20,30,16,16,14,22,16,18,16,20,20,26,28,20,55]) if excel else csv.writer(output, delimiter=";")
     writer.writerow([
         "CodigoArticulo", "Descripcion", "Activo", "EstadoClasificacion",
         "CodigoCategoria", "Categoria", "CodigoFamilia", "Familia",
@@ -529,11 +524,12 @@ def export_category_classification(
             *[article.get(field) for field in ("inactive", "situation", "internet", "web", "b2b", "brand_name", "manufacturer_reference", "unit")],
             product.short_description if product else "",
         ])
-        writer.writerow([safe(value) for value in row])
+        writer.writerow(row if excel else [safe(value) for value in row])
 
     for article in articles:
         code = str(article["code"]).strip()
         write_article(code, article, metadata.get(code))
+    if excel:return writer.response("clasificacion_articulos.xlsx")
     return StreamingResponse(
         iter([output.getvalue().encode("utf-8")]),
         media_type="text/csv; charset=utf-8",
@@ -544,11 +540,23 @@ def export_category_classification(
     )
 
 
+@router.get("/missing.xlsx")
+def missing_category_log_excel(
+    _: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")),
+    db: Session = Depends(get_db),
+):
+    return missing_classification_export(db,excel=True)
+
+
 @router.get("/missing.csv")
 def missing_category_log(
     _: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")),
     db: Session = Depends(get_db),
 ):
+    return missing_classification_export(db)
+
+
+def missing_classification_export(db,excel=False):
     """Exporta el log de artículos EXIT aún sin metadatos comerciales en PostgreSQL."""
     products = list(db.scalars(
         select(Product).where(
@@ -566,7 +574,7 @@ def missing_category_log(
 
     output = io.StringIO()
     output.write("\ufeff")
-    writer = csv.writer(output, delimiter=";")
+    writer = ExcelTable(SOURCE_SHEET,[20,24,28,30,28,20,42,45,24,16,24,60]) if excel else csv.writer(output, delimiter=";")
     writer.writerow(TEMPLATE_HEADERS + ["EstadoVinculo", "Motivo"])
     for product in products:
         article = articles.get(product.sku, {})
@@ -581,6 +589,7 @@ def missing_category_log(
             "SIN_CLASIFICAR",
             "Artículo activo en EXIT sin ficha de categoría vinculada en PostgreSQL",
         ])
+    if excel:return writer.response("articulos_sin_clasificacion.xlsx")
     content = output.getvalue().encode("utf-8")
     logger.info("CATALOG_METADATA_MISSING_EXPORT count=%s", len(products))
     return StreamingResponse(
