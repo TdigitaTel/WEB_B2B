@@ -22,7 +22,7 @@ class AccessIn(BaseModel):
     code: str = Field(min_length=1, max_length=200)
     active: bool = True
     company_code: int
-    delegation_code: str = Field(min_length=1, max_length=40)
+    delegation_code: str = Field(min_length=1, max_length=40, pattern=r'^[^:]+$')
     permissions: dict[str, bool]
     delegation_ids: list[str] = Field(default_factory=list, max_length=200)
 
