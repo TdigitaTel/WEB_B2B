@@ -33,6 +33,10 @@ class ExitOrderLineInput(BaseModel):
 
 class ExitOrderInput(BaseModel):
     exit_order_id: str
+    exit_company_code: int | None = None
+    exit_order_year: int | None = None
+    exit_series: str | None = None
+    exit_order_number: str | None = None
     web_order_number: str | None = None
     order_number: str
     customer_code: str
@@ -67,9 +71,13 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
 
     if db.bind.dialect.name == "postgresql":
         db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": f"exit-order:{incoming.exit_order_id}"})
-    order = db.scalar(select(Order).where(Order.nro_pedido_exit == incoming.exit_order_id))
+    from .exit_order_key import record_key, stored_key, FIELDS
+    identity = record_key(incoming)
+    candidates = db.scalars(select(Order).where(Order.company_code == store.company, Order.customer_code == incoming.customer_code)).all()
+    matches = [row for row in candidates if (identity and stored_key(row) == identity) or row.nro_pedido_exit == incoming.exit_order_id]
+    order = next((row for row in matches if row.origen_pedido == 'B2B'), matches[0] if len(matches) == 1 else None)
     if not order and incoming.web_order_number:
-        order = db.scalar(select(Order).where(Order.order_number == incoming.web_order_number))
+        order = db.scalar(select(Order).where(Order.order_number == incoming.web_order_number, Order.company_code == store.company, Order.customer_code == incoming.customer_code))
     is_new = order is None
     if is_new:
         order = Order(
@@ -94,6 +102,9 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
     web_order = is_web_order(incoming, order)
     if estado_registro_exit == "ENTREGADO" and web_order:
         estado_registro_exit = "ATENDIDO"
+    if identity:
+        for field, value in zip(FIELDS, identity):
+            setattr(order, field, value)
     order.nro_pedido_exit = incoming.exit_order_id
     order.fecha_registro_exit = incoming.recorded_at or order.fecha_registro_exit
     order.estado_registro_exit = "ENTREGADO" if order.delivered_at and estado_registro_exit != "FACTURADO" else estado_registro_exit
@@ -117,7 +128,7 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
     products = {p.sku: p for p in db.scalars(select(Product).where(Product.sku.in_(skus))).all()} if skus else {}
     for line in incoming.lines:
         line_total = line.line_total if line.line_total is not None else (line.quantity * line.unit_price)
-        db.add(OrderItem(order_id=order.id, product_id=products.get(line.sku).id if products.get(line.sku) else None,
+        db.add(OrderItem(order_id=order.id, exit_line_number=line.line_number, product_id=products.get(line.sku).id if products.get(line.sku) else None,
                          sku=line.sku, description=line.description, quantity=line.quantity, unit=line.unit,
                          unit_price=line.unit_price, discount_pct=line.discount_pct, tax_rate=line.tax_rate,
                          line_total=line_total, fulfillment_zone=line.fulfillment_zone,
