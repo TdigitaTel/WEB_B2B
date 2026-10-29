@@ -3,7 +3,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, Enum, ForeignKey, Index, Integer, JSON, LargeBinary, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, Enum, ForeignKey, Index, Integer, JSON, LargeBinary, Numeric, String, Text, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship, synonym
 
 from .db import Base
@@ -503,3 +503,24 @@ class LinePlanningSettings(Base):
     __tablename__ = "line_planning_settings"
     id: Mapped[int] = mapped_column(primary_key=True)
     transfer_days: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class SalesOrderSeriesAssignment(Base, TimestampMixin):
+    __tablename__ = "sales_order_series_assignments"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_code: Mapped[int] = mapped_column(Integer)
+    delegation_code: Mapped[str] = mapped_column(String(2))
+    document_type: Mapped[str] = mapped_column(String(10), default="PedV")
+    series_code: Mapped[str] = mapped_column(String(100))
+    series_description: Mapped[str] = mapped_column(Text, default="")
+    delegation_name: Mapped[str] = mapped_column(String(200), default="")
+    active: Mapped[bool] = mapped_column(Boolean, default=False)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    __table_args__ = (
+        UniqueConstraint("company_code", "delegation_code", "document_type", "series_code"),
+        CheckConstraint("document_type = 'PedV'", name="ck_sales_order_series_document_type"),
+        CheckConstraint("length(delegation_code) = 2", name="ck_sales_order_series_delegation_code"),
+        Index("uq_active_sales_order_series_delegation", "company_code", "delegation_code", "document_type",
+            unique=True, postgresql_where=text("active = true"), sqlite_where=text("active = 1")),
+    )
