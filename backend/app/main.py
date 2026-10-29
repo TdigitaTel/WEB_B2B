@@ -68,6 +68,8 @@ from .replenishment import router as replenishment_router
 app.include_router(replenishment_router)
 from .login_appearance import router as login_appearance_router
 app.include_router(login_appearance_router)
+from .sales_order_series import router as sales_order_series_router, resolve_active_series
+app.include_router(sales_order_series_router)
 logger = logging.getLogger(__name__)
 
 @lru_cache(maxsize=2000)
@@ -1118,6 +1120,16 @@ def require_integration_key(x_integration_key: str | None = Header(default=None)
         raise HTTPException(503, "La API de integración no está configurada")
     if not x_integration_key or not secrets.compare_digest(x_integration_key, configured):
         raise HTTPException(401, "Clave de integración incorrecta")
+
+
+@app.get("/api/v1/integrations/sales-order-series/active")
+def integration_sales_order_series(
+    company_code: int = Query(..., ge=0, le=2147483647),
+    delegation_code: str = Query(..., pattern=r"^[0-9]{2}$"),
+    _: None = Depends(require_integration_key),
+    db: Session = Depends(get_db),
+):
+    return resolve_active_series(db, company_code, delegation_code)
 
 
 @app.put("/api/v1/integrations/customer-access")

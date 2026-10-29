@@ -3,7 +3,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, Enum, ForeignKey, Index, Integer, JSON, LargeBinary, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, Enum, ForeignKey, Index, Integer, JSON, LargeBinary, Numeric, String, Text, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship, synonym
 
 from .db import Base
@@ -428,6 +428,38 @@ class ReplenishmentResult(Base):
     __table_args__ = (UniqueConstraint("scenario_id", "sku", "delegation"),)
 
 
+class ReplenishmentJob(Base, TimestampMixin):
+    __tablename__ = "replenishment_jobs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    public_id: Mapped[str] = mapped_column(String(36), unique=True, default=public_uuid)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="QUEUED", index=True)
+    phase: Mapped[str] = mapped_column(String(200), default="Esperando turno de cálculo")
+    request: Mapped[dict] = mapped_column(JSON)
+    article_limit: Mapped[int] = mapped_column(Integer)
+    total_articles: Mapped[int] = mapped_column(Integer, default=0)
+    processed_articles: Mapped[int] = mapped_column(Integer, default=0)
+    total_batches: Mapped[int] = mapped_column(Integer, default=0)
+    completed_batches: Mapped[int] = mapped_column(Integer, default=0)
+    scenario_id: Mapped[int | None] = mapped_column(ForeignKey("replenishment_scenarios.id"), unique=True)
+    worker_token: Mapped[str | None] = mapped_column(String(36))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(Text)
+
+
+class ReplenishmentBatch(Base):
+    __tablename__ = "replenishment_batches"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("replenishment_jobs.id"), index=True)
+    number: Mapped[int] = mapped_column(Integer)
+    codes: Mapped[list] = mapped_column(JSON)
+    source: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    fingerprint: Mapped[str | None] = mapped_column(String(64))
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    __table_args__ = (UniqueConstraint("job_id", "number"),)
+
+
 class ReplenishmentAdjustment(Base):
     __tablename__ = "replenishment_adjustments"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -471,3 +503,24 @@ class LinePlanningSettings(Base):
     __tablename__ = "line_planning_settings"
     id: Mapped[int] = mapped_column(primary_key=True)
     transfer_days: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class SalesOrderSeriesAssignment(Base, TimestampMixin):
+    __tablename__ = "sales_order_series_assignments"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    company_code: Mapped[int] = mapped_column(Integer)
+    delegation_code: Mapped[str] = mapped_column(String(2))
+    document_type: Mapped[str] = mapped_column(String(10), default="PedV")
+    series_code: Mapped[str] = mapped_column(String(100))
+    series_description: Mapped[str] = mapped_column(Text, default="")
+    delegation_name: Mapped[str] = mapped_column(String(200), default="")
+    active: Mapped[bool] = mapped_column(Boolean, default=False)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    __table_args__ = (
+        UniqueConstraint("company_code", "delegation_code", "document_type", "series_code"),
+        CheckConstraint("document_type = 'PedV'", name="ck_sales_order_series_document_type"),
+        CheckConstraint("length(delegation_code) = 2", name="ck_sales_order_series_delegation_code"),
+        Index("uq_active_sales_order_series_delegation", "company_code", "delegation_code", "document_type",
+            unique=True, postgresql_where=text("active = true"), sqlite_where=text("active = 1")),
+    )

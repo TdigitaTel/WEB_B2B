@@ -22,6 +22,11 @@ def permissions_for(user, db):
 def check_operator_path(user, db, path, method):
     if user.role not in {'OPERADOR_TIENDA', 'ADMIN'}:
         return
+    if path == '/api/v1/store/sales-order-series/active' and method == 'GET':
+        allowed=permissions_for(user,db)
+        if not (allowed.get('orders') or allowed.get('settings')):
+            raise HTTPException(403,'No tienes permiso para consultar series de pedidos')
+        return
     module = None
     for prefix, key in (
         ('/api/v1/store/operator-access', 'users'),
@@ -32,6 +37,7 @@ def check_operator_path(user, db, path, method):
         ('/api/v1/store/category-visibility', 'categories'),
         ('/api/v1/store/catalog-images', 'categories'),
         ('/api/v1/store/search-settings', 'settings'),
+        ('/api/v1/store/sales-order-series', 'settings'),
         ('/api/v1/store/line-planning-settings', 'settings'),
         ('/api/v1/store/catalog-brands', 'settings'),
     ):
