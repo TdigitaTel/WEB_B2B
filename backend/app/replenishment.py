@@ -18,6 +18,7 @@ from sqlalchemy import select, func, or_, case
 from sqlalchemy.orm import Session
 from .auth import require_roles
 from .db import get_db
+from .category_visibility import hidden_areas, hidden_codes, visible_catalog_codes, unclassified_area_ids, UNCLASSIFIED_CODE
 from .models import (AuditEvent, MaterialArea, MaterialFamily, MaterialSubfamily, MaterialProductType, Product,
     ReplenishmentPolicy as Policy, ReplenishmentScenario as Scenario, ReplenishmentResult as Result,
     ReplenishmentAdjustment as Adjustment, ReplenishmentSettings as ModuleSettings,
@@ -134,10 +135,16 @@ def save_settings(body:SettingsInput,db:Session=Depends(get_db),user:User=Depend
 def options(db:Session=Depends(get_db)):
     result={'server_date':today().isoformat(),'delegations':[{'code':key,'name':value} for key,value in DELEGATIONS.items()],
         'defaults':Parameters().model_dump(),'precedence':PRECEDENCE,**module_settings(db)}
+    visible_areas=select(MaterialArea.id).where(MaterialArea.id.not_in(hidden_areas(db)),
+        MaterialArea.id.not_in(unclassified_area_ids(db)) | (MaterialArea.code==UNCLASSIFIED_CODE))
+    visible_families=select(MaterialFamily.id).where(MaterialFamily.area_id.in_(visible_areas))
+    visible_subfamilies=select(MaterialSubfamily.id).where(MaterialSubfamily.family_id.in_(visible_families))
     for key,model,parent in [('areas',MaterialArea,None),('families',MaterialFamily,'area_id'),
         ('subfamilies',MaterialSubfamily,'family_id'),('types',MaterialProductType,'subfamily_id')]:
+        condition={'areas':MaterialArea.id.in_(visible_areas),'families':MaterialFamily.area_id.in_(visible_areas),
+            'subfamilies':MaterialSubfamily.family_id.in_(visible_families),'types':MaterialProductType.subfamily_id.in_(visible_subfamilies)}[key]
         result[key]=[{'id':row.id,'code':row.code,'name':row.name,**({parent:getattr(row,parent)} if parent else {})}
-            for row in db.scalars(select(model).order_by(model.name)).all()]
+            for row in db.scalars(select(model).where(condition).order_by(model.name)).all()]
     return result
 
 @router.get('/policies')
@@ -167,15 +174,18 @@ def selected_product_codes(db,filters):
     query=select(Product.sku)
     for key,column in [('area_id',Product.material_area_id),('family_id',Product.material_family_id),
                        ('subfamily_id',Product.material_subfamily_id),('type_id',Product.material_product_type_id)]:
-        if getattr(filters,key) is not None:query=query.where(column==getattr(filters,key))
+        if getattr(filters,key) is not None:
+            if key=='area_id' and db.scalar(select(MaterialArea.code).where(MaterialArea.id==filters.area_id))==UNCLASSIFIED_CODE:
+                query=query.where(or_(Product.material_area_id.is_(None),Product.material_area_id.in_(unclassified_area_ids(db))))
+            else:query=query.where(column==getattr(filters,key))
     selected=list(db.scalars(query).all()) if any(getattr(filters,key) is not None for key in ('area_id','family_id','subfamily_id','type_id')) else None
     if filters.skus:selected=filters.skus if selected is None else sorted(set(selected).intersection(filters.skus))
-    return selected
+    return visible_catalog_codes(db,selected)
 
 def classified_source(db,filters):
     selected=selected_product_codes(db,filters)
     limit=min(1000,module_settings(db)['article_limit'])
-    source=read_replenishment_source(filters.date_from,filters.date_to,selected,limit)
+    source=read_replenishment_source(filters.date_from,filters.date_to,selected,limit,hidden_codes(db) if selected is None else [])
     source['article_limit']=limit
     return enrich_source(db,source)
 
