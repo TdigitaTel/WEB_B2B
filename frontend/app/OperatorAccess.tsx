@@ -1,4 +1,5 @@
 "use client";
+import {useAutoRefresh} from "./AutoRefresh";
 import {FormEvent,useEffect,useState} from 'react';
 import './operator-access.css';
 
@@ -18,6 +19,7 @@ export default function OperatorAccess(){
  const [busy,setBusy]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState(''),[credentials,setCredentials]=useState<Credentials|null>(null),[password,setPassword]=useState(''),[revision,setRevision]=useState(0);
  useEffect(()=>{let cancelled=false;setBusy(true);setError('');setData(null);setSelected(null);setCredentials(null);request<Listing>(`?${new URLSearchParams({q:search,page:String(page),enabled_only:String(enabledOnly)})}`).then(value=>{if(!cancelled)setData(value)}).catch(e=>{if(!cancelled)setError(e.message)}).finally(()=>{if(!cancelled)setBusy(false)});return()=>{cancelled=true}},[search,page,enabledOnly,revision]);
  function choose(row:Staff){setSelected(row);setStore(row.company_code!=null&&row.delegation_code?`${row.company_code}:${row.delegation_code}`:'');setPermissions({...row.permissions});setDelegationIds(row.delegation_ids||[]);setActive(row.configured?row.enabled:true);setCredentials(null);setPassword('');setError('');setMessage('')}
+ useAutoRefresh(async signal=>{const result=await request<Listing>(`?${new URLSearchParams({q:search,page:String(page),enabled_only:String(enabledOnly)})}`);if(!signal.aborted)setData(result)},!busy,JSON.stringify([search,page,enabledOnly]));
  async function save(event:FormEvent){event.preventDefault();if(!selected)return;const delegation=data?.delegations.find(row=>`${row.company}:${row.code}`===store);if(!delegation)return;
   if(selected.enabled&&!active&&!window.confirm(`¿Deshabilitar ${selected.login} y cerrar sus sesiones?`))return;
   setBusy(true);setError('');setCredentials(null);try{const result=await request<Staff&Credentials>('','PUT',{code:selected.code,active,company_code:delegation.company,delegation_code:delegation.code,permissions,delegation_ids:delegationIds});setSelected(result);setData(previous=>previous?{...previous,items:previous.items.map(row=>row.code===result.code?result:row)}:previous);setCredentials(result.initial_password?result:null);setMessage(result.initial_password?'Acceso creado. Entrega la contraseña inicial; deberá cambiarla al entrar.':'Acceso y permisos guardados. Sus sesiones anteriores se han cerrado.')}catch(e){setError((e as Error).message)}finally{setBusy(false)}

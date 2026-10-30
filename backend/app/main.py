@@ -60,6 +60,8 @@ from .operator_access import router as operator_access_router
 app.include_router(operator_access_router)
 from .search_settings import router as search_settings_router
 app.include_router(search_settings_router)
+from .screen_refresh import router as screen_refresh_router
+app.include_router(screen_refresh_router)
 from .product_type_synonyms import router as product_type_synonyms_router, catalog_search_config
 app.include_router(product_type_synonyms_router)
 from .qr_access import router as qr_access_router

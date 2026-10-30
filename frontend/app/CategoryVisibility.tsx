@@ -1,4 +1,5 @@
 "use client";
+import {useAutoRefresh} from "./AutoRefresh";
 import {useEffect,useState} from "react";
 type Category={id:number;code:string;name:string;visible:boolean;image_url:string|null};
 async function responseData(response:Response){
@@ -10,6 +11,7 @@ async function responseData(response:Response){
 export default function CategoryVisibility(){
  const [rows,setRows]=useState<Category[]>([]),[query,setQuery]=useState(""),[error,setError]=useState(""),[message,setMessage]=useState(""),[busy,setBusy]=useState<number|null>(null),[loading,setLoading]=useState(true);
  useEffect(()=>{fetch("/api/v1/store/category-visibility",{credentials:"include"}).then(responseData).then(setRows).catch(e=>setError(e.message)).finally(()=>setLoading(false))},[]);
+ useAutoRefresh(async signal=>{const data=await fetch("/api/v1/store/category-visibility",{credentials:"include",cache:"no-store",signal}).then(responseData);if(!signal.aborted)setRows(data)},busy===null&&!loading);
  async function update(row:Category){setBusy(row.id);setError("");setMessage("");try{await responseData(await fetch(`/api/v1/store/category-visibility/${row.id}`,{method:"PATCH",credentials:"include",headers:{"Content-Type":"application/json"},body:JSON.stringify({visible:!row.visible})}));setRows(old=>old.map(item=>item.id===row.id?{...item,visible:!row.visible}:item))}catch(e){setError((e as Error).message)}finally{setBusy(null)}}
  async function upload(row:Category,file:File){
   setError("");setMessage("");
