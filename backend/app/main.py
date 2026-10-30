@@ -390,6 +390,8 @@ def products(q: str = "", family: str | None = None, area_id: int | None = None,
     classification_codes = visible_catalog_codes(db, classification_codes)
     try:
         articles, total = fetch_catalog_articles(q, page, page_size, classification_codes, excluded_codes=hidden_codes(db), search_config=catalog_search_config(db, q))
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception("Error consultando la maestra de artículos EXIT")
         raise HTTPException(503, "No se pudo consultar el catálogo en EXIT") from exc
@@ -505,6 +507,8 @@ def suggestions(q: str = Query(min_length=2), user: User = Depends(current_user)
     customer = customer_for(user, db)
     try:
         articles, _ = fetch_catalog_articles(q, 1, 8, visible_catalog_codes(db), excluded_codes=hidden_codes(db), search_config=catalog_search_config(db, q))
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception("Error consultando sugerencias en EXIT")
         raise HTTPException(503, "No se pudieron consultar las sugerencias en EXIT") from exc
