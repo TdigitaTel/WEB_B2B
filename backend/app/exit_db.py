@@ -131,7 +131,8 @@ def _exit_datetime(date_value, time_value=None) -> datetime:
 
 def fetch_exit_orders_live(view: str = "active_kardex", date_from: date | None = None,
                            date_to: date | None = None, limit: int = 500,
-                           customer_code: str | None = None, exit_order_id: str | None = None) -> list[ExitOrderInput]:
+                           customer_code: str | None = None, exit_order_id: str | None = None,
+                           customer_order_number: str | None = None) -> list[ExitOrderInput]:
     """Obtiene pedidos de la delegación 00 con todas sus líneas.
 
     Los activos se limitan al día actual de SQL Server. Los atendidos usan el rango
@@ -160,11 +161,14 @@ def fetch_exit_orders_live(view: str = "active_kardex", date_from: date | None =
             _required(header, ("recorded_date", "customer"), header_table)
             start = date_from or datetime.now(ZoneInfo("Europe/Madrid")).date()
             end = date_to or start
-            header_where.extend((
-                f"LTRIM(RTRIM(CONVERT(varchar(100),h.{hs['customer']})))=%s",
-                f"CONVERT(date,h.{hs['recorded_date']}) BETWEEN %s AND %s",
-            ))
-            header_parameters.extend((str(customer_code).strip(), start, end))
+            header_where.append(f"LTRIM(RTRIM(CONVERT(varchar(100),h.{hs['customer']})))=%s")
+            header_parameters.append(str(customer_code).strip())
+            if customer_order_number:
+                header_where.append(f"LTRIM(RTRIM(CONVERT(varchar(100),h.{hs['number']})))=%s")
+                header_parameters.append(customer_order_number)
+            else:
+                header_where.append(f"CONVERT(date,h.{hs['recorded_date']}) BETWEEN %s AND %s")
+                header_parameters.extend((start, end))
         elif view in {"attended", "web"}:
             header_where.append(f"LTRIM(RTRIM(CONVERT(varchar(20),h.{hs['delegation']})))=%s")
             header_parameters.append("00")
@@ -194,9 +198,9 @@ def fetch_exit_orders_live(view: str = "active_kardex", date_from: date | None =
         if exit_order_id:
             pass
         elif customer_code:
-            headers = [row for row in headers if start <= _exit_datetime(
-                row.get("recorded_date") or row.get("date"), row.get("recorded_time")
-            ).date() <= end and str(row.get("customer") or "").strip() == str(customer_code).strip()]
+            headers = [row for row in headers if str(row.get("customer") or "").strip() == str(customer_code).strip()
+                       and (str(row.get("number") or "").strip() == customer_order_number if customer_order_number else
+                            start <= _exit_datetime(row.get("recorded_date") or row.get("date"), row.get("recorded_time")).date() <= end)]
         elif view in {"attended", "web"}:
             headers = [row for row in headers if start <= _exit_datetime(
                 row.get("recorded_date") or row.get("date"), row.get("recorded_time")
@@ -301,9 +305,10 @@ def fetch_exit_orders_live(view: str = "active_kardex", date_from: date | None =
 
 
 def fetch_customer_exit_orders(customer_code: str, date_from: date, date_to: date,
-                               limit: int = 1000) -> list[ExitOrderInput]:
-    """Consulta directamente los pedidos EXIT de un cliente y rango de fechas."""
-    return fetch_exit_orders_live("customer", date_from, date_to, limit, customer_code=customer_code)
+                               limit: int = 1000, order_number: str | None = None) -> list[ExitOrderInput]:
+    """Consulta por fechas o por número exacto, siempre dentro del cliente."""
+    return fetch_exit_orders_live("customer", date_from, date_to, limit, customer_code=customer_code,
+                                  customer_order_number=order_number)
 
 
 def fetch_pending_exit_orders(limit: int = 200) -> list[ExitOrderInput]:
