@@ -1,3 +1,4 @@
+from .delivery_links import source_order_fields, normalize_key
 import pymssql
 import re
 from datetime import date
@@ -487,7 +488,7 @@ def fetch_customer_delivery_notes(customer_code: str, limit: int = 200, document
     table = _identifier(SALES_DOCUMENTS["delivery_header"])
     filters_sql, filter_parameters = _document_filters("a", "Albaran", document_number, date_from, date_to)
     sql = (
-        f"SELECT TOP {max(1, min(limit, 1000))} EjercicioAlbaran, SerieAlbaran, NumeroAlbaran, "
+        f"SELECT TOP {max(1, min(limit, 1000))} CodigoEmpresa, EjercicioAlbaran, SerieAlbaran, NumeroAlbaran, "
         "FechaAlbaran, CodigoCliente, IdDelegacion, BaseImponible, TotalCuotaIva AS TaxTotal, ImporteFactura, "
         "StatusFacturado, StatusImpresion, EjercicioPedido, SeriePedido, NumeroPedido, "
         f"EjercicioFactura, SerieFactura, NumeroFactura, (SELECT TOP 1 d.Delegacion FROM dbo.delegaciones d WHERE d.CodigoEmpresa=a.CodigoEmpresa AND d.IdDelegacion=a.IdDelegacion) AS DelegationName FROM {schema}.{table} a "
@@ -504,7 +505,7 @@ def fetch_customer_delivery_notes(customer_code: str, limit: int = 200, document
             f"SerieAlbaran, NumeroAlbaran, FechaAlbaran, IdDelegacion FROM {schema}.{table} a "
             "WHERE LTRIM(RTRIM(CONVERT(varchar(100), a.CodigoCliente)))=%s " + filters_sql + " "
             "ORDER BY FechaAlbaran DESC, EjercicioAlbaran DESC, SerieAlbaran DESC, NumeroAlbaran DESC) "
-            "SELECT l.EjercicioAlbaran, l.SerieAlbaran, l.NumeroAlbaran, l.Orden, l.CodigoArticulo, "
+            "SELECT l.CodigoEmpresa, l.EjercicioAlbaran, l.SerieAlbaran, l.NumeroAlbaran, l.Orden, l.CodigoArticulo, "
             "l.DescripcionArticulo, l.Descripcion2Articulo, l.UnidadMedida1_, l.Unidades, l.Precio, "
             "l.[%Descuento] AS Descuento, l.ImporteNeto, l.BaseImponible, l.[%Iva] AS Iva, "
             "l.CuotaIva, l.ImporteLiquido, l.CodigoAlmacen, COALESCE(NULLIF(dw.Delegacion, ''), dh.Delegacion) AS DispatchDelegation "
@@ -520,7 +521,7 @@ def fetch_customer_delivery_notes(customer_code: str, limit: int = 200, document
         line_rows = cursor.fetchall()
     lines_by_document: dict[str, list[dict]] = {}
     for line in line_rows:
-        key = _document_id(line["EjercicioAlbaran"], line["SerieAlbaran"], line["NumeroAlbaran"])
+        key = (line.get("CodigoEmpresa"), _document_id(line["EjercicioAlbaran"], line["SerieAlbaran"], line["NumeroAlbaran"]))
         lines_by_document.setdefault(key, []).append({
             "line": int(line.get("Orden") or 0), "sku": str(line.get("CodigoArticulo") or "").strip(),
             "description": " ".join(part for part in (str(line.get("DescripcionArticulo") or "").strip(), str(line.get("Descripcion2Articulo") or "").strip()) if part),
@@ -532,7 +533,8 @@ def fetch_customer_delivery_notes(customer_code: str, limit: int = 200, document
             "dispatch_delegation": str(line.get("DispatchDelegation") or "").strip(),
         })
     return [{
-        "id": _document_id(row["EjercicioAlbaran"], row["SerieAlbaran"], row["NumeroAlbaran"]),
+        **source_order_fields(row),
+        "id": f'{row.get("CodigoEmpresa")}:{_document_id(row["EjercicioAlbaran"], row["SerieAlbaran"], row["NumeroAlbaran"])}',
         "number": f'{row["EjercicioAlbaran"]}-{str(row["SerieAlbaran"]).strip()}-{row["NumeroAlbaran"]}',
         "created_at": row["FechaAlbaran"],
         "subtotal": float(row.get("BaseImponible") or 0),
@@ -546,7 +548,7 @@ def fetch_customer_delivery_notes(customer_code: str, limit: int = 200, document
         "invoice_number": (f'{row.get("EjercicioFactura")}-{str(row.get("SerieFactura") or "").strip()}-{row.get("NumeroFactura")}'
                            if int(row.get("NumeroFactura") or 0) else None),
         "source": "EXIT",
-        "items": lines_by_document.get(_document_id(row["EjercicioAlbaran"], row["SerieAlbaran"], row["NumeroAlbaran"]), []),
+        "items": lines_by_document.get((row.get("CodigoEmpresa"), _document_id(row["EjercicioAlbaran"], row["SerieAlbaran"], row["NumeroAlbaran"])), []),
     } for row in rows]
 
 
@@ -569,7 +571,7 @@ def fetch_customer_delivery_statuses(customer_code: str, limit: int = 1000) -> l
     schema = _identifier(SALES_DOCUMENTS["schema"])
     table = _identifier(SALES_DOCUMENTS["delivery_header"])
     sql = (
-        f"SELECT TOP {max(1, min(limit, 5000))} EjercicioAlbaran, SerieAlbaran, NumeroAlbaran, "
+        f"SELECT TOP {max(1, min(limit, 5000))} CodigoEmpresa, EjercicioAlbaran, SerieAlbaran, NumeroAlbaran, "
         "FechaAlbaran, FechaEntrega, FechaFirma, FechaModificacion, FechaUltimaModificacion, FechaGrabacion, "
         "StatusImpresion, StatusFacturado, FechaFactura, EjercicioFactura, SerieFactura, NumeroFactura, "
         "EjercicioPedido, SeriePedido, NumeroPedido "
@@ -583,6 +585,7 @@ def fetch_customer_delivery_statuses(customer_code: str, limit: int = 1000) -> l
         cursor.execute(sql, (str(customer_code).strip(),))
         rows = cursor.fetchall()
     return [{
+        **source_order_fields(row),
         "order_number": _document_id(row.get("EjercicioPedido"), row.get("SeriePedido"), row.get("NumeroPedido")),
         "delivery_number": _document_id(row.get("EjercicioAlbaran"), row.get("SerieAlbaran"), row.get("NumeroAlbaran")),
         "attended_at": _delivery_attended_at(row),
@@ -593,40 +596,30 @@ def fetch_customer_delivery_statuses(customer_code: str, limit: int = 1000) -> l
     } for row in rows]
 
 
-def fetch_delivery_statuses_for_orders(order_numbers: list[str]) -> list[dict]:
-    """Consulta en bloque los albaranes asociados a una lista de pedidos EXIT."""
-    keys = []
-    for value in order_numbers[:1000]:
-        parts = str(value).replace("~", "/").split("/")
-        if len(parts) == 3:
-            keys.append(tuple(part.strip() for part in parts))
-    if not keys:
-        return []
-    schema = _identifier(SALES_DOCUMENTS["schema"])
-    table = _identifier(SALES_DOCUMENTS["delivery_header"])
-    conditions, parameters = [], []
-    for year, series, number in keys:
-        conditions.append("(CONVERT(varchar(20),EjercicioPedido)=%s AND LTRIM(RTRIM(SeriePedido))=%s AND CONVERT(varchar(30),NumeroPedido)=%s)")
-        parameters.extend((year, series, number))
-    sql = (
-        "SELECT EjercicioAlbaran, SerieAlbaran, NumeroAlbaran, FechaAlbaran, FechaEntrega, FechaFirma, "
-        "FechaModificacion, FechaUltimaModificacion, FechaGrabacion, StatusImpresion, StatusFacturado, "
-        f"FechaFactura, EjercicioFactura, SerieFactura, NumeroFactura, EjercicioPedido, SeriePedido, NumeroPedido FROM {schema}.{table} WHERE "
-        + " OR ".join(conditions) +
-        " ORDER BY FechaAlbaran DESC, EjercicioAlbaran DESC, SerieAlbaran DESC, NumeroAlbaran DESC"
-    )
-    with connect_sqlserver() as connection, connection.cursor() as cursor:
-        sql = _delivery_registration_sql(connection, sql)
-        cursor.execute(sql, tuple(parameters))
-        rows = cursor.fetchall()
-    return [{
+def fetch_delivery_statuses_for_orders(order_keys: list[tuple[int,int,str,str]]) -> list[dict]:
+    """Query complete keys in batches below SQL Server's parameter limit."""
+    keys=list(dict.fromkeys(key for value in order_keys if (key:=normalize_key(value))))
+    if not keys:return []
+    schema=_identifier(SALES_DOCUMENTS["schema"])
+    table=_identifier(SALES_DOCUMENTS["delivery_header"])
+    rows=[]
+    with connect_sqlserver() as connection,connection.cursor() as cursor:
+        for offset in range(0,len(keys),400):
+            batch=keys[offset:offset+400]
+            conditions=["(CodigoEmpresa=%s AND EjercicioPedido=%s AND LTRIM(RTRIM(SeriePedido))=%s AND NumeroPedido=%s)" for _ in batch]
+            parameters=tuple(value for key in batch for value in key)
+            sql=("SELECT CodigoEmpresa, EjercicioAlbaran, SerieAlbaran, NumeroAlbaran, FechaAlbaran, FechaEntrega, FechaFirma, "
+                 "FechaModificacion, FechaUltimaModificacion, FechaGrabacion, StatusImpresion, StatusFacturado, "
+                 f"FechaFactura, EjercicioFactura, SerieFactura, NumeroFactura, EjercicioPedido, SeriePedido, NumeroPedido FROM {schema}.{table} WHERE "
+                 + " OR ".join(conditions)+" ORDER BY FechaAlbaran DESC, EjercicioAlbaran DESC, SerieAlbaran DESC, NumeroAlbaran DESC")
+            cursor.execute(_delivery_registration_sql(connection,sql),parameters)
+            rows.extend(cursor.fetchall())
+    return [{**source_order_fields(row),
         "order_number": _document_id(row.get("EjercicioPedido"), row.get("SeriePedido"), row.get("NumeroPedido")),
         "delivery_number": _document_id(row.get("EjercicioAlbaran"), row.get("SerieAlbaran"), row.get("NumeroAlbaran")),
-        "attended_at": _delivery_attended_at(row),
-        "delivered_at": row.get("FechaEntrega"),
-        "invoiced_at": row.get("FechaFactura"),
-        "is_printed": int(row.get("StatusImpresion") or 0) == -1,
-        "is_invoiced": int(row.get("StatusFacturado") or 0) == -1 and int(row.get("NumeroFactura") or 0) > 0,
+        "attended_at": _delivery_attended_at(row), "delivered_at": row.get("FechaEntrega"),
+        "invoiced_at": row.get("FechaFactura"), "is_printed": int(row.get("StatusImpresion") or 0)==-1,
+        "is_invoiced": int(row.get("StatusFacturado") or 0)==-1 and int(row.get("NumeroFactura") or 0)>0,
     } for row in rows]
 
 
