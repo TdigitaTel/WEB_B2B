@@ -11,8 +11,13 @@ export default function LoginScreen({onLogin,onQrLogin,error,onBeginAccess}:Prop
  const imageUrl=appearance.image_url!==failedImage?appearance.image_url:null;
  const [loginError,setLoginError]=useState(''),[email,setEmail]=useState(''),[password,setPassword]=useState(''),[busy,setBusy]=useState(false);
  useEffect(()=>{
-  // Reuse the existing explicit kiosk URL; ordinary tablets keep their normal layout.
-  setKiosk(new URLSearchParams(window.location.search).get('kiosk')==='1');
+  // Tall portrait screens use the same top-to-bottom composition as phones.
+  const forced=new URLSearchParams(window.location.search).get('kiosk')==='1';
+  const updateLayout=()=>{
+   if(container.current?.contains(document.activeElement)&&document.activeElement instanceof HTMLInputElement)return;
+   setKiosk(forced||window.matchMedia('(min-width: 721px) and (min-height: 900px) and (max-aspect-ratio: 2/3)').matches);
+  };
+  updateLayout();window.addEventListener('resize',updateLayout);
   let frame=0;
   const reveal=()=>{
    cancelAnimationFrame(frame);
@@ -22,7 +27,7 @@ export default function LoginScreen({onLogin,onQrLogin,error,onBeginAccess}:Prop
    });
   };
   window.visualViewport?.addEventListener('resize',reveal);
-  return()=>{cancelAnimationFrame(frame);window.visualViewport?.removeEventListener('resize',reveal)};
+  return()=>{cancelAnimationFrame(frame);window.removeEventListener('resize',updateLayout);window.visualViewport?.removeEventListener('resize',reveal)};
  },[]);
  function begin(){onBeginAccess();setLoginError('')}
  async function submit(event:FormEvent){event.preventDefault();if(busy)return;begin();setBusy(true);try{await onLogin(email,password)}catch(error){setLoginError((error as Error).message)}finally{setBusy(false)}}
