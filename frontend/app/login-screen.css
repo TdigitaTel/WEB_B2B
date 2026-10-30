@@ -69,6 +69,6 @@
 }
 @media(orientation:landscape) and (max-height:600px) and (max-width:900px){
  .access-screen:not(.login--kiosk){grid-template-columns:minmax(0,.85fr) minmax(0,1.15fr)}
- .access-screen .login-brand.has-cover{height:auto;align-self:start}
- .access-screen .login-brand.has-cover .login-cover{height:auto;max-height:100svh}
+ .access-screen:not(.login--kiosk) .login-brand.has-cover{height:auto;align-self:start}
+ .access-screen:not(.login--kiosk) .login-brand.has-cover .login-cover{position:static;height:auto;max-height:100svh}
 }
