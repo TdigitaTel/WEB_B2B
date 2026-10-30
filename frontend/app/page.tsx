@@ -4,7 +4,7 @@ import OperatorAccess from "./OperatorAccess";
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import HomeOrders from "./HomeOrders";
 import CustomerAccess, {InitialPassword} from "./CustomerAccess";
-import {QrLogin} from "./QrAccess";
+import LoginScreen from "./LoginScreen";
 import QuantityInput from "./QuantityInput";
 import OperatorDeliveryNote from "./OperatorDeliveryNote";
 import OrderDeliveryNotes, {type DeliveryNoteHeader} from "./OrderDeliveryNotes";
@@ -21,7 +21,7 @@ import BrandParameters from "./BrandParameters";
 import SalesOrderSeries from "./SalesOrderSeries";
 import CatalogPrice, {highlightedPrice} from "./CatalogPrice";
 import CustomerCatalogPrice from "./CustomerCatalogPrice";
-import LoginAppearanceSettings, {useLoginAppearance} from "./LoginAppearance";
+import LoginAppearanceSettings from "./LoginAppearance";
 import "./settings.css";
 import Replenishment from "./Replenishment";
 
@@ -152,6 +152,9 @@ export default function Page() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [catalogMenuOpen,setCatalogMenuOpen]=useState(false);
 
+  const authenticatedSession=useRef(false);
+  authenticatedSession.current=!!user;
+
   const isOperator = user?.role === "OPERADOR_TIENDA" || user?.role === "ADMIN";
 
   const loadAccount = useCallback(async () => {
@@ -166,7 +169,7 @@ export default function Page() {
   useEffect(() => { loadAccount(); }, [loadAccount]);
 
   useEffect(() => {
-    const expire = () => { pendingReads.clear();opsRequest.current++;setUser(null); setCustomer(null); setProducts([]); setFavoriteProducts([]); setOrders([]); setOpsOrders([]); setCart(null); setDeliveryNotes([]); setInvoices([]); setCartOpen(false); setMenuOpen(false); setCatalogMenuOpen(false); setView("home"); setError("La sesión ha finalizado. Inicia sesión de nuevo."); };
+    const expire = () => { pendingReads.clear();opsRequest.current++;setUser(null); setCustomer(null); setProducts([]); setFavoriteProducts([]); setOrders([]); setOpsOrders([]); setCart(null); setDeliveryNotes([]); setInvoices([]); setCartOpen(false); setMenuOpen(false); setCatalogMenuOpen(false); setView("home"); if(authenticatedSession.current)setError("La sesión ha finalizado. Inicia sesión de nuevo."); };
     const hide = () => { document.documentElement.style.visibility="hidden"; };
     const restore = (event: PageTransitionEvent) => {
       if(event.persisted){ location.reload(); return; }
@@ -383,7 +386,7 @@ export default function Page() {
   }
 
   if (loading) return <div className="loading">Preparando el portal profesional…</div>;
-  if (!user) return <Login onLogin={login} onQrLogin={loginQr} error={error} />;
+  if (!user) return <LoginScreen onLogin={login} onQrLogin={loginQr} error={error} onBeginAccess={()=>setError("")} />;
 
   if (user.must_change_password) return <InitialPassword onChanged={loadAccount} onLogout={logout}/>;
 
@@ -440,14 +443,6 @@ function SiteMenu({onClose,onNavigate,onCatalog}:{onClose:()=>void;onNavigate:(v
 
 function CatalogMenu({classification,onClose,onSelect}:{classification:AreaNode[];onClose:()=>void;onSelect:(filters:CatalogFilters)=>void}) { const [areaId,setAreaId]=useState(String(classification[0]?.id||"")); const area=classification.find(item=>String(item.id)===areaId); return <div className="menu-overlay" role="presentation" onMouseDown={e=>{if(e.target===e.currentTarget)onClose()}}><section className="mega-menu" role="dialog" aria-modal="true" aria-label="Categorías del catálogo"><div className="mega-menu-head"><div><span className="eyebrow">CATÁLOGO PROFESIONAL</span><h2>¿Qué material necesitas?</h2></div><button aria-label="Cerrar menú" onClick={onClose}>×</button></div><div className="mega-menu-body"><nav className="mega-departments"><b>Departamentos</b>{classification.map(item=><button key={item.id} className={areaId===String(item.id)?"active":""} onMouseEnter={()=>setAreaId(String(item.id))} onClick={()=>setAreaId(String(item.id))}>{item.name}<span>›</span></button>)}</nav><div className="mega-content"><button className="mega-all" onClick={()=>onSelect({areaId:String(area?.id||""),familyId:"",subfamilyId:"",productTypeId:""})}>Ver todo en {area?.name||"el catálogo"} →</button><div className="mega-family-grid">{area?.families.map(family=><section key={family.id}><button className="mega-family" onClick={()=>onSelect({areaId:String(area.id),familyId:String(family.id),subfamilyId:"",productTypeId:""})}>{family.name}</button>{family.subfamilies.slice(0,6).map(subfamily=><button key={subfamily.id} onClick={()=>onSelect({areaId:String(area.id),familyId:String(family.id),subfamilyId:String(subfamily.id),productTypeId:""})}>{subfamily.name}</button>)}</section>)}</div></div></div></section></div> }
 
-function Login({onLogin,onQrLogin,error}:{onQrLogin:(token:string)=>Promise<void>;onLogin:(email:string,password:string)=>Promise<void>;error:string}) {
-  const appearance=useLoginAppearance();
-  const [failedImage,setFailedImage]=useState<string|null>(null);
-  const imageUrl=appearance.image_url!==failedImage?appearance.image_url:null;
-  const [loginError,setLoginError]=useState(""); const [email,setEmail]=useState(""); const [password,setPassword]=useState(""); const [busy,setBusy]=useState(false);
-  async function submit(e:FormEvent){e.preventDefault();setBusy(true);try{await onLogin(email,password)}catch(e){setLoginError((e as Error).message)}finally{setBusy(false)}}
-  return <div className="login"><section className={`login-brand ${imageUrl?"has-cover":""}`}>{imageUrl?<img className="login-cover" src={imageUrl} alt="Imagen de acceso" onError={()=>setFailedImage(imageUrl)}/>:<><img className="login-logo" src="/bermudez-ulloa-logo.jpg" alt="Bermúdez Ulloa"/><h1>Material profesional.<br/>Pedido en segundos.</h1><p>Consulta tu precio, comprueba stock local y deja el pedido preparado para recoger en Almeiras.</p></>}</section><section className="login-panel"><form className="login-form" onSubmit={submit}><h2>Acceso profesional</h2><p className="small">Entra con la cuenta de tu empresa.</p><label className="label">Usuario o email</label><input className="input" value={email} onChange={e=>setEmail(e.target.value)}/><label className="label">Contraseña</label><input className="input" type="password" autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)}/>{(error||loginError)&&<p className="error">{error||loginError}</p>}<button className="primary block" disabled={busy}>{busy?"Entrando…":"Iniciar sesión"}</button><QrLogin onLogin={onQrLogin}/></form></section></div>
-}
 
 const loadHomeOrders = (signal:AbortSignal) => api<Order[]>("/api/v1/orders?state=TODOS", {signal, cache:"no-store"});
 
