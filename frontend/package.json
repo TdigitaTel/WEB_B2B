@@ -12,7 +12,8 @@
     "test:home-orders": "node scripts/test-home-orders.cjs",
     "test:quantity-input": "node scripts/test-quantity-input.cjs",
     "test:login-image": "node scripts/test-login-image-upload.cjs",
-    "test:screen-refresh": "node scripts/test-screen-refresh.cjs"
+    "test:screen-refresh": "node scripts/test-screen-refresh.cjs",
+    "test:unified-search": "node scripts/test-unified-search.cjs"
   },
   "dependencies": {
     "jsqr": "^1.4.0",

@@ -12,14 +12,15 @@ let now=Date.now();const originalNow=Date.now;Date.now=()=>now;
 let sequence=0;const timers=new Map();
 window.setInterval=(fn,ms)=>{const id=++sequence;timers.set(id,{fn,ms});return id};
 window.clearInterval=id=>timers.delete(id);
-for(const ext of ['.ts','.tsx'])require.extensions[ext]=(module,filename)=>{let source=fs.readFileSync(filename,'utf8');if(filename.endsWith('/app/page.tsx'))source+='\nexports.__Operations=Operations;';module._compile(ts.transpileModule(source,{compilerOptions:{jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS,esModuleInterop:true}}).outputText,filename)};
+for(const ext of ['.ts','.tsx'])require.extensions[ext]=(module,filename)=>{let source=fs.readFileSync(filename,'utf8');if(filename.endsWith('/app/page.tsx'))source+='\nexports.__Operations=Operations;exports.__Orders=Orders;exports.__Documents=Documents;';module._compile(ts.transpileModule(source,{compilerOptions:{jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS,esModuleInterop:true}}).outputText,filename)};
 require.extensions['.css']=module=>{module.exports={}};
 const {startPolling}=require('../app/screenPolling.ts');
 const React=require('react'),{createRoot}=require('react-dom/client');
 const {AutoRefreshProvider,ScreenRefreshParameters,useAutoRefresh,RefreshScope}=require('../app/AutoRefresh.tsx');
-const {__Operations:Operations}=require('../app/page.tsx');
-let configured=5;
+const {__Operations:Operations,__Orders:Orders,__Documents:Documents}=require('../app/page.tsx');
+let configured=5;const fetched=[];
 global.fetch=async(url,options={})=>{
+ fetched.push(String(url));
  if(url.includes('screen-refresh-settings')){
   if(options.method==='PATCH')configured=JSON.parse(options.body).interval_seconds;
   return new Response(JSON.stringify({interval_seconds:configured}));
@@ -59,6 +60,17 @@ function setInput(input,value){Object.getOwnPropertyDescriptor(window.HTMLInputE
  offlineBoard=true;await React.act(async()=>tick(5000));assert.match(document.body.textContent,/WEB-2026-000001/,'Retain last good orders on failed refresh');assert.equal(detail.open,true);
  offlineBoard=false;await React.act(async()=>root.render(React.createElement(AutoRefreshProvider,null,React.createElement(Operations,{orders:[{...order,customer:'Cliente actualizado'}],onRefresh}))));
  assert.equal(document.querySelector('.operator-web-order').open,true,'Keep expanded order details');
+ const customerCalls=[];
+ await React.act(async()=>root.render(React.createElement(AutoRefreshProvider,null,React.createElement(Orders,{canViewNotes:true,onOpenNote:()=>{},showImages:false,orders:[],refreshing:false,onRefresh:async(...args)=>{customerCalls.push(args)},onRepeat:()=>{},onSubmitDraft:()=>{},onDelete:()=>{}}))));
+ const search=document.querySelector('input[type="search"]');
+ await React.act(async()=>setInput(search,'6008375'));
+ await React.act(async()=>document.querySelector('.order-filters').dispatchEvent(new window.Event('submit',{bubbles:true,cancelable:true})));
+ customerCalls.length=0;await React.act(async()=>tick(5000));assert.equal(customerCalls[0][3],'6008375','Refresh preserves submitted WEB/EXIT query');
+ await React.act(async()=>setInput(search,'6009999'));
+ customerCalls.length=0;await React.act(async()=>tick(5000));assert.equal(customerCalls[0][3],'6008375','Unsubmitted text does not change refresh query');
+ await React.act(async()=>root.render(React.createElement(AutoRefreshProvider,null,React.createElement(Documents,{initialNote:'2026-AL-123',initialOrderId:'order-1',showImages:false,notes:[],invoices:[],canViewNotes:true,canViewInvoices:true,canViewPrices:true}))));
+ fetched.length=0;await React.act(async()=>tick(5000));
+ assert.ok(fetched.some(url=>url.includes('delivery-notes?')&&url.includes('order_id=order-1')),'Linked note refresh preserves order identity');
  let probeCalls=0;
  function Probe(){useAutoRefresh(async()=>{probeCalls++});return null}
  await React.act(async()=>root.render(React.createElement(AutoRefreshProvider,null,React.createElement(React.Fragment,null,React.createElement(ScreenRefreshParameters),React.createElement(Probe),React.createElement(RefreshScope,{active:false},React.createElement(Probe))))));

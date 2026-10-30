@@ -114,7 +114,7 @@ def test_printed_exit_order_stays_attended_until_web_confirmation(monkeypatch):
                                 recorded_at=datetime.now(timezone.utc), delivered_at=datetime.now(timezone.utc),
                                 customer_reference=order.order_number, auxiliary_reference='PEDIDO GENERADO WEB B2B')
         db.commit()
-    delivery = dict(order_number=record.exit_order_id, is_printed=True, is_invoiced=False,
+    delivery = dict(company_code=0,order_number=record.exit_order_id, is_printed=True, is_invoiced=False,
                     attended_at=datetime.now(timezone.utc), delivered_at=datetime.now(timezone.utc), delivery_number='A-1')
     monkeypatch.setattr(module, 'fetch_exit_orders_live', lambda *args:[record])
     monkeypatch.setattr(module, 'fetch_customer_exit_orders', lambda *args:[record])
@@ -147,7 +147,7 @@ def test_non_web_uses_exit_delivered_state_and_date(monkeypatch, operator_with_a
                           recorded_at=datetime(2026,10,22,8,tzinfo=timezone.utc),
                           source_updated_at=datetime(2026,10,22,12,35,tzinfo=timezone.utc),
                           delivered_at=datetime(2026,10,22),auxiliary_reference=None)
-    delivery=dict(order_number=record.exit_order_id,is_printed=True,is_invoiced=False,
+    delivery=dict(company_code=0,order_number=record.exit_order_id,is_printed=True,is_invoiced=False,
                   attended_at=datetime(2026,10,22,10,tzinfo=timezone.utc),
                   delivered_at=datetime(2026,10,22),delivery_number='NONWEB-ALB')
     monkeypatch.setattr(module,'fetch_exit_orders_live',lambda *args:[record])
