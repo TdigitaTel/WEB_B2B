@@ -1,28 +1,48 @@
 "use client";
-import {FormEvent, useEffect, useState} from "react";
-
-type Config = {enabled:boolean; accessory_terms:string[]; piece_names:string[]; materials:string[]};
-const fields = [
-  ["accessory_terms", "Palabras que significan accesorios", "Por ejemplo: accesorios, piezas, componentes, conexiones."],
-  ["materials", "Materiales reconocidos", "Por ejemplo: latón, cobre, inox, inoxidable, PVC."],
-] as const;
-
+import {FormEvent,useEffect,useState} from "react";
+import {RefreshScope,useAutoRefresh} from "./AutoRefresh";
+import ProductTypeSynonyms from "./ProductTypeSynonyms";
+import "./search-configuration.css";
+type Material={name:string;synonyms:string[]};
+type Config={enabled:boolean;accessory_terms:string[];piece_names:string[];materials:string[];material_groups:Material[]};
+type Plan={normalized:string;query:string;selected_types:{key:string;name:string;is_general:boolean}[];ignored:string[];materials:string[];term_groups:string[][];ambiguous:boolean;message:string};
+async function result<T>(response:Response):Promise<T>{
+ if(response.status===401)window.dispatchEvent(new Event('session-expired'));
+ const data=await response.json().catch(()=>null);
+ if(!response.ok)throw Error(typeof data?.detail==='string'?data.detail:Array.isArray(data?.detail)?data.detail[0]?.msg||'Revisa la configuración':'No se pudo completar la consulta');
+ return data;
+}
+const split=(value:string)=>value.split(/[,;\n]+/).map(item=>item.trim()).filter(Boolean);
+function Rules({section}:{section:string}){
+ const [dirty,setDirty]=useState(false);
+ const [config,setConfig]=useState<Config|null>(null),[words,setWords]=useState(''),[materials,setMaterials]=useState<{name:string;synonyms:string}[]>([]);
+ const [busy,setBusy]=useState(false),[error,setError]=useState(''),[message,setMessage]=useState('');
+ function load(data:Config){setDirty(false);setConfig(data);setWords(data.accessory_terms.join(', '));setMaterials(data.material_groups.map(group=>({name:group.name,synonyms:group.synonyms.join(', ')})))}
+ useEffect(()=>{let active=true;fetch('/api/v1/store/search-settings',{credentials:'include',cache:'no-store'}).then(response=>result<Config>(response)).then(data=>{if(active)load(data)}).catch(error=>{if(active)setError(error.message)});return()=>{active=false}},[]);
+ useAutoRefresh(async signal=>{const data=await result<Config>(await fetch('/api/v1/store/search-settings',{credentials:'include',cache:'no-store',signal}));if(!signal.aborted)load(data)},!!config&&!dirty&&!busy&&['materials','words'].includes(section));
+ async function save(event:FormEvent){event.preventDefault();if(!config)return;setBusy(true);setError('');setMessage('');try{
+  const groups=materials.filter(group=>group.name.trim()).map(group=>({name:group.name.trim(),synonyms:split(group.synonyms)}));
+  if(!groups.length)throw Error('Indica al menos un material reconocido.');
+  if(materials.some(group=>!group.name.trim()&&group.synonyms.trim()))throw Error('Pon un nombre al material antes de añadir sus equivalencias.');
+  const data=await result<Config>(await fetch('/api/v1/store/search-settings',{method:'PATCH',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({...config,enabled:config.enabled,accessory_terms:split(words),material_groups:groups,materials:config.materials})}));
+  load(data);setMessage('Configuración guardada. Ya se aplica al catálogo y sus sugerencias.');
+ }catch(error){setError((error as Error).message)}finally{setBusy(false)}}
+ return <section className="search-rules">{error&&<p role="alert" className="error">{error}</p>}{config?<form onSubmit={save} onChange={()=>setDirty(true)}>
+ <div hidden={section!=='materials'}><h2>Materiales y equivalencias</h2><p>Escribe una sola fila por material. Por ejemplo, «Inoxidable» con las equivalencias «inox, acero inoxidable». Se aceptará cualquiera de esas formas.</p><div className="search-materials">{materials.map((group,index)=><div className="search-material-row" key={index}><label>Material {index+1}<input className="input" maxLength={100} value={group.name} disabled={busy} onChange={event=>setMaterials(old=>old.map((row,i)=>i===index?{...row,name:event.target.value}:row))}/></label><label>Equivalencias<input className="input" maxLength={2000} placeholder="Separadas por comas" value={group.synonyms} disabled={busy} onChange={event=>setMaterials(old=>old.map((row,i)=>i===index?{...row,synonyms:event.target.value}:row))}/></label><button className="ghost" type="button" disabled={busy} aria-label={`Quitar material ${index+1}`} onClick={()=>{setDirty(true);setMaterials(old=>old.filter((_,i)=>i!==index))}}>Quitar</button></div>)}</div><button className="secondary" type="button" disabled={busy||materials.length>=80} onClick={()=>{setDirty(true);setMaterials(old=>[...old,{name:'',synonyms:''}])}}>Añadir material</button></div>
+ <div hidden={section!=='words'}><h2>Palabras generales</h2><p>Estas palabras acompañan al producto, como «piezas» o «componentes». Se omiten cuando la búsqueda incluye un material reconocido o un tipo específico.</p><label className="search-toggle"><input type="checkbox" checked={config.enabled} disabled={busy} onChange={event=>setConfig({...config,enabled:event.target.checked})}/> Omitir también las palabras de esta lista al indicar un material o un tipo específico</label><label>Palabras generales<textarea className="input" rows={4} value={words} disabled={busy} onChange={event=>setWords(event.target.value)} placeholder="piezas, componentes…"/></label><p className="small">Separa las palabras con comas. Si una palabra identifica un tipo específico o uno de sus sinónimos, se respeta como producto. «De», «del», «la» y «el» se ignoran siempre.</p></div>
+ <p className="small">Los cambios de estas dos pestañas se guardan juntos. Los tipos y sus sinónimos se guardan en su propia ficha.</p><button className="primary" disabled={busy}>{busy?'Guardando…':'Guardar reglas del buscador'}</button>{message&&<p role="status">{message}</p>}</form>:!error&&<p>Cargando configuración…</p>}</section>;
+}
+function SearchPreview(){
+ const [query,setQuery]=useState(''),[plan,setPlan]=useState<Plan|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('');
+ async function test(text=query){if(!text.trim()||busy)return;setBusy(true);setError('');setPlan(null);try{setPlan(await result<Plan>(await fetch('/api/v1/store/product-type-synonyms/preview?'+new URLSearchParams({q:text}),{credentials:'include',cache:'no-store'})))}catch(error){setError((error as Error).message)}finally{setBusy(false)}}
+ return <section className="search-preview"><h2>Probar búsqueda</h2><p>Comprueba cómo se interpreta tu texto con la configuración guardada. No modifica datos ni consulta stock.</p><form onSubmit={event=>{event.preventDefault();void test()}} className="search-preview-form"><label>Texto de búsqueda<input className="input" type="search" value={query} maxLength={200} onChange={event=>setQuery(event.target.value)} placeholder="Ej. accesorio niple de latón 1/2"/></label><button className="primary" disabled={busy||!query.trim()}>{busy?'Comprobando…':'Probar'}</button></form><div className="search-examples">{['accesorio','accesorio de cocina','accesorio de latón','niple','accesorio niple de latón 1/2'].map(text=><button className="ghost" key={text} disabled={busy} onClick={()=>{setQuery(text);void test(text)}}>{text}</button>)}</div>{error&&<p role="alert" className="error">{error}</p>}{plan&&<div className="search-plan" role="status">{plan.ambiguous?<p className="error">{plan.message}</p>:<><p><b>Tipo de producto:</b> {plan.selected_types.map(type=>type.name).join(', ')||'Sin limitar por tipo de producto'}</p><p><b>Palabras generales omitidas:</b> {plan.ignored.join(', ')||'Ninguna'}</p><p><b>Condiciones adicionales:</b> {plan.term_groups.map(group=>group.join(' o ')).join(' y ')||'Ninguna'}</p><p className="small">Todas las condiciones deben cumplirse. Se mantienen las categorías visibles y los filtros elegidos en el catálogo. Si un tipo no tiene artículos asociados, no aparecerán resultados.</p></>}</div>}</section>;
+}
 export default function SearchParameters(){
-  const [config,setConfig]=useState<Config|null>(null);
-  const [words,setWords]=useState({accessory_terms:"",piece_names:"",materials:""});
-  const [busy,setBusy]=useState(false),[error,setError]=useState(""),[message,setMessage]=useState("");
-  async function request(method="GET",body?:Config){
-    const response=await fetch("/api/v1/store/search-settings",{method,credentials:"include",headers:{"Content-Type":"application/json"},...(body?{body:JSON.stringify(body)}:{})});
-    const data=await response.json();
-    if(!response.ok)throw new Error(typeof data.detail==="string"?data.detail:"Revisa las listas: máximo 80 palabras individuales por campo, sin signos ni comodines.");
-    return data as Config;
-  }
-  function load(data:Config){setConfig(data);setWords({accessory_terms:data.accessory_terms.join(", "),piece_names:data.piece_names.join(", "),materials:data.materials.join(", ")})}
-  useEffect(()=>{request().then(load).catch(e=>setError(e.message))},[]);
-  async function save(event:FormEvent){
-    event.preventDefault();if(!config)return;setBusy(true);setError("");setMessage("");
-    const split=(value:string)=>value.split(/[,;\n]+/).map(word=>word.trim()).filter(Boolean);
-    try{load(await request("PATCH",{enabled:config.enabled,accessory_terms:split(words.accessory_terms),piece_names:split(words.piece_names),materials:split(words.materials)}));setMessage("Parámetros del buscador guardados. Se aplican en las próximas búsquedas.")}catch(e){setError((e as Error).message)}finally{setBusy(false)}
-  }
-  return <section className="panel" style={{marginTop:24}}><h2>Buscador</h2><p>Permite encontrar accesorios aunque el cliente escriba «piezas de latón» o «componentes de cobre». El material y las medidas siguen siendo obligatorios.</p>{error&&<p className="error" role="alert">{error}</p>}{config?<form onSubmit={save}><label><input type="checkbox" checked={config.enabled} disabled={busy} onChange={e=>setConfig({...config,enabled:e.target.checked})}/> Simplificar búsquedas por material</label>{fields.map(([key,label,hint])=><label key={key} style={{display:"block",marginTop:16}}>{label}<textarea className="input" rows={4} required disabled={busy} value={words[key]} onChange={e=>setWords({...words,[key]:e.target.value})}/><small>{hint} Separa las palabras con comas o saltos de línea.</small></label>)}<p>Cuando hay un material reconocido, se omiten palabras generales como accesorios, piezas o componentes. «Componentes de latón» busca igual que «latón»; las medidas y otros términos se conservan. Los resultados pueden incluir cualquier artículo de ese material.</p><button className="primary" disabled={busy}>{busy?"Guardando…":"Guardar buscador"}</button>{message&&<p role="status">{message}</p>}</form>:!error&&<p>Cargando parámetros del buscador…</p>}</section>
+ const [tab,setTab]=useState('types'),[visited,setVisited]=useState<string[]>(['types']);
+ const tabs=[['types','Tipos y sinónimos'],['materials','Materiales'],['words','Palabras generales'],['preview','Probar búsqueda']];
+ function select(value:string){setTab(value);setVisited(old=>old.includes(value)?old:[...old,value])}
+ return <section className="search-configuration"><h2>Buscador y sinónimos</h2><p>Configura aquí los tipos de producto, sus sinónimos y los materiales reconocidos. Un tipo general se omite si aparece un material o un tipo específico.</p><div role="tablist" aria-label="Buscador y sinónimos" className="search-tabs">{tabs.map(([id,label])=><button type="button" role="tab" id={`search-tab-${id}`} aria-selected={tab===id} aria-controls={`search-panel-${id}`} tabIndex={tab===id?0:-1} key={id} onClick={()=>select(id)} onKeyDown={event=>{let index=tabs.findIndex(row=>row[0]===id);if(event.key==='ArrowRight')index=(index+1)%tabs.length;else if(event.key==='ArrowLeft')index=(index+tabs.length-1)%tabs.length;else if(event.key==='Home')index=0;else if(event.key==='End')index=tabs.length-1;else return;event.preventDefault();select(tabs[index][0]);document.getElementById(`search-tab-${tabs[index][0]}`)?.focus()}}>{label}</button>)}</div>
+ <div role="tabpanel" id="search-panel-types" aria-labelledby="search-tab-types" hidden={tab!=='types'}><RefreshScope active={tab==='types'}><ProductTypeSynonyms/></RefreshScope></div>
+ <div role="tabpanel" id={`search-panel-${tab==='words'?'words':'materials'}`} aria-labelledby={`search-tab-${tab==='words'?'words':'materials'}`} hidden={!['materials','words'].includes(tab)}>{visited.some(id=>['materials','words'].includes(id))&&<Rules section={tab}/>}</div>
+ <div role="tabpanel" id="search-panel-preview" aria-labelledby="search-tab-preview" hidden={tab!=='preview'}>{visited.includes('preview')&&<SearchPreview/>}</div></section>;
 }

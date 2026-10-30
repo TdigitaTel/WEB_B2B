@@ -1,4 +1,5 @@
 "use client";
+import {useAutoRefresh} from "./AutoRefresh";
 import {useEffect,useRef,useState} from 'react';
 import {createPortal} from 'react-dom';
 import './replenishment.css';
@@ -32,12 +33,17 @@ export default function Replenishment(){
  const [busy,setBusy]=useState(false),[loadingRows,setLoadingRows]=useState(false),[phase,setPhase]=useState(''),[error,setError]=useState(''),[message,setMessage]=useState(''),[selected,setSelected]=useState<Row|null>(null),[dirty,setDirty]=useState(false);
  useEffect(()=>{let active=true;api<Options>('/options').then(data=>{if(active){setOptions(data);setLimit(String(data.article_limit));if(!restoredSelection.current)setFilters(old=>({...old,date_to:data.server_date}))}}).catch(e=>{if(active)setError(e.message)});return()=>{active=false}},[]);
  useEffect(()=>{let active=true;api<{job:Job|null;latest_result:Calculation|null}>('/jobs/current').then(data=>{if(!active)return;setJob(data.job);const saved=data.job||data.latest_result;if(saved){restoredSelection.current=true;setFilters(saved.filters);setParams({...initial,...saved.temporary_parameters})}if(data.latest_result)setCalculation(data.latest_result);setDirty(data.job?.status==='FAILED');if(jobActive(data.job))setBusy(true)}).catch(e=>{if(active)setError(e.message)}).finally(()=>{if(active)setRestoring(false)});return()=>{active=false}},[]);
- useEffect(()=>{if(!jobActive(job))return;const id=job!.id;let active=true;let timer:ReturnType<typeof setTimeout>;const controller=new AbortController();
-  async function poll(){try{const next=await api<Job>(`/jobs/${id}`,{signal:controller.signal});if(!active)return;setJob(next);setPhase(next.phase);setError('');if(next.status==='COMPLETED'){setBusy(false);setPhase('');if(next.result){setCalculation(next.result);setPage(1);setSelected(null);setDirty(false)}setMessage('Cálculo terminado. Se muestran todos los bloques guardados.');return}if(next.status==='FAILED'){setBusy(false);setPhase('');setError(next.error||'El cálculo no terminó. El resultado anterior sigue disponible.');return}}catch(e){if(!active)return;setError('No se pudo actualizar el progreso. El cálculo continúa en el servidor; volveremos a consultar automáticamente.')}if(active)timer=setTimeout(()=>void poll(),2000)}
-  void poll();return()=>{active=false;controller.abort();clearTimeout(timer)}
- },[job?.id,job?.status]);
+ const progressBusy=useRef(false);
+ async function pollJob(signal:AbortSignal){if(!jobActive(job)||progressBusy.current)return;progressBusy.current=true;try{
+   const next=await api<Job>(`/jobs/${job!.id}`,{signal});if(signal.aborted)return;setJob(next);setPhase(next.phase);setError('');
+   if(next.status==='COMPLETED'){setBusy(false);setPhase('');if(next.result){setCalculation(next.result);setPage(1);setSelected(null);setDirty(false)}setMessage('Cálculo terminado. Se muestran todos los bloques guardados.')}
+   else if(next.status==='FAILED'){setBusy(false);setPhase('');setError(next.error||'El cálculo no terminó. El resultado anterior sigue disponible.')}
+ }catch{if(!signal.aborted)setError('No se pudo actualizar el progreso. El cálculo continúa en el servidor; volveremos a consultar automáticamente.')}finally{progressBusy.current=false}}
+ useEffect(()=>{if(!jobActive(job))return;const controller=new AbortController();void pollJob(controller.signal);return()=>controller.abort()},[job?.id]);
+ useAutoRefresh(pollJob,jobActive(job),job?.id);
  useEffect(()=>{setPage(1)},[search,needed,centralOnly,overstockOnly,consumption,sort,minimumMonthly]);
  useEffect(()=>{if(!calculation)return;const controller=new AbortController();setLoadingRows(true);setSummary(null);const timer=setTimeout(()=>{const query=resultQuery();query.set('page',String(page));api<{items:Row[];total:number;summary:Record<string,number>}>(`/simulations/${calculation.id}/results?${query}`,{signal:controller.signal}).then(data=>{setRows(data.items);setTotal(data.total);setSummary(data.summary)}).catch(e=>{if(!controller.signal.aborted)setError(e.message)}).finally(()=>{if(!controller.signal.aborted)setLoadingRows(false)})},180);return()=>{clearTimeout(timer);controller.abort()}},[calculation?.id,page,search,needed,centralOnly,overstockOnly,consumption,sort,minimumMonthly]);
+ useAutoRefresh(async signal=>{const data=await api<{job:Job|null;latest_result:Calculation|null}>('/jobs/current',{signal});if(signal.aborted)return;setJob(data.job);if(jobActive(data.job)){setBusy(true);setPhase(data.job!.phase)}else if(data.latest_result&&data.latest_result.id!==calculation?.id){setCalculation(data.latest_result);setPage(1);setSelected(null)}},!restoring&&!jobActive(job)&&!busy);
  function changeParams(patch:Partial<Params>){setParams(current=>({...current,...patch}));setDirty(true)}
  function changeFilters(patch:Partial<Filters>){setFilters(current=>({...current,...patch}));setDirty(true)}
  function period(value:string){if(value==='CUSTOM')return;if(value==='ALL'){changeFilters({date_from:'2026-01-01'});return}const day=new Date(filters.date_to+'T12:00:00Z');day.setUTCDate(day.getUTCDate()-Number(value)+1);changeFilters({date_from:day.toISOString().slice(0,10)})}

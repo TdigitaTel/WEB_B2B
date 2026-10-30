@@ -1,4 +1,5 @@
 "use client";
+import {useAutoRefresh} from "./AutoRefresh";
 import {FormEvent,useEffect,useMemo,useState} from 'react';
 import './sales-order-series.css';
 
@@ -24,6 +25,7 @@ export default function SalesOrderSeries(){
  async function loadSource(){setSourceLoading(true);setSourceError('');try{setOptions(await request<Options>('/options'))}catch(e){setSourceError((e as Error).message)}finally{setSourceLoading(false)}}
  async function loadAssignments(){setListLoading(true);setListError('');try{setAssignments(await request<Assignment[]>('/assignments'))}catch(e){setListError((e as Error).message)}finally{setListLoading(false)}}
  useEffect(()=>{void Promise.all([loadSource(),loadAssignments()])},[]);
+ useAutoRefresh(async signal=>{const [source,rows]=await Promise.all([request<Options>("/options"),request<Assignment[]>("/assignments")]);if(!signal.aborted){setOptions(source);setAssignments(rows)}},!saving&&!sourceLoading&&!listLoading);
  const companies=useMemo(()=>Array.from(new Set([...(options?.series||[]).map(row=>row.company_code),...assignments.map(row=>row.company_code)])).sort((a,b)=>a-b),[options,assignments]);
  const matches=(values:(string|number)[])=>values.join(' ').toLocaleLowerCase('es').includes(query.trim().toLocaleLowerCase('es'));
  const series=(options?.series||[]).filter(row=>(!company||row.company_code===Number(company))&&matches([row.series_code,row.description,row.company_code]));

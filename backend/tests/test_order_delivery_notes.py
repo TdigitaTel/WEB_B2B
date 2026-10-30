@@ -30,9 +30,9 @@ def test_operator_sees_only_notes_linked_to_selected_web_order(monkeypatch):
                     origen_pedido='B2B',estado_registro_exit='REGISTRADO',nro_pedido_exit='2026/AL/MULTI')
         db.add(order);db.commit();oid=order.public_id
     stamp=datetime(2026,10,22,9,15,tzinfo=timezone.utc)
-    notes=[{'order_number':'2026/AL/MULTI','delivery_number':'2026/AL/101','attended_at':stamp,'is_printed':True,'is_invoiced':False},
-           {'order_number':'2026/AL/MULTI','delivery_number':'2026/AL/102','attended_at':stamp,'is_printed':False,'is_invoiced':False},
-           {'order_number':'2026/AL/OTHER','delivery_number':'2026/AL/999','attended_at':stamp,'is_printed':True,'is_invoiced':True}]
+    notes=[{'company_code':0,'order_number':'2026/AL/MULTI','delivery_number':'2026/AL/101','attended_at':stamp,'is_printed':True,'is_invoiced':False},
+           {'company_code':0,'order_number':'2026/AL/MULTI','delivery_number':'2026/AL/102','attended_at':stamp,'is_printed':False,'is_invoiced':False},
+           {'company_code':0,'order_number':'2026/AL/OTHER','delivery_number':'2026/AL/999','attended_at':stamp,'is_printed':True,'is_invoiced':True}]
     monkeypatch.setattr(module,'fetch_delivery_statuses_for_orders',lambda *args:notes)
     rows=operator.get('/api/v1/store/orders?view=web&delegation=TODAS').json()
     row=next(row for row in rows if row['id']==oid)
@@ -56,8 +56,8 @@ def test_customer_order_shows_linked_notes_and_original_exit_amounts(monkeypatch
         estado_registro_exit='REGISTRADO',source_updated_at=stamp,recorded_at=stamp,
         lines=[ExitOrderLineInput(sku='PRICE-TEST',description='Material',quantity=1,unit_price=100,discount_pct=100,net_amount=0,line_total=0)])
     monkeypatch.setattr(module,'fetch_customer_exit_orders',lambda *args:[record])
-    rows=[{'order_number':record.exit_order_id,'delivery_number':'2026/AL/NOTE1','attended_at':stamp,'is_printed':False,'is_invoiced':False},
-          {'order_number':'2026/AL/OTHER','delivery_number':'2026/AL/OTHERNOTE','attended_at':stamp,'is_printed':False,'is_invoiced':False}]
+    rows=[{'company_code':0,'order_number':record.exit_order_id,'delivery_number':'2026/AL/NOTE1','attended_at':stamp,'is_printed':False,'is_invoiced':False},
+          {'company_code':0,'order_number':'2026/AL/OTHER','delivery_number':'2026/AL/OTHERNOTE','attended_at':stamp,'is_printed':False,'is_invoiced':False}]
     monkeypatch.setattr(module,'fetch_customer_delivery_statuses',lambda *args:rows)
     client=TestClient(app)
     client.post('/api/v1/auth/login',json={'email':'compras001@cliente.test','password':'123456'})
@@ -70,32 +70,32 @@ def test_customer_order_shows_linked_notes_and_original_exit_amounts(monkeypatch
     assert item['net_amount']==0 and item['line_total']==0
 
 
-def test_operator_resolves_short_exit_number_and_opens_only_linked_note(monkeypatch):
+def test_operator_uses_structured_key_with_legacy_short_number_and_opens_only_linked_note(monkeypatch):
     from app import main as module
     operator=TestClient(app)
     operator.post('/api/v1/auth/login',json={'email':'operador@bermudez.test','password':'123456'})
     with SessionLocal() as db:
         order=Order(order_number='WEB-SHORT-NOTE',customer_code='CLI00001',company_code=0,delegation_code='00',
-                    origen_pedido='B2B',estado_registro_exit='ATENDIDO',nro_pedido_exit='6007768')
+                    origen_pedido='B2B',estado_registro_exit='ATENDIDO',nro_pedido_exit='6007768',exit_order_year=2026,exit_series='AL',exit_order_number='6007768')
         db.add(order);db.commit();oid=order.public_id
     stamp=datetime.now(timezone.utc)
-    note={'order_number':'2026/AL/6007768','delivery_number':'2026/AL/9100','attended_at':stamp,'is_printed':True,'is_invoiced':False}
+    note={'company_code':0,'order_number':'2026/AL/6007768','delivery_number':'2026/AL/9100','attended_at':stamp,'is_printed':True,'is_invoiced':False}
     monkeypatch.setattr(module,'fetch_delivery_statuses_for_orders',lambda *args:[])
     monkeypatch.setattr(module,'fetch_customer_delivery_statuses',lambda code:[note] if code=='CLI00001' else [])
     rows=operator.get('/api/v1/store/orders?view=web&delegation=TODAS').json()
     row=next(row for row in rows if row['id']==oid)
     assert [item['number'] for item in row['delivery_notes']]==['2026/AL/9100']
-    document={'number':'2026/AL/9100','order_number':'2026/AL/6007768','items':[]}
+    document={'company_code':0,'number':'2026/AL/9100','order_number':'2026/AL/6007768','items':[]}
     def documents(code,*args):
         assert code=='CLI00001'
         return [document]
     monkeypatch.setattr(module,'fetch_customer_delivery_notes',documents)
     url=f'/api/v1/store/orders/{oid}/delivery-note'
-    assert operator.get(url,params={'number':'2026/AL/9100'}).json()['number']=='2026/AL/9100'
+    assert operator.get(url,params={'company_code':0,'number':'2026/AL/9100'}).json()['number']=='2026/AL/9100'
     document['order_number']='2025/AL/6007768'
-    assert operator.get(url,params={'number':'2026/AL/9100'}).status_code==404
+    assert operator.get(url,params={'company_code':0,'number':'2026/AL/9100'}).status_code==404
     document['order_number']='2026/AL/9999'
-    assert operator.get(url,params={'number':'2026/AL/9100'}).status_code==404
+    assert operator.get(url,params={'company_code':0,'number':'2026/AL/9100'}).status_code==404
     customer=TestClient(app)
     customer.post('/api/v1/auth/login',json={'email':'compras001@cliente.test','password':'123456'})
-    assert customer.get(url,params={'number':'2026/AL/9100'}).status_code==403
+    assert customer.get(url,params={'company_code':0,'number':'2026/AL/9100'}).status_code==403

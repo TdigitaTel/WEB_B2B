@@ -1,4 +1,5 @@
 "use client";
+import {useAutoRefresh} from "./AutoRefresh";
 import {useEffect,useState} from "react";
 import "./login-appearance.css";
 import {Appearance, prepareLoginImage, readAppearanceResponse, validateLoginImage} from "./login-image-upload";
@@ -6,7 +7,8 @@ export type {Appearance} from "./login-image-upload";
 export function useLoginAppearance(){
  const [appearance,setAppearance]=useState<Appearance>({image_url:null});
  useEffect(()=>{const controller=new AbortController();fetch("/api/v1/login-appearance",{cache:"no-store",signal:controller.signal}).then(readAppearanceResponse).then(setAppearance).catch(()=>{});return()=>controller.abort()},[]);
- return appearance;
+  useAutoRefresh(async signal=>{const data=await fetch("/api/v1/login-appearance",{cache:"no-store",signal}).then(readAppearanceResponse);if(!signal.aborted)setAppearance(data)});
+  return appearance;
 }
 export default function LoginAppearanceSettings(){
  const initial=useLoginAppearance();

@@ -21,9 +21,10 @@ from .models import (MaterialArea, MaterialFamily, MaterialSubfamily, MaterialPr
                      ProductTypeSynonyms, ProductTypeNameSynonyms, Product, User)
 from .search import normalize_query
 from .search_settings import get_search_config
+from .search_resolution import resolve_search
 
 router = APIRouter(prefix="/api/v1/store/product-type-synonyms", tags=["product-type-synonyms"])
-HEADERS = ["TipoProducto", "CadenasDeClasificacion"] + [f"Sinonimo{i}" for i in range(1, 11)]
+HEADERS = ["TipoProducto", "CadenasDeClasificacion"] + [f"Sinonimo{i}" for i in range(1, 11)] + ["General"]
 MAX_FILE_BYTES = 5 * 1024 * 1024
 MAX_ROWS = 10000
 operator = require_roles("OPERADOR_TIENDA", "ADMIN")
@@ -34,6 +35,7 @@ def alias_key(value):
 
 class SynonymsIn(BaseModel):
     synonyms: list[str] = Field(max_length=10)
+    is_general: bool | None = Field(default=None, strict=True)
     version: str | None = Field(default=None, max_length=64)
 
     @field_validator("synonyms")
@@ -67,7 +69,8 @@ class GroupSynonymsIn(SynonymsIn):
     type_name: str = Field(min_length=1, max_length=160)
 
 
-def grouped_types(db):
+def grouped_types(db, config=None):
+    general_words = set((config if config is not None else get_search_config(db))['accessory_terms'])
     common = {row.type_name_key: row for row in db.scalars(select(ProductTypeNameSynonyms).execution_options(populate_existing=True)).all()}
     groups = {}
     for product_type, subfamily, family, area, old in type_rows(db):
@@ -83,9 +86,10 @@ def grouped_types(db):
         saved = common.get(group["key"])
         if saved is not None:
             group["synonyms"] = saved.synonyms
+        group['is_general'] = saved.is_general if saved is not None and saved.is_general is not None else normalize_query(group['name']) in general_words
         # Preserve all legacy words, even if the combined history exceeds ten.
         group["needs_review"] = len(group["synonyms"]) > 10
-        state = [group["key"], saved.version if saved else 0, sorted(group["legacy_versions"]) if saved is None else [], sorted(path["id"] for path in group["paths"])]
+        state = [group["key"], group["is_general"], saved.version if saved else 0, sorted(group["legacy_versions"]) if saved is None else [], sorted(path["id"] for path in group["paths"])]
         group["version"] = hashlib.sha256(json.dumps(state, ensure_ascii=False).encode()).hexdigest()
         del group["legacy_versions"]
     return sorted(groups.values(), key=lambda item: item["key"])
@@ -97,11 +101,12 @@ def lock_groups(db, keys):
             db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": "type-name-synonyms:" + key})
 
 
-def save_group(db, group, aliases):
+def save_group(db, group, aliases, is_general=None):
     row = db.get(ProductTypeNameSynonyms, group["key"], populate_existing=True)
     if row is None:
         row = ProductTypeNameSynonyms(type_name_key=group["key"], version=0)
         db.add(row)
+    if is_general is not None:row.is_general = is_general
     row.synonyms = aliases
     row.version += 1
     return row
@@ -121,11 +126,11 @@ def export_types(user: User = Depends(operator), db: Session = Depends(get_db)):
     groups = grouped_types(db)
     if any(group["needs_review"] for group in groups):
         raise HTTPException(409, "Hay tipos con más de 10 sinónimos previos. Revisa sus listas antes de descargar el Excel")
-    table = ExcelTable("Sinonimos", [32, 100] + [24] * 10)
+    table = ExcelTable("Sinonimos", [32, 100] + [24] * 10 + [14])
     table.writerow(HEADERS)
     for group in groups:
         table.writerow([group["name"], "\n".join(chain_description(path) for path in group["paths"])]
-                       + group["synonyms"] + [""] * (10 - len(group["synonyms"])))
+                       + group["synonyms"] + [""] * (10 - len(group["synonyms"])) + ["Sí" if group["is_general"] else "No"])
     sheet = table.workbook.create_sheet("Cadenas")
     sheet.freeze_panes = "A2"
     sheet.append(["TipoProducto", "Area", "Categoria_Familia", "Subfamilia"])
@@ -147,10 +152,10 @@ def update_group(data: GroupSynonymsIn, user: User = Depends(operator), db: Sess
     if group is None:
         raise HTTPException(404, "Tipo de producto no encontrado")
     if data.version is not None and data.version != group["version"]:
-        raise HTTPException(409, "Los sinónimos o las cadenas cambiaron. Actualiza la lista antes de guardar")
-    save_group(db, group, data.synonyms)
+        raise HTTPException(409, "La configuración del tipo o sus familias cambió. Actualiza la lista antes de guardar")
+    save_group(db, group, data.synonyms, data.is_general)
     audit(db, user, "PRODUCT_TYPE_SYNONYMS_UPDATED", "MATERIAL_PRODUCT_TYPE_NAME", hashlib.sha256(key.encode()).hexdigest(),
-          {"type_name": group["name"], "synonyms": data.synonyms, "paths": len(group["paths"])})
+          {"type_name": group["name"], "synonyms": data.synonyms, "is_general": data.is_general, "paths": len(group["paths"])})
     db.commit()
     return next(item for item in grouped_types(db) if item["key"] == key)
 
@@ -161,7 +166,7 @@ def update_type(product_type_id: int, data: SynonymsIn, user: User = Depends(ope
     parent = db.get(MaterialProductType, product_type_id)
     if parent is None:
         raise HTTPException(404, "Tipo de producto no encontrado")
-    return update_group(GroupSynonymsIn(type_name=parent.name, synonyms=data.synonyms, version=data.version), user, db)
+    return update_group(GroupSynonymsIn(type_name=parent.name, synonyms=data.synonyms, is_general=data.is_general, version=data.version), user, db)
 
 
 def read_import(content):
@@ -238,41 +243,47 @@ def import_types(file: UploadFile = File(...), mode: str = Form("merge"), apply:
                 if alias_key(value) not in {alias_key(item) for item in combined}:
                     combined.append(value)
             combined = SynonymsIn(synonyms=combined).synonyms
+            general = group['is_general']
+            if values.get('General') is not None and str(values['General']).strip():
+                flag = alias_key(str(values['General']))
+                if flag not in {'si','no','true','false','1','0'}:raise ValueError('General debe ser Sí o No')
+                general = flag in {'si','true','1'}
             plan.append({"key": key, "name": group["name"], "synonyms": combined, "paths": group["paths"],
-                         "changed": combined != group["synonyms"]})
-        except ValueError:
-            errors.append({"row": number, "name": name, "message": "Máximo 10 sinónimos compartidos, sin repetidos ni comodines; cada uno de 1 a 100 caracteres"})
+                         "is_general": general, "changed": combined != group["synonyms"] or general != group["is_general"]})
+        except ValueError as exc:
+            errors.append({"row": number, "name": name, "message": str(exc) if str(exc)=="General debe ser Sí o No" else "Máximo 10 sinónimos compartidos, sin repetidos ni comodines; cada uno de 1 a 100 caracteres"})
     if apply and errors:
         raise HTTPException(422, {"message": "No se guardó ningún cambio. Corrige el Excel", "errors": errors})
     if apply:
         for item in plan:
             if item["changed"]:
-                save_group(db, groups[item["key"]], item["synonyms"])
+                save_group(db, groups[item["key"]], item["synonyms"], item["is_general"])
         audit(db, user, "PRODUCT_TYPE_SYNONYMS_IMPORTED", "MATERIAL_PRODUCT_TYPE_NAME",
               metadata={"mode": mode, "types": len(plan), "changed": sum(item["changed"] for item in plan)})
         db.commit()
     return {"applied": apply, "total": len(imported), "changed": sum(item["changed"] for item in plan), "errors": errors, "items": plan}
 
 
-def catalog_search_config(db, query):
+def search_plan(db, query):
     config = get_search_config(db)
-    normalized = normalize_query(query)
-    if not normalized:
-        return config
-    matches = []
-    groups = grouped_types(db)
-    for group in groups:
-        for alias in group["synonyms"]:
-            phrase = normalize_query(alias)
-            match = re.search(r"(?<!\w)" + re.escape(phrase) + r"(?!\w)", normalized) if phrase else None
-            if match:
-                matches.append((len(phrase), phrase, match.start(), match.end(), group["key"]))
-    if not matches:
-        return config
-    best = max(matches, key=lambda item: (item[0], -item[2]))
-    keys = {item[4] for item in matches if item[1:4] == best[1:4]}
-    ids = {path["id"] for group in groups if group["key"] in keys for path in group["paths"]}
-    codes = list(db.scalars(select(Product.sku).where(Product.material_product_type_id.in_(ids))).all())
-    if codes:
-        config["type_synonym"] = {"codes": codes, "query": (normalized[:best[2]] + " " + normalized[best[3]:]).strip()}
+    groups = grouped_types(db,config) if normalize_query(query) else []
+    return config, groups, resolve_search(query, config, groups)
+
+
+@router.get('/preview')
+def preview_search(q: str = '', user: User = Depends(operator), db: Session = Depends(get_db)):
+    if len(q)>200:raise HTTPException(422,'La búsqueda admite hasta 200 caracteres')
+    return search_plan(db,q)[2]
+
+
+def catalog_search_config(db, query):
+    config,groups,plan = search_plan(db,query)
+    if plan['ambiguous']:
+        raise HTTPException(422,plan['message'])
+    config['search_plan'] = plan
+    keys = {item['key'] for item in plan['selected_types']}
+    if keys:
+        ids = {path['id'] for group in groups if group['key'] in keys for path in group['paths']}
+        codes = list(db.scalars(select(Product.sku).where(Product.material_product_type_id.in_(ids))).all())
+        config['type_synonym'] = {'codes':codes,'query':plan['query'],'strict':True}
     return config

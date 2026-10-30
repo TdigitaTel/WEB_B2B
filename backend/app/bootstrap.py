@@ -17,6 +17,7 @@ def main():
             # create_all does not alter an existing MVP database. These additions are
             # intentionally idempotent so old installations can adopt the real catalogue.
             for statement in (
+                "ALTER TABLE product_type_name_synonyms ADD COLUMN IF NOT EXISTS is_general BOOLEAN",
                 "ALTER TABLE products ADD COLUMN IF NOT EXISTS original_description TEXT",
                 "ALTER TABLE products ADD COLUMN IF NOT EXISTS material_area_id INTEGER REFERENCES material_areas(id)",
                 "ALTER TABLE products ADD COLUMN IF NOT EXISTS material_family_id INTEGER REFERENCES material_families(id)",

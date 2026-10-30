@@ -1,4 +1,5 @@
 "use client";
+import {useAutoRefresh} from "./AutoRefresh";
 import {FormEvent,useEffect,useState} from "react";
 
 type Permissions={can_view_prices:boolean;can_view_delivery_notes:boolean;can_view_invoices:boolean;can_manage_preferences:boolean;own_orders_only:boolean};
@@ -14,6 +15,7 @@ export default function Subusers(){
  const[rows,setRows]=useState<Subuser[]>([]),[selected,setSelected]=useState<Subuser|null>(null),[permissions,setPermissions]=useState(defaults),[name,setName]=useState(""),[email,setEmail]=useState(""),[phone,setPhone]=useState(""),[error,setError]=useState(""),[message,setMessage]=useState(""),[busy,setBusy]=useState(false),[qr,setQr]=useState<Qr|null>(null);
  async function refresh(){setRows(await request<Subuser[]>("/api/v1/account/subusers"))}
  useEffect(()=>{refresh().catch(e=>setError(e.message))},[]);
+ useAutoRefresh(async signal=>{const data=await request<Subuser[]>("/api/v1/account/subusers");if(!signal.aborted)setRows(data)},!busy);
  async function run(action:()=>Promise<void>){setBusy(true);setError("");setMessage("");try{await action()}catch(e){setError((e as Error).message)}finally{setBusy(false)}}
  function choose(row:Subuser|null){setSelected(row);setQr(null);setError("");setMessage("");if(!row){setName("");setEmail("");setPhone("");setPermissions(defaults)}}
  function replace(row:Subuser){setSelected(row);setRows(old=>old.some(item=>item.id===row.id)?old.map(item=>item.id===row.id?row:item):[...old,row])}
