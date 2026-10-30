@@ -39,6 +39,13 @@ function setInput(element,value){Object.getOwnPropertyDescriptor(window.HTMLInpu
  await React.act(async()=>document.querySelector('.login-cover').dispatchEvent(new window.Event('error')));
  assert.match(document.querySelector('h1').textContent,/Material profesional.*Pedido en segundos/,'Image failure preserves complete fallback title');
  await React.act(async()=>root.unmount());root=createRoot(document.getElementById('root'));
+ window.history.replaceState(null,'','/');let tall=false;window.matchMedia=()=>({matches:tall,addEventListener(){},removeEventListener(){}});
+ await React.act(async()=>root.render(React.createElement(Login,{error:'',onBeginAccess:()=>{},onQrLogin:async()=>{},onLogin:async()=>{}})));
+ assert.equal(document.querySelector('.login--kiosk'),null,'Normal desktop is not forced into kiosk');
+ tall=true;await React.act(async()=>window.dispatchEvent(new Event('resize')));assert.ok(document.querySelector('.login--kiosk'),'Tall portrait screen automatically stacks image above login');
+ document.getElementById('access-password').focus();tall=false;await React.act(async()=>window.dispatchEvent(new Event('resize')));assert.ok(document.querySelector('.login--kiosk'),'Keyboard resizing cannot restore two columns');
+ document.activeElement.blur();await React.act(async()=>window.dispatchEvent(new Event('resize')));assert.equal(document.querySelector('.login--kiosk'),null,'Desktop layout restored after orientation change without active input');
+ await React.act(async()=>root.unmount());root=createRoot(document.getElementById('root'));
  await React.act(async()=>root.render(React.createElement(App)));
  assert.ok(document.querySelector('.access-screen'));assert.doesNotMatch(document.body.textContent,/La sesión ha finalizado/,'Initial anonymous account check is not a session expiration');
  await React.act(async()=>root.unmount());root=createRoot(document.getElementById('root'));account=true;
