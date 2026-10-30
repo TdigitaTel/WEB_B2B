@@ -1,4 +1,5 @@
 "use client";
+import {useAutoRefresh} from "./AutoRefresh";
 import {FormEvent, useEffect, useState} from "react";
 import styles from "./ProductTypeSynonyms.module.css";
 
@@ -39,6 +40,7 @@ export default function ProductTypeSynonyms(){
  const [error,setError]=useState(""),[message,setMessage]=useState("");
  async function load(){setLoading(true);try{setRows(await result(await fetch(endpoint,{credentials:"include"})))}catch(e){setError((e as Error).message)}finally{setLoading(false)}}
  useEffect(()=>{void load()},[]);
+ useAutoRefresh(async signal=>{const data=await result(await fetch(endpoint,{credentials:"include",cache:"no-store",signal}));if(!signal.aborted){setRows(data);setFamilies(old=>old?data.find((row:ProductType)=>row.key===old.key)||old:null)}},!busy&&!loading);
  function choose(row:ProductType){setGeneral(row.is_general);setChosen(row);setWords(row.needs_review?Array(10).fill(""):[...row.synonyms,...Array(10-row.synonyms.length).fill("")]);setError("");setMessage("")}
  async function save(event:FormEvent){event.preventDefault();if(!chosen)return;setBusy(true);setError("");setMessage("");try{
   const updated=await result(await fetch(`${endpoint}/group`,{method:"PUT",credentials:"include",headers:{"Content-Type":"application/json"},body:JSON.stringify({type_name:chosen.name,synonyms:words.map(word=>word.trim()).filter(Boolean),is_general:general,version:chosen.version})}));

@@ -551,3 +551,9 @@ class SalesOrderSeriesAssignment(Base, TimestampMixin):
         Index("uq_active_sales_order_series_delegation", "company_code", "delegation_code", "document_type",
             unique=True, postgresql_where=text("active = true"), sqlite_where=text("active = 1")),
     )
+
+
+class ScreenRefreshSettings(Base):
+    __tablename__ = "screen_refresh_settings"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    interval_seconds: Mapped[int] = mapped_column(Integer, default=5, nullable=False)

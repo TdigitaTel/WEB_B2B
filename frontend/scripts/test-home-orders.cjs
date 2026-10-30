@@ -8,12 +8,13 @@ const dom=new JSDOM('<div id="root"></div>',{url:'https://localhost/',pretendToB
 for(const key of ['window','document','HTMLElement'])global[key]=dom.window[key];
 global.IS_REACT_ACT_ENVIRONMENT=true;
 let tick;
-window.setInterval=(fn,ms)=>{assert.equal(ms,30000);tick=fn;return 1;};
+window.setInterval=(fn,ms)=>{assert.equal(ms,5000);tick=fn;return 1;};
 window.clearInterval=()=>{};
 const React=require('react');
 const {createRoot}=require('react-dom/client');
 const filename=path.resolve(__dirname,'../app/HomeOrders.tsx');
 const loaded=new Module(filename,module);loaded.filename=filename;loaded.paths=Module._nodeModulePaths(path.dirname(filename));
+const originalRequire=loaded.require.bind(loaded);loaded.require=name=>name==='./AutoRefresh'?{useRefreshSeconds:()=>5}:originalRequire(name);
 loaded._compile(ts.transpileModule(fs.readFileSync(filename,'utf8'),{compilerOptions:{jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS,esModuleInterop:true}}).outputText,filename);
 const HomeOrders=loaded.exports.default;
 const root=createRoot(document.getElementById('root'));

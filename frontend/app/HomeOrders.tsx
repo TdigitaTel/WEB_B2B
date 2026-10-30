@@ -1,11 +1,13 @@
 "use client";
 
 import {useEffect, useState} from "react";
+import {useRefreshSeconds} from "./AutoRefresh";
 
 type SummaryOrder = {id:string;number:string;store:string;job_name?:string|null;estado_registro_exit?:string|null};
 const labels:Record<string,string>={BORRADOR:"Borrador",PENDIENTE:"Pendiente",BLOQUEADO:"En procesamiento",REGISTRADO:"En procesamiento",EN_PROCESO:"En procesamiento",EN_PREPARACION:"En procesamiento",ATENDIDO:"Pendiente de recogida",ENTREGADO:"Entregado"};
 
 export default function HomeOrders({load,onNavigate}:{load:(signal:AbortSignal)=>Promise<SummaryOrder[]>;onNavigate:()=>void}) {
+  const refreshSeconds=useRefreshSeconds();
   const [orders,setOrders]=useState<SummaryOrder[]|null>(null);
   const [error,setError]=useState(false);
   const [retry,setRetry]=useState(0);
@@ -23,11 +25,11 @@ export default function HomeOrders({load,onNavigate}:{load:(signal:AbortSignal)=
       } finally {busy=false;}
     };
     void refresh();
-    const timer=window.setInterval(refresh,30000);
+    const timer=window.setInterval(refresh,refreshSeconds*1000);
     window.addEventListener("focus",refresh);
     document.addEventListener("visibilitychange",refresh);
     return ()=>{controller.abort();window.clearInterval(timer);window.removeEventListener("focus",refresh);document.removeEventListener("visibilitychange",refresh);};
-  },[load,retry]);
+  },[load,retry,refreshSeconds]);
   const active=orders?.filter(order=>order.estado_registro_exit!=="FACTURADO")??[];
   return <>
     <div className="section-heading"><h2>Mis pedidos</h2><span className="count">{orders===null?"…":active.length}</span></div>

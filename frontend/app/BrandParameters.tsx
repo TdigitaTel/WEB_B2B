@@ -1,4 +1,5 @@
 "use client";
+import {useAutoRefresh} from "./AutoRefresh";
 import {useEffect,useState} from "react";
 import "./settings.css";
 type Brand={code:string;name:string;internet_b2b:number;visible:boolean};
@@ -7,6 +8,7 @@ export default function BrandParameters(){
  const [query,setQuery]=useState(""),[state,setState]=useState("ALL"),[page,setPage]=useState(1),[pageSize,setPageSize]=useState(25);
  async function refresh(){setLoading(true);setError("");try{const response=await fetch('/api/v1/store/catalog-brands',{credentials:'include',cache:'no-store'});if(response.status===401)window.dispatchEvent(new Event('session-expired'));const data=await response.json();if(!response.ok)throw Error(typeof data.detail==='string'?data.detail:'No se pudieron consultar las marcas');setRows(data);setPage(1)}catch(e){setError((e as Error).message)}finally{setLoading(false)}}
  useEffect(()=>{void refresh()},[]);
+ useAutoRefresh(async signal=>{const response=await fetch("/api/v1/store/catalog-brands",{credentials:"include",cache:"no-store",signal});if(response.ok){const data=await response.json();if(!signal.aborted)setRows(data)}},!loading);
  const normalized=query.trim().normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLocaleLowerCase("es");
  const filtered=(rows||[]).filter(row=>`${row.code} ${row.name}`.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLocaleLowerCase("es").includes(normalized)&&(state==='ALL'||row.visible===(state==='ACTIVE')));
  const pages=Math.max(1,Math.ceil(filtered.length/pageSize)),current=Math.min(page,pages),start=(current-1)*pageSize;
