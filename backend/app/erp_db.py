@@ -237,27 +237,44 @@ def fetch_catalog_articles(query: str = "", page: int = 1, page_size: int = 24,
                 description_expression, reference_expression, ean_expression, brand_expression,
             ) if expression != "NULL")
             config = search_config if search_config is not None else default_search_config()
-            # Las palabras genéricas se omiten al reconocer un material.
-            # Usar exactamente el mismo filtro que «latón» evita expandir decenas
-            # de LIKE y REPLACE por fila en el conteo y en la página de resultados.
-            terms, _ = catalog_search_intent(query, config)
-            text_conditions = []
-            for term in terms:
-                text_conditions.append("(" + " OR ".join(f"{expression} COLLATE Latin1_General_CI_AI LIKE %s" for expression in searchable) + ")")
-                parameters.extend([f"%{term}%"] * len(searchable))
-            text_filter = " AND ".join(text_conditions) or "1=1"
-            synonym = config.get("type_synonym")
-            if synonym and synonym.get("codes"):
-                cursor.execute("CREATE TABLE #SynonymArticles (article_code nvarchar(100) PRIMARY KEY)")
-                _insert_article_filter_codes(cursor, "#SynonymArticles", synonym["codes"])
-                type_conditions = [f"EXISTS (SELECT 1 FROM #SynonymArticles syn WHERE syn.article_code = {code_expression})"]
-                extra_terms, _ = catalog_search_intent(synonym.get("query", ""), config)
-                for term in extra_terms:
-                    type_conditions.append("(" + " OR ".join(f"{expression} COLLATE Latin1_General_CI_AI LIKE %s" for expression in searchable) + ")")
-                    parameters.extend([f"%{term}%"] * len(searchable))
-                conditions.append("((" + text_filter + ") OR (" + " AND ".join(type_conditions) + "))")
+            plan = config.get('search_plan')
+            if plan is not None:
+                synonym = config.get('type_synonym')
+                if synonym is not None:
+                    if synonym['codes']:
+                        cursor.execute("CREATE TABLE #SynonymArticles (article_code nvarchar(100) PRIMARY KEY)")
+                        _insert_article_filter_codes(cursor,"#SynonymArticles",synonym['codes'])
+                        conditions.append(f"EXISTS (SELECT 1 FROM #SynonymArticles syn WHERE syn.article_code = {code_expression})")
+                    else:
+                        conditions.append('1=0')
+                for alternatives in plan['term_groups']:
+                    clauses = []
+                    for term in alternatives:
+                        clauses.extend(f"{expression} COLLATE Latin1_General_CI_AI LIKE %s" for expression in searchable)
+                        parameters.extend([f'%{term}%']*len(searchable))
+                    conditions.append('('+' OR '.join(clauses)+')')
             else:
-                conditions.extend(text_conditions)
+                # Las palabras genéricas se omiten al reconocer un material.
+                # Usar exactamente el mismo filtro que «latón» evita expandir decenas
+                # de LIKE y REPLACE por fila en el conteo y en la página de resultados.
+                terms, _ = catalog_search_intent(query, config)
+                text_conditions = []
+                for term in terms:
+                    text_conditions.append("(" + " OR ".join(f"{expression} COLLATE Latin1_General_CI_AI LIKE %s" for expression in searchable) + ")")
+                    parameters.extend([f"%{term}%"] * len(searchable))
+                text_filter = " AND ".join(text_conditions) or "1=1"
+                synonym = config.get("type_synonym")
+                if synonym and synonym.get("codes"):
+                    cursor.execute("CREATE TABLE #SynonymArticles (article_code nvarchar(100) PRIMARY KEY)")
+                    _insert_article_filter_codes(cursor, "#SynonymArticles", synonym["codes"])
+                    type_conditions = [f"EXISTS (SELECT 1 FROM #SynonymArticles syn WHERE syn.article_code = {code_expression})"]
+                    extra_terms, _ = catalog_search_intent(synonym.get("query", ""), config)
+                    for term in extra_terms:
+                        type_conditions.append("(" + " OR ".join(f"{expression} COLLATE Latin1_General_CI_AI LIKE %s" for expression in searchable) + ")")
+                        parameters.extend([f"%{term}%"] * len(searchable))
+                    conditions.append("((" + text_filter + ") OR (" + " AND ".join(type_conditions) + "))")
+                else:
+                    conditions.extend(text_conditions)
         parameters = stock_parameters + parameters
         from_sql = f"FROM {schema}.{table} a {eligible_join}{stock_join}WHERE " + " AND ".join(conditions)
         cursor.execute(f"SELECT COUNT_BIG(*) AS total {from_sql}", tuple(parameters))

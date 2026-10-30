@@ -181,6 +181,8 @@ class ProductTypeNameSynonyms(Base, TimestampMixin):
     __tablename__ = "product_type_name_synonyms"
     type_name_key: Mapped[str] = mapped_column(String(500), primary_key=True)
     synonyms: Mapped[list] = mapped_column(JSON, default=list)
+    # NULL preserves the inherited general-word behaviour until explicitly configured.
+    is_general: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=0)
 
 
