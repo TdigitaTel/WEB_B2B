@@ -25,16 +25,19 @@
 @media(max-width:720px){
  .access-screen{grid-template-columns:minmax(0,1fr);grid-template-rows:auto 1fr;align-content:start}
  .access-screen .login-brand{display:flex;padding:20px 18px;background:var(--navy);border:0}
- .access-screen .login-brand.has-cover{height:clamp(170px,34svh,340px);padding:0}
- .access-screen .login-brand.has-cover .login-cover{position:absolute;inset:0;height:100%;max-height:100%;width:100%;object-fit:contain}
+ .access-screen .login-brand.has-cover{height:auto;padding:0}
+ .access-screen .login-brand.has-cover .login-cover{position:static;height:auto;max-height:none;width:100%;object-fit:contain}
  .access-screen .login-brand-copy{width:100%;max-width:480px}
  .access-screen .login-logo{width:160px;max-width:100%}
  .access-screen .login-brand h1{font-size:30px;margin:12px 0}
  .access-screen .login-brand p{font-size:15px;line-height:1.45;margin:0}
  .access-screen .login-panel{display:block;padding:0;align-content:start}
- .access-screen .login-form{max-width:none;width:100%;border:0;border-radius:0;padding:22px 18px max(22px,env(safe-area-inset-bottom))}
- .access-screen .login-form h2{font-size:28px;margin-bottom:8px}
- .access-screen .login-form .small{margin-bottom:16px}
+ .access-screen .login-form{max-width:none;width:100%;border:0;border-radius:0;padding:20px 18px max(20px,env(safe-area-inset-bottom))}
+ .access-screen .login-form h2{font-size:26px;margin-bottom:6px}
+ .access-screen .login-form .small{font-size:14px;margin-bottom:14px}
+ .access-screen .label{font-size:15px;margin-top:14px}
+ .access-screen .input{font-size:16px;min-height:48px;padding:11px 12px}
+ .access-screen .login-form form>.primary{min-height:48px;font-size:17px;margin-top:18px}
  .access-screen .login-qr{margin-top:20px}
 }
 /* Explicit deployment option ?kiosk=1. Width selects the touch layout; a keyboard
@@ -42,8 +45,8 @@
 @media(min-width:721px){
  .access-screen.login--kiosk{grid-template-columns:minmax(0,1fr);grid-template-rows:auto 1fr;align-content:start}
  .access-screen.login--kiosk .login-brand{display:flex;min-height:0;padding:24px 5vw;border:0;background:var(--navy)}
- .access-screen.login--kiosk .login-brand.has-cover{height:32svh;min-height:180px;max-height:660px;padding:0}
- .access-screen.login--kiosk .login-brand.has-cover .login-cover{position:absolute;inset:0;height:100%;width:100%;max-height:100%;object-fit:contain}
+ .access-screen.login--kiosk .login-brand.has-cover{height:auto;min-height:0;max-height:none;padding:0}
+ .access-screen.login--kiosk .login-brand.has-cover .login-cover{position:static;height:auto;width:100%;max-height:none;object-fit:contain}
  .access-screen.login--kiosk .login-brand-copy{max-width:900px;width:100%;margin:auto}
  .access-screen.login--kiosk .login-logo{width:210px}
  .access-screen.login--kiosk .login-brand h1{font-size:clamp(36px,4vw,60px)}
