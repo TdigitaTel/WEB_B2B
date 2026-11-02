@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
-from pydantic import BaseModel, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, Field, model_validator
 
 
 class LoginIn(BaseModel):
@@ -78,6 +78,13 @@ class OrderCreate(BaseModel):
     customer_reference: str | None = Field(default=None, max_length=100)
     job_name: str | None = Field(default=None, max_length=160)
     notes: str | None = Field(default=None, max_length=1000)
+
+
+class OrderPlanningChange(BaseModel):
+    expected_at: AwareDatetime
+    observations: str = Field(max_length=1000)
+    previous_expected_at: AwareDatetime | None
+    previous_observations: str | None
 
 
 class PickupChange(BaseModel):

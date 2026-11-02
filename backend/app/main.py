@@ -23,7 +23,7 @@ from .category_visibility import router as category_visibility_router, image_rou
 from .config import settings
 from .pickup import immediate_ready_at, immediate_available, next_open_date, scheduled_date_open, scheduled_ready_at, assign_attention_deadline
 from .db import get_db
-from .schemas import PickupChange, PickupSettingsIn, DeliveryConfirmation, WebOrderRegistrationChange, UserDisplayPreferences
+from .schemas import OrderPlanningChange, PickupChange, PickupSettingsIn, DeliveryConfirmation, WebOrderRegistrationChange, UserDisplayPreferences
 from .exit_orders import upsert_exit_order
 from .order_identity import linked_customer_order, customer_history_without_shadows
 from .order_search import matches_order_search, order_number_sort_key
@@ -1569,6 +1569,31 @@ def operator_order_delivery_note(order_id: str, number: str = Query(min_length=1
         if key(document.get("number")) == wanted and matches_order_reference(document, order):
             return document
     raise HTTPException(404, "El albarán no pertenece a este pedido")
+
+
+@app.patch("/api/v1/store/orders/{order_id}/planning")
+def change_order_planning(order_id: str, data: OrderPlanningChange,
+        user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
+    order = operator_web_order(db, order_id, user)
+    if order.delivered_at or order.estado_registro_exit in {"ATENDIDO", "ENTREGADO", "FACTURADO"}:
+        raise HTTPException(409, "No se puede cambiar la previsión de un pedido ya atendido")
+    def utc(value):
+        return (value if value.tzinfo else value.replace(tzinfo=timezone.utc)).astimezone(timezone.utc) if value else None
+    previous = utc(order.attention_deadline_at)
+    if previous != utc(data.previous_expected_at) or order.notes != data.previous_observations:
+        raise HTTPException(409, "Otro operador cambió la previsión u observaciones. Actualiza el pedido y vuelve a editarlo")
+    proposed = utc(data.expected_at)
+    if proposed != previous or order.notes != data.observations:
+        before = {"expected_at": previous.isoformat() if previous else None, "observations": order.notes}
+        order.attention_deadline_at = proposed
+        order.notes = data.observations
+        local = proposed.astimezone(ZoneInfo("Europe/Madrid")).strftime("%d/%m/%Y %H:%M")
+        db.add(OrderStatusHistory(order_id=order.id, estado_registro_exit=order.estado_registro_exit,
+            changed_by_user_id=user.id, source="WEB", note=f"Previsión y observaciones de cabecera modificadas manualmente. Fecha prevista: {local}"))
+        audit(db, user, "ORDER_PLANNING_CHANGED", "ORDER", order.public_id,
+            {"previous": before, "new": {"expected_at": proposed.isoformat(), "observations": order.notes}})
+        db.commit()
+    return order_payload(order, db, True)
 
 
 @app.patch("/api/v1/store/orders/{order_id}/pickup")
