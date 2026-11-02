@@ -14,7 +14,8 @@
     "test:login-image": "node scripts/test-login-image-upload.cjs",
     "test:screen-refresh": "node scripts/test-screen-refresh.cjs",
     "test:unified-search": "node scripts/test-unified-search.cjs",
-    "test:login-screen": "node scripts/test-login-screen.cjs"
+    "test:login-screen": "node scripts/test-login-screen.cjs",
+    "test:order-planning": "node scripts/test-order-planning.cjs"
   },
   "dependencies": {
     "jsqr": "^1.4.0",
