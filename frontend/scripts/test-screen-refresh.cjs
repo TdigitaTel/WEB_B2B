@@ -18,14 +18,14 @@ const {startPolling}=require('../app/screenPolling.ts');
 const React=require('react'),{createRoot}=require('react-dom/client');
 const {AutoRefreshProvider,ScreenRefreshParameters,useAutoRefresh,RefreshScope}=require('../app/AutoRefresh.tsx');
 const {__Operations:Operations,__Orders:Orders,__Documents:Documents}=require('../app/page.tsx');
-let configured=5;const fetched=[];
+let configured=5,holdLine=false,releaseLine;const fetched=[];
 global.fetch=async(url,options={})=>{
  fetched.push(String(url));
  if(url.includes('screen-refresh-settings')){
   if(options.method==='PATCH')configured=JSON.parse(options.body).interval_seconds;
   return new Response(JSON.stringify({interval_seconds:configured}));
  }
- if(url.includes('line-planning'))return new Response(JSON.stringify({lines:[]}));
+ if(url.includes('line-planning')){if(holdLine)return new Promise(resolve=>releaseLine=()=>resolve(new Response(JSON.stringify({lines:[]}))));return new Response(JSON.stringify({lines:[]}));}
  return new Response('[]');
 };
 const tick=ms=>{now+=ms;return [...timers.values()].filter(timer=>timer.ms===ms).forEach(timer=>timer.fn())};
@@ -39,8 +39,8 @@ function setInput(input,value){Object.getOwnPropertyDescriptor(window.HTMLInputE
  hidden=true;tick(5000);assert.equal(calls,1);hidden=false;online=false;tick(5000);assert.equal(calls,1);online=true;
  const edit=document.createElement('input');document.body.append(edit);edit.focus();edit.dispatchEvent(new window.Event('input',{bubbles:true}));window.dispatchEvent(new window.Event('focus'));assert.equal(calls,1,'Pause while typing');edit.blur();edit.remove();
  tick(5000);assert.equal(calls,2);stop();assert.ok(lastSignal.aborted);release();await Promise.resolve();assert.equal(timers.size,0);
- const boardCalls=[];let offlineBoard=false;
- const onRefresh=async(...args)=>{boardCalls.push(args);if(offlineBoard)throw Error('Consulta temporalmente no disponible')};
+ const boardCalls=[];let offlineBoard=false,holdBoard=false,releaseBoard;
+ const onRefresh=async(...args)=>{boardCalls.push(args);if(offlineBoard)throw Error('Consulta temporalmente no disponible');if(holdBoard)await new Promise(resolve=>releaseBoard=resolve)};
  await React.act(async()=>root.render(React.createElement(AutoRefreshProvider,null,React.createElement(Operations,{orders:[],onRefresh}))));
  assert.match(document.body.textContent,/Todas las vistas se actualizan cada 5 segundos/);
  for(const [button,mode] of [['Activos Kardex','active_kardex'],['Atendidos','attended'],['Activos SGA','active_sga'],['Pedidos WEB','web']]){
@@ -60,17 +60,38 @@ function setInput(input,value){Object.getOwnPropertyDescriptor(window.HTMLInputE
  offlineBoard=true;await React.act(async()=>tick(5000));assert.match(document.body.textContent,/WEB-2026-000001/,'Retain last good orders on failed refresh');assert.equal(detail.open,true);
  offlineBoard=false;await React.act(async()=>root.render(React.createElement(AutoRefreshProvider,null,React.createElement(Operations,{orders:[{...order,customer:'Cliente actualizado'}],onRefresh}))));
  assert.equal(document.querySelector('.operator-web-order').open,true,'Keep expanded order details');
+ // Periodic reads must not flash the controls or replace open order nodes.
+ holdBoard=true;
+ const stableDetail=document.querySelector('.operator-web-order');
+ const refreshButton=document.querySelector('.ops-refresh');const idleLabel=refreshButton.textContent;
+ await React.act(async()=>tick(5000));
+ assert.equal(refreshButton.textContent,idleLabel,'Automatic refresh keeps the button label stable');
+ assert.equal(refreshButton.disabled,false,'Automatic refresh does not dim the button');
+ assert.equal(document.querySelector('.operator-web-order'),stableDetail);assert.equal(stableDetail.open,true);
+ await React.act(async()=>releaseBoard());
+ await React.act(async()=>refreshButton.click());
+ assert.match(refreshButton.textContent,/Actualizando/,'Manual refresh still shows progress');assert.equal(refreshButton.disabled,true);
+ await React.act(async()=>releaseBoard());holdBoard=false;
+ assert.equal(refreshButton.textContent,idleLabel);assert.equal(refreshButton.disabled,false);
  const customerCalls=[];
  await React.act(async()=>root.render(React.createElement(AutoRefreshProvider,null,React.createElement(Orders,{canViewNotes:true,onOpenNote:()=>{},showImages:false,orders:[],refreshing:false,onRefresh:async(...args)=>{customerCalls.push(args)},onRepeat:()=>{},onSubmitDraft:()=>{},onDelete:()=>{}}))));
  const search=document.querySelector('input[type="search"]');
  await React.act(async()=>setInput(search,'6008375'));
  await React.act(async()=>document.querySelector('.order-filters').dispatchEvent(new window.Event('submit',{bubbles:true,cancelable:true})));
- customerCalls.length=0;await React.act(async()=>tick(5000));assert.equal(customerCalls[0][3],'6008375','Refresh preserves submitted WEB/EXIT query');
+ customerCalls.length=0;await React.act(async()=>tick(5000));assert.equal(customerCalls[0][3],'6008375','Refresh preserves submitted WEB/EXIT query');assert.equal(customerCalls[0][4],true,'Customer periodic refresh explicitly requests silent mode');
  await React.act(async()=>setInput(search,'6009999'));
  customerCalls.length=0;await React.act(async()=>tick(5000));assert.equal(customerCalls[0][3],'6008375','Unsubmitted text does not change refresh query');
  await React.act(async()=>root.render(React.createElement(AutoRefreshProvider,null,React.createElement(Documents,{initialNote:'2026-AL-123',initialOrderId:'order-1',showImages:false,notes:[],invoices:[],canViewNotes:true,canViewInvoices:true,canViewPrices:true}))));
  fetched.length=0;await React.act(async()=>tick(5000));
  assert.ok(fetched.some(url=>url.includes('delivery-notes?')&&url.includes('order_id=order-1')),'Linked note refresh preserves order identity');
+ // Even an empty planning response must not flash back to Cargando on every tick.
+ const {LinePlanningProvider,LinePlanningInfo}=require('../app/LinePlanningInfo.tsx');
+ await React.act(async()=>root.render(React.createElement('details',{open:true},React.createElement(LinePlanningProvider,{orderId:'empty-plan'},React.createElement(LinePlanningInfo,{sku:'A',lineKey:'1'})))));
+ assert.doesNotMatch(document.body.textContent,/Cargando/);
+ const stableCell=document.querySelector('.line-plan-cell');const stableText=stableCell.textContent;
+ holdLine=true;await React.act(async()=>tick(5000));
+ assert.equal(document.querySelector('.line-plan-cell'),stableCell);assert.equal(stableCell.textContent,stableText,'Background planning keeps the previous cell contents');
+ await React.act(async()=>releaseLine());holdLine=false;
  let probeCalls=0;
  function Probe(){useAutoRefresh(async()=>{probeCalls++});return null}
  await React.act(async()=>root.render(React.createElement(AutoRefreshProvider,null,React.createElement(React.Fragment,null,React.createElement(ScreenRefreshParameters),React.createElement(Probe),React.createElement(RefreshScope,{active:false},React.createElement(Probe))))));
@@ -84,5 +105,5 @@ function setInput(input,value){Object.getOwnPropertyDescriptor(window.HTMLInputE
  await React.act(async()=>setInput(number,'35'));configured=30;
  await React.act(async()=>tick(5000));assert.equal(number.value,'35','Remote refresh preserves unsaved parameter edit');
  await React.act(async()=>root.unmount());assert.equal(timers.size,0,'All subscriptions removed on unmount');
- console.log('Automatic refresh: all four operator views, applied filters, configurable cadence, pause/visibility, no overlap, cancellation and draft preservation passed');dom.window.close();
+ console.log('Automatic refresh: all four operator views, applied filters, configurable cadence, pause/visibility, no overlap, cancellation, draft preservation and silent refresh without loading flashes passed');dom.window.close();
 })().catch(error=>{console.error(error);dom.window.close();process.exitCode=1});
