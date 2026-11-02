@@ -314,3 +314,27 @@ def fetch_customer_exit_orders(customer_code: str, date_from: date, date_to: dat
 def fetch_pending_exit_orders(limit: int = 200) -> list[ExitOrderInput]:
     """Compatibilidad temporal para utilidades antiguas; el tablero usa consulta directa."""
     return fetch_exit_orders_live("active_kardex", limit=limit)
+
+
+def fetch_existing_exit_order_keys(keys):
+    """Confirm header existence by its four fields, without dates/status/TOP limits."""
+    keys = list(dict.fromkeys(keys))
+    if not keys:
+        return set()
+    existing = set()
+    fields = ('company', 'year', 'series', 'number')
+    with connect_sqlserver() as connection:
+        columns = _columns(connection, EXIT_SALES_ORDER['header_table'], HEADER_CANDIDATES)
+        _required(columns, fields, EXIT_SALES_ORDER['header_table'])
+        expressions = [f"h.{_discovered_column(columns[field])}" for field in fields]
+        for start in range(0, len(keys), 200):
+            batch = keys[start:start + 200]
+            clause = '(' + ' AND '.join(expression + '=%s' for expression in expressions) + ')'
+            sql = ("SELECT " + ', '.join(f"{expr} AS {field}" for expr, field in zip(expressions, fields))
+                   + f" FROM {_identifier(EXIT_SALES_ORDER['schema'])}.{_identifier(EXIT_SALES_ORDER['header_table'])} h WHERE "
+                   + ' OR '.join([clause] * len(batch)))
+            with connection.cursor() as cursor:
+                cursor.execute(sql, tuple(value for key in batch for value in key))
+                for row in cursor.fetchall():
+                    existing.add((int(row['company']), int(row['year']), str(row['series'] or '').strip().upper(), str(row['number']).strip()))
+    return existing

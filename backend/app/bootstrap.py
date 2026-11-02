@@ -61,6 +61,8 @@ def main():
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_code VARCHAR(40)",
                 "ALTER TABLE orders ALTER COLUMN customer_id DROP NOT NULL",
                 "CREATE INDEX IF NOT EXISTS ix_orders_customer_code ON orders(customer_code)",
+                "ALTER TABLE orders ADD COLUMN IF NOT EXISTS reconciliation_hidden_at TIMESTAMPTZ",
+                "ALTER TABLE orders ADD COLUMN IF NOT EXISTS reconciliation_reason VARCHAR(40)",
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS nro_pedido_exit VARCHAR(80)",
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS exit_order_year INTEGER",
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS exit_series VARCHAR(100)",
