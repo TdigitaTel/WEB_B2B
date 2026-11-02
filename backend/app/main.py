@@ -26,6 +26,7 @@ from .db import get_db
 from .schemas import OrderPlanningChange, PickupChange, PickupSettingsIn, DeliveryConfirmation, WebOrderRegistrationChange, UserDisplayPreferences
 from .exit_orders import upsert_exit_order
 from .order_identity import linked_customer_order, customer_history_without_shadows
+from .order_reconciliation import reconcile_orders
 from .order_search import matches_order_search, order_number_sort_key
 from .exit_order_key import FIELDS as EXIT_KEY_FIELDS, key_payload, apply_key, record_key
 from .delivery_links import note_order_key, order_key as delivery_order_key, live_order_key, matches_note
@@ -975,6 +976,10 @@ def orders(date_from: date | None = None, date_to: date | None = None,
         payload.update({"web_number": row.order_number if row.origen_pedido == "B2B" else None, "exit_number": row.nro_pedido_exit,
                         "local_order": row.origen_pedido == "B2B"})
         result.append(payload)
+    emitted = {payload['id'] for payload in result}
+    hidden = reconcile_orders(db, [row for row in all_local_rows if row.public_id in emitted],
+                              all_local_rows, exit_rows, deliveries.keys(), user, notes_available)
+    result = [payload for payload in result if payload['id'] not in hidden]
     result = customer_history_without_shadows(result)
     for payload in result:
         key = note_order_key(payload)
@@ -1410,10 +1415,15 @@ def web_store_orders(db: Session, user: User, date_from: date | None, date_to: d
             matched = [note for note in customer_notes.get(row.customer_code, [])
                        if matches_order_reference(note, row)]
         linked_notes[row.id] = matched
+    hidden = reconcile_orders(db, rows, rows, list(exit_by_key.values()),
+                              [delivery_order_key(row) for row in rows if linked_notes.get(row.id)],
+                              user, notes_available and not fallback_failed)
     requested = state.strip().upper()
     groups = {"EN_PROCESAMIENTO": {"BLOQUEADO", "REGISTRADO", "EN_PROCESO", "EN_PREPARACION"}, "PENDIENTE_RECOJO": {"ATENDIDO"}}
     result = []
     for row in rows:
+        if row.public_id in hidden:
+            continue
         sync_history(db, row, [])
         order_notes = linked_notes.get(row.id, [])
         delivery = order_notes[0] if order_notes else None
