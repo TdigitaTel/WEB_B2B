@@ -145,6 +145,7 @@ export default function Page() {
   const [invoices, setInvoices] = useState<DocumentRow[]>([]);
   const [opsOrders, setOpsOrders] = useState<Order[]>([]);
   const opsRequest = useRef(0);
+  const ordersRequest = useRef(0);
   const opsRequestView = useRef<OperationsView|null>(null);
   const [kioskMode, setKioskMode] = useState(false);
   const [keyboardOpen, setKeyboardOpen] = useState(false);
@@ -170,7 +171,7 @@ export default function Page() {
   useEffect(() => { loadAccount(); }, [loadAccount]);
 
   useEffect(() => {
-    const expire = () => { pendingReads.clear();opsRequest.current++;setUser(null); setCustomer(null); setProducts([]); setFavoriteProducts([]); setOrders([]); setOpsOrders([]); setCart(null); setDeliveryNotes([]); setInvoices([]); setCartOpen(false); setMenuOpen(false); setCatalogMenuOpen(false); setView("home"); if(authenticatedSession.current)setError("La sesión ha finalizado. Inicia sesión de nuevo."); };
+    const expire = () => { pendingReads.clear();opsRequest.current++;ordersRequest.current++;setUser(null); setCustomer(null); setProducts([]); setFavoriteProducts([]); setOrders([]); setOpsOrders([]); setCart(null); setDeliveryNotes([]); setInvoices([]); setCartOpen(false); setMenuOpen(false); setCatalogMenuOpen(false); setView("home"); if(authenticatedSession.current)setError("La sesión ha finalizado. Inicia sesión de nuevo."); };
     const hide = () => { document.documentElement.style.visibility="hidden"; };
     const restore = (event: PageTransitionEvent) => {
       if(event.persisted){ location.reload(); return; }
@@ -221,13 +222,17 @@ export default function Page() {
   }, [user, isOperator]);
 
   const lastOrdersQuery = useRef({from:ordersMonthAgo(),to:madridDate(new Date()),state:"TODOS",query:""});
-  const refreshOrders = useCallback(async (from = ordersMonthAgo(), to = madridDate(new Date()), state = "TODOS", query = "") => {
+  const refreshOrders = useCallback(async (from = ordersMonthAgo(), to = madridDate(new Date()), state = "TODOS", query = "", background = false) => {
     if (!user || user.must_change_password || isOperator) return;
     lastOrdersQuery.current={from,to,state,query};
-    setRefreshingOrders(true);
-    try { const params=new URLSearchParams({date_from:from,date_to:to,state,order_query:query.trim()});setOrders(await api<Order[]>(`/api/v1/orders?${params}`)); setError(""); }
-    catch (e) { setError((e as Error).message); }
-    finally { setRefreshingOrders(false); }
+    const request=++ordersRequest.current;
+    if(!background)setRefreshingOrders(true);
+    try {
+      const params=new URLSearchParams({date_from:from,date_to:to,state,order_query:query.trim()});
+      const rows=await api<Order[]>(`/api/v1/orders?${params}`);
+      if(request===ordersRequest.current){setOrders(rows);setError("");}
+    }catch(e){if(request===ordersRequest.current)setError((e as Error).message)}
+    finally{if(!background)setRefreshingOrders(false)}
   }, [user, isOperator]);
 
   const refreshOperations = useCallback(async (mode: OperationsView = "active_kardex", from = "", to = "", state = "TODOS", delegation = "TODAS") => {
@@ -490,14 +495,14 @@ function MaterialThumbnail({sku}:{sku:string}){
   </span>;
 }
 
-function Orders({canViewNotes,onOpenNote,showImages,orders,refreshing,onRefresh,onRepeat,onSubmitDraft,onDelete}:{canViewNotes:boolean;onOpenNote:(number:string,orderId:string)=>void;showImages:boolean;orders:Order[];refreshing:boolean;onRefresh:(from?:string,to?:string,state?:string,query?:string)=>Promise<void>;onRepeat:(id:string)=>void;onSubmitDraft:(id:string)=>void;onDelete:(id:string)=>void}) {
+function Orders({canViewNotes,onOpenNote,showImages,orders,refreshing,onRefresh,onRepeat,onSubmitDraft,onDelete}:{canViewNotes:boolean;onOpenNote:(number:string,orderId:string)=>void;showImages:boolean;orders:Order[];refreshing:boolean;onRefresh:(from?:string,to?:string,state?:string,query?:string,background?:boolean)=>Promise<void>;onRepeat:(id:string)=>void;onSubmitDraft:(id:string)=>void;onDelete:(id:string)=>void}) {
   const [origin,setOrigin]=useState<OrderOriginFilter>("WEB");
   const [query,setQuery]=useState(""); const [individualSearch,setIndividualSearch]=useState(false);
   const visibleOrders=orders.filter(order=>individualSearch||matchesOrderOrigin(order,origin));
   const today=madridDate(new Date()); const [from,setFrom]=useState(ordersMonthAgo); const [to,setTo]=useState(today); const [state,setState]=useState("TODOS"); const [showDocuments,setShowDocuments]=useState(false);
   const applied=useRef({from,to,state,query:""});
   const consult=()=>{applied.current={from,to,state,query};setIndividualSearch(!!query.trim());void onRefresh(from,to,state,query)};
-  useAutoRefresh(async()=>{if(!refreshing){const filters=applied.current;await onRefresh(filters.from,filters.to,filters.state,filters.query)}},!refreshing);
+  useAutoRefresh(async()=>{if(!refreshing){const filters=applied.current;await onRefresh(filters.from,filters.to,filters.state,filters.query,true)}},!refreshing);
   const documents=visibleOrders.flatMap(o=>(o.documents||[]).map(d=>({...d,order:o.number}))); const bulkUrl=`/api/v1/documents/download?${new URLSearchParams({date_from:from,date_to:to})}`;
   const documentAction=(d:OrderDocument)=>d.available?<a className="doc-action" href={`/api/v1/documents/${d.type}/${d.id}/file`} target="_blank">Abrir</a>:<span className="status">Registrado</span>;
   return <div className="page orders-page"><div className="section-heading"><div><span className="eyebrow">GESTOR DE FLUJO</span><h1>Mis pedidos</h1><p className="small">Pedidos B2B y EXIT unificados, con prioridad para la información actual de EXIT.</p></div><div className="orders-heading-actions"><button className="ghost" disabled={refreshing} onClick={consult}>{refreshing?"Actualizando…":"↻ Actualizar pedidos"}</button><button className="ghost" onClick={()=>setShowDocuments(!showDocuments)}>Documentación del resultado ({documents.length})</button></div></div>
@@ -658,10 +663,10 @@ function Operations({orders,onRefresh}:{orders:Order[];onRefresh:(mode:Operation
     boardBusy.current=true;
     if(!background)appliedBoard.current={from:dateFrom,to:dateTo,state:webState,delegation:webDelegation};
     const filters=appliedBoard.current;
-    setUpdating(true);setRefreshError("");
-    try{await onRefresh(boardView,filters.from,filters.to,filters.state,filters.delegation);setNow(Date.now())}
+    if(!background)setUpdating(true);
+    try{await onRefresh(boardView,filters.from,filters.to,filters.state,filters.delegation);setRefreshError("");setNow(Date.now())}
     catch(e){setRefreshError((e as Error).message||"No se pudieron actualizar los datos. Inténtalo de nuevo.")}
-    finally{boardBusy.current=false;setUpdating(false)}
+    finally{boardBusy.current=false;if(!background)setUpdating(false)}
   };
   useEffect(()=>{const timer=window.setInterval(()=>setNow(Date.now()),1000);return()=>window.clearInterval(timer)},[]);
   useAutoRefresh(()=>updateBoard(true),true,boardView);
