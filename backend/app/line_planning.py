@@ -75,7 +75,8 @@ def transfer_date(stamp,days,schedules):
 def local_context(db,order):
     company,delegation=order.company_code,order.delegation_code
     lines=[{'line_key':str(item.id),'sku':item.sku,'description':item.description,'quantity':float(item.quantity),
-            'pending':float(item.pending_quantity if item.pending_quantity is not None else max(0,item.quantity-(item.served_quantity or 0)))}
+            'exit_removed_at':item.exit_removed_at,
+            'pending':0 if item.exit_removed_at else float(item.pending_quantity if item.pending_quantity is not None else max(0,item.quantity-(item.served_quantity or 0)))}
            for item in db.scalars(select(OrderItem).where(OrderItem.order_id==order.id).order_by(OrderItem.id))]
     return f'WEB:{order.public_id}',company,delegation,order.attention_deadline_at,lines
 

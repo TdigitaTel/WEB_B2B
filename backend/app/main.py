@@ -24,7 +24,7 @@ from .config import settings
 from .pickup import immediate_ready_at, immediate_available, next_open_date, scheduled_date_open, scheduled_ready_at, assign_attention_deadline
 from .db import get_db
 from .schemas import OrderPlanningChange, PickupChange, PickupSettingsIn, DeliveryConfirmation, WebOrderRegistrationChange, UserDisplayPreferences
-from .exit_orders import upsert_exit_order
+from .exit_orders import upsert_exit_order, reconcile_exit_lines
 from .order_identity import linked_customer_order, customer_history_without_shadows
 from .order_search import matches_order_search, order_number_sort_key
 from .exit_order_key import FIELDS as EXIT_KEY_FIELDS, key_payload, apply_key, record_key
@@ -232,10 +232,11 @@ def order_payload(order: Order, db: Session, include_items: bool = False, histor
                       if item.pending_quantity is not None else Decimal("0"))
             pending = (item.pending_quantity if item.pending_quantity is not None
                        else max(Decimal("0"), item.quantity - served))
-            result["items"].append({**key_payload(order), "exit_line_number": item.exit_line_number, "line_key": str(item.id), "sku": item.sku, "description": item.description,
+            result["items"].append({**key_payload(order), "exit_line_number": item.exit_line_number, "exit_removed_at": item.exit_removed_at, "exit_line_status": "ELIMINADA_EN_EXIT" if item.exit_removed_at else "ACTIVA", "line_key": str(item.id), "sku": item.sku, "description": item.description,
                                     "quantity": float(item.quantity), "served_quantity": float(served),
                                     "pending_quantity": float(pending), "unit": item.unit,
-                                    "unit_price": float(item.unit_price), "line_total": float(item.line_total),
+                                    "unit_price": float(item.unit_price), "discount_pct": float(item.discount_pct),
+                                    "net_amount": float((item.quantity * item.unit_price * (1 - item.discount_pct / 100)).quantize(Decimal("0.01"))), "line_total": float(item.line_total),
                                     "fulfillment_zone": item.fulfillment_zone or "OTROS"})
         history = db.scalars(select(OrderStatusHistory).where(OrderStatusHistory.order_id == order.id).order_by(OrderStatusHistory.created_at)).all()
         result["history_enabled"] = settings.show_order_status_history or history_for_operator
@@ -900,6 +901,7 @@ def orders(date_from: date | None = None, date_to: date | None = None,
             if local.delivered_at and effective_state != "FACTURADO":
                 effective_state = "ENTREGADO"
             local.estado_registro_exit = effective_state
+            reconcile_exit_lines(db, local, record.lines)
             payload = order_payload(local, db, True)
             payload.update({"nro_pedido_exit": record.exit_order_id, "exit_number": record.exit_order_id,
                             **(dict(zip(EXIT_KEY_FIELDS, record_key(record))) if record_key(record) else {}),
@@ -911,13 +913,7 @@ def orders(date_from: date | None = None, date_to: date | None = None,
                             "created_at": record.recorded_at or local.created_at,
                             "created_by": payload["created_by"] if local.origen_pedido == "B2B" else (record.source_created_by or "EXIT"), "local_order": local.origen_pedido == "B2B",
                             "workflow": exit_workflow(record, effective_state, delivery, is_web_order(record, local)),
-                            "items": [{**(dict(zip(EXIT_KEY_FIELDS, record_key(record))) if record_key(record) else {}), "exit_line_number": line.line_number, "sku": line.sku, "description": line.description, "quantity": float(line.quantity),
-                                       "served_quantity": float(line.served_quantity or 0),
-                                       "pending_quantity": float(line.pending_quantity or 0), "unit": line.unit,
-                                       "unit_price": float(line.unit_price), "discount_pct": float(line.discount_pct),
-                                       "net_amount": float(line.net_amount) if line.net_amount is not None else None,
-                                       "line_total": float(line.line_total if line.line_total is not None else line.quantity * line.unit_price),
-                                       "fulfillment_zone": line.fulfillment_zone} for line in record.lines]})
+                            "items": payload["items"]})
         else:
             payload = {"id": f"exit:{record.exit_order_id}", "number": record.exit_order_id,
                        "exit_number": record.exit_order_id, "web_number": None, "nro_pedido_exit": record.exit_order_id,
@@ -1425,6 +1421,9 @@ def web_store_orders(db: Session, user: User, date_from: date | None, date_to: d
             else:
                 row.estado_registro_exit = "ATENDIDO"
             sync_history(db, row, [("ATENDIDO", instant(delivery["attended_at"]), f"Albarán {delivery['delivery_number']} generado")] if delivery.get("attended_at") else [])
+        record = exit_by_key.get((row.customer_code, (row.nro_pedido_exit or "").replace("~", "/").upper()))
+        if record and (record.company_code, record.store_code) == (row.company_code, row.delegation_code):
+            reconcile_exit_lines(db, row, record.lines)
         payload = order_payload(row, db, include_items=True, history_for_operator=True)
         payload["delivery_notes"] = delivery_notes_payload(order_notes) if notes_available and row.customer_code not in fallback_failed else None
         record = exit_by_key.get((row.customer_code, (row.nro_pedido_exit or "").replace("~", "/").upper()))

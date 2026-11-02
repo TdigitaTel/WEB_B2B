@@ -4,11 +4,11 @@ El futuro demonio solo debe transformar cada registro de cabecera/detalle de EXI
 contrato ``ExitOrderInput`` y llamar ``upsert_exit_order`` dentro de una transacción.
 No contiene nombres de tablas de EXIT porque todavía deben ser confirmados.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, select, text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from .delegations import resolve_delegation
@@ -58,6 +58,83 @@ class ExitOrderInput(BaseModel):
     tax_total: Decimal = Decimal("0")
     total: Decimal = Decimal("0")
     lines: list[ExitOrderLineInput] = Field(default_factory=list)
+
+
+def reconcile_exit_lines(db: Session, order: Order, lines: list[ExitOrderLineInput]) -> None:
+    """Retain the WEB snapshot and persistent line IDs; EXIT only updates fulfilment.
+
+    Line numbers are scoped by the parent order (which holds the four EXIT keys).
+    Legacy lines can be linked by SKU only when unambiguous. Ambiguous legacy
+    groups remain untouched until EXIT provides enough information to link them.
+    This function requires a complete, successfully read order detail, never a
+    filtered or failed query.
+    """
+    numbers = [line.line_number for line in lines if line.line_number]
+    if len(numbers) != len(set(numbers)):
+        raise ValueError("EXIT devuelve números de línea duplicados; se conserva el detalle WEB")
+    db.scalar(select(Order).where(Order.id == order.id).with_for_update())
+    existing = list(db.scalars(select(OrderItem).where(OrderItem.order_id == order.id)
+                              .order_by(OrderItem.id).with_for_update()))
+    skus = {line.sku for line in lines}
+    products = {p.sku: p for p in db.scalars(select(Product).where(Product.sku.in_(skus)))} if skus else {}
+    matched = set()
+    protected = set()
+    assignments = []
+    remaining = []
+    for line in lines:
+        exact = [item for item in existing if item.id not in matched and line.line_number
+                 and item.exit_line_number == line.line_number and item.sku == line.sku]
+        if len(exact) == 1:
+            matched.add(exact[0].id)
+            assignments.append((exact[0], line))
+        else:
+            remaining.append(line)
+    for sku in {line.sku for line in remaining}:
+        incoming = [line for line in remaining if line.sku == sku]
+        candidates = [item for item in existing if item.id not in matched and item.sku == sku
+                      and (not item.exit_line_number or any(not line.line_number for line in incoming))]
+        if len(candidates) == len(incoming) == 1:
+            pairs = [(candidates[0], incoming[0])]
+        elif candidates:
+            # Do not arbitrarily retire one of several identical, unnumbered WEB lines.
+            def signature(row):
+                return (row.description, row.quantity, row.unit, row.unit_price)
+            if len(candidates) == len(incoming) and sorted(map(signature, candidates)) == sorted(map(signature, incoming)):
+                available = candidates.copy()
+                pairs = []
+                for line in incoming:
+                    item = next(item for item in available if signature(item) == signature(line))
+                    available.remove(item)
+                    pairs.append((item, line))
+            else:
+                protected.update(item.id for item in candidates)
+                continue
+        else:
+            pairs = [(None, line) for line in incoming]
+        for item, line in pairs:
+            if item is not None:
+                matched.add(item.id)
+            assignments.append((item, line))
+    for item, line in assignments:
+        if item is None:
+            product = products.get(line.sku)
+            item = OrderItem(order_id=order.id, product_id=product.id if product else None,
+                             sku=line.sku, description=line.description, quantity=line.quantity,
+                             unit=line.unit, unit_price=line.unit_price, discount_pct=line.discount_pct,
+                             tax_rate=line.tax_rate,
+                             line_total=line.line_total if line.line_total is not None else line.quantity * line.unit_price)
+            db.add(item)
+        item.exit_line_number = line.line_number or item.exit_line_number
+        item.exit_removed_at = None
+        item.fulfillment_zone = line.fulfillment_zone
+        item.served_quantity = line.served_quantity
+        item.pending_quantity = line.pending_quantity
+    now = datetime.now(timezone.utc)
+    for item in existing:
+        if item.id not in matched and item.id not in protected:
+            # Keep the last quantities, prices, text, manual planning and timestamp.
+            item.exit_removed_at = item.exit_removed_at or now
+    db.flush()
 
 
 def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: User) -> Order:
@@ -123,16 +200,8 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
     order.total = incoming.total
     order.sync_status = SyncStatus.synced
 
-    db.execute(delete(OrderItem).where(OrderItem.order_id == order.id))
-    skus = [line.sku for line in incoming.lines]
-    products = {p.sku: p for p in db.scalars(select(Product).where(Product.sku.in_(skus))).all()} if skus else {}
-    for line in incoming.lines:
-        line_total = line.line_total if line.line_total is not None else (line.quantity * line.unit_price)
-        db.add(OrderItem(order_id=order.id, exit_line_number=line.line_number, product_id=products.get(line.sku).id if products.get(line.sku) else None,
-                         sku=line.sku, description=line.description, quantity=line.quantity, unit=line.unit,
-                         unit_price=line.unit_price, discount_pct=line.discount_pct, tax_rate=line.tax_rate,
-                         line_total=line_total, fulfillment_zone=line.fulfillment_zone,
-                         served_quantity=line.served_quantity, pending_quantity=line.pending_quantity))
+    if "lines" in incoming.model_fields_set:
+        reconcile_exit_lines(db, order, incoming.lines)
     from .order_timeline import exit_events, sync_history
     sync_history(db, order, exit_events(incoming, web_order=web_order), web_order=web_order)
     return order
