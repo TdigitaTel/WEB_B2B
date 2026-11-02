@@ -30,6 +30,9 @@ const input=(el,value)=>{const proto=el.tagName==='TEXTAREA'?window.HTMLTextArea
  assert.ok(data.lines[0].manual);assert.equal(document.querySelector('input[type=datetime-local]').value,'2026-11-03T16:00');
  conflict=true;await React.act(async()=>input(document.querySelector('input[type=datetime-local]'),'2026-11-04T16:00'));await React.act(async()=>click('Guardar'));
  assert.match(document.querySelector('[role=alert]').textContent,/Otro operador/);assert.equal(document.querySelector('input[type=datetime-local]').value,'2026-11-04T16:00','Failed save preserves edit');
+ data.lines[0]={...data.lines[0],pending:0,exit_removed_at:'2026-11-02T10:00:00Z'};
+ await React.act(async()=>root.render(React.createElement(Lines,{orderId:'removed-order'})));
+ assert.match(document.body.textContent,/Eliminada en EXIT/);assert.doesNotMatch(document.body.textContent,/Servida en EXIT/);
  assert.equal(madridStamp('2026-07-02T14:30'),'2026-07-02T12:30:00.000Z');assert.throws(()=>madridStamp('2026-03-29T02:30'),/hora no existe/);
  await React.act(async()=>root.unmount());dom.window.close();console.log('Header and line delivery planning: date/observations payloads, Madrid time, direct edit, persisted manual date, conflict and refresh passed');
 })().catch(e=>{console.error(e);dom.window.close();process.exitCode=1});
