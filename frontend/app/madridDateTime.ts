@@ -1,0 +1,3 @@
+export function localDate(value?:string|null){return value?new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Madrid',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(value)).replace(' ','T'):''}
+// The editor sends an explicit Madrid UTC offset, including daylight-saving time.
+export function madridStamp(value:string){if(!value)return null;const guessed=new Date(value+'Z');let stamp=guessed;for(let i=0;i<2;i++){const represented=localDate(stamp.toISOString());stamp=new Date(stamp.getTime()+new Date(value+'Z').getTime()-new Date(represented+'Z').getTime())}if(localDate(stamp.toISOString())!==value)throw Error('La hora no existe por el cambio de horario. Elige otra hora.');return stamp.toISOString()}
