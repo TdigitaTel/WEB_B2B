@@ -299,6 +299,8 @@ class Order(Base, TimestampMixin):
     exit_order_year: Mapped[int | None] = mapped_column(Integer)
     exit_series: Mapped[str | None] = mapped_column(String(100))
     exit_order_number: Mapped[str | None] = mapped_column(String(80))
+    reconciliation_hidden_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reconciliation_reason: Mapped[str | None] = mapped_column(String(40))
     nro_pedido_exit: Mapped[str | None] = mapped_column(String(80), index=True)
     fecha_registro_exit: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     fulfillment_method: Mapped[str] = mapped_column(String(20), default="PICKUP", server_default="PICKUP", nullable=False)
