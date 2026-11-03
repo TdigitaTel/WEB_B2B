@@ -9,7 +9,7 @@ const React=require('react'),{createRoot}=require('react-dom/client');
 const Search=require('../app/SearchParameters.tsx').default;
 const paths=[{id:1,area:'Fontanería',category_family:'Racorería',subfamily:'Latón'}];
 let rows=[{key:'accesorio',name:'ACCESORIO',paths,synonyms:['complemento'],is_general:true,version:'1',needs_review:false},{key:'machon',name:'MACHÓN',paths,synonyms:['niple'],is_general:false,version:'1',needs_review:false}];
-let settings={enabled:true,accessory_terms:['piezas','componentes'],piece_names:['codo'],materials:['inox','inoxidable','laton'],material_groups:[{name:'Inoxidable',synonyms:['inox']},{name:'Latón',synonyms:[]}]};
+let settings={enabled:true,accessory_terms:['piezas','componentes'],piece_names:['codo'],materials:['inox','inoxidable','laton'],material_groups:[{name:'Inoxidable',synonyms:['inox']},{name:'Latón',synonyms:[]}],measure_equivalences:[{value:'1/2',aliases:['media','medio']},{value:'1/4',aliases:['cuarto']}]};
 const calls=[];
 global.fetch=async(url,options={})=>{
  calls.push([String(url),options]);let data;
@@ -38,9 +38,18 @@ const input=(element,value)=>{Object.getOwnPropertyDescriptor(element.tagName===
  await React.act(async()=>tab('Materiales'));assert.ok(document.body.textContent.includes('Inoxidable'));
  await React.act(async()=>tab('Palabras generales'));assert.equal(document.querySelector('textarea').value,'piezas, componentes, artículos','Keep pending rules when switching tabs');
  await React.act(async()=>click('Guardar reglas del buscador'));assert.deepEqual(settings.accessory_terms,['piezas','componentes','artículos']);assert.equal(settings.material_groups[0].name,'Inoxidable');
+ await React.act(async()=>tab('Medidas'));
+ const aliases=document.querySelector('input[aria-label="Equivalencias de medida 1"]');
+ assert.equal(aliases.value,'media, medio');
+ await React.act(async()=>input(aliases,'media, medio, mitad'));
+ await React.act(async()=>tab('Materiales'));await React.act(async()=>tab('Medidas'));
+ assert.equal(document.querySelector('input[aria-label="Equivalencias de medida 1"]').value,'media, medio, mitad','Keep unsaved measures across tabs');
+ await React.act(async()=>document.querySelector('button[aria-label="Quitar medida 2"]').click());
+ await React.act(async()=>click('Guardar reglas del buscador'));
+ assert.deepEqual(settings.measure_equivalences,[{value:'1/2',aliases:['media','medio','mitad']}]);
  await React.act(async()=>tab('Probar búsqueda'));
  await React.act(async()=>click('accesorio niple de latón 1/2'));
  const request=calls.find(([url])=>url.includes('/preview?'));assert.equal(new URL(request[0],'http://localhost').searchParams.get('q'),'accesorio niple de latón 1/2');
  const panel=document.querySelector('.search-plan');assert.match(panel.textContent,/MACHÓN/);assert.match(panel.textContent,/accesorio/);assert.match(panel.textContent,/laton y 1\/2/);
- await React.act(async()=>root.unmount());dom.window.close();console.log('Unified search UI: type flag, preserved aliases, rules tabs, material groups and search tester passed');
+ await React.act(async()=>root.unmount());dom.window.close();console.log('Unified search UI: type flag, preserved aliases, rules tabs, material groups, editable measure equivalents and search tester passed');
 })().catch(error=>{console.error(error);dom.window.close();process.exitCode=1});

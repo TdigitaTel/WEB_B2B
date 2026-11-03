@@ -7,6 +7,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from .models import Brand, Category, Customer, Product, SyncStatus
+from .search_settings import get_search_config
 from .search import normalize_query
 
 
@@ -40,7 +41,7 @@ class PostgresCatalogService:
 
     def text_condition(self, query: str):
         raw = " ".join(query.lower().strip().split())
-        normalized = normalize_query(query)
+        normalized = normalize_query(query, get_search_config(self.db).get("measure_equivalences"))
         if not normalized:
             return None
         return or_(
@@ -52,7 +53,7 @@ class PostgresCatalogService:
 
     def direct_description_condition(self, query: str):
         """Match words against product-owned text, without classification labels."""
-        normalized = normalize_query(query)
+        normalized = normalize_query(query, get_search_config(self.db).get("measure_equivalences"))
         if not normalized:
             return None
         direct_text = (
@@ -68,7 +69,7 @@ class PostgresCatalogService:
                subfamily_id: int | None = None, product_type_id: int | None = None):
         stmt = select(Product).options(joinedload(Product.brand), joinedload(Product.category)).where(Product.active.is_(True))
         raw = " ".join(query.lower().strip().split())
-        normalized = normalize_query(query)
+        normalized = normalize_query(query, get_search_config(self.db).get("measure_equivalences"))
         if normalized:
             direct_condition = self.direct_description_condition(query)
             has_direct_matches = self.db.scalar(

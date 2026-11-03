@@ -9,7 +9,7 @@ from app.models import MaterialArea,MaterialFamily,MaterialSubfamily,MaterialPro
 from app.search import default_search_config
 from app.search_resolution import resolve_search, material_groups
 from app.product_type_synonyms import HEADERS,catalog_search_config,grouped_types
-from app.search_settings import SearchSettingsIn
+from app.search_settings import SearchSettingsIn, get_search_config
 from app.bootstrap import main as bootstrap
 bootstrap()
 
@@ -37,7 +37,8 @@ def groups():
     ('tornillo cocina',[],[['tornillo'],['cocina']],[]),
 ])
 def test_agreed_examples(query,types,terms,ignored):
-    plan=resolve_search(query,default_search_config(),groups())
+    with SessionLocal() as db:config=get_search_config(db)
+    plan=resolve_search(query,config,groups())
     assert [row['name'] for row in plan['selected_types']]==types
     assert plan['term_groups']==terms and plan['ignored']==ignored and not plan['ambiguous']
 

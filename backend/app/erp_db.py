@@ -209,7 +209,7 @@ def fetch_catalog_articles(query: str = "", page: int = 1, page_size: int = 24,
         parameters: list = []
         if columns["inactive"]:
             conditions.append(f"COALESCE(a.{_discovered_column(columns['inactive'])}, 0) = 0")
-        normalized_query = normalize_query(query)
+        normalized_query = normalize_query(query, (search_config or {}).get("measure_equivalences"))
         stock_join = ""
         stock_parameters: list = []
         order_expression = code_expression
