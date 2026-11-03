@@ -325,6 +325,17 @@ class Order(Base, TimestampMixin):
     )
 
 
+class OrderTrackingLink(Base):
+    __tablename__ = "order_tracking_links"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    created_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class OrderItem(Base, TimestampMixin):
     __tablename__ = "order_items"
     id: Mapped[int] = mapped_column(primary_key=True)
