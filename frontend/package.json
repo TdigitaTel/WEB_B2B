@@ -19,7 +19,8 @@
     "test:order-tracking": "node scripts/test-order-tracking.cjs",
     "test:order-planning": "node scripts/test-order-planning.cjs",
     "test:order-pickups": "node scripts/test-order-pickups.cjs",
-    "test:order-fulfillment": "node scripts/test-order-fulfillment.cjs"
+    "test:order-fulfillment": "node scripts/test-order-fulfillment.cjs",
+    "test:order-email": "node scripts/test-order-email.cjs"
   },
   "dependencies": {
     "jsqr": "^1.4.0",
