@@ -237,7 +237,7 @@ export default function Page() {
     finally{if(!background)setRefreshingOrders(false)}
   }, [user, isOperator]);
 
-  const refreshOperations = useCallback(async (mode: OperationsView = "active_kardex", from = "", to = "", state = "TODOS", delegation = "TODAS") => {
+  const refreshOperations = useCallback(async (mode: OperationsView = "web", from = ordersMonthAgo(), to = madridDate(new Date()), state = "TODOS", delegation = "TODAS") => {
     const request = ++opsRequest.current;
     if(opsRequestView.current!==mode){setOpsOrders([]);opsRequestView.current=mode;}
     const params = new URLSearchParams({ view: mode });
@@ -646,12 +646,12 @@ function Operations({orders,onRefresh}:{orders:Order[];onRefresh:(mode:Operation
   const [webDelegation,setWebDelegation]=useState("TODAS");
   const [webStores,setWebStores]=useState<Store[]>([]);
   useEffect(()=>{api<Store[]>("/api/v1/store/orders/delegations").then(setWebStores).catch(()=>{})},[]);
-  const [boardView,setBoardView]=useState<OperationsView>("active_kardex");
+  const [boardView,setBoardView]=useState<OperationsView>("web");
   const [orderSearch,setOrderSearch]=useState("");
   const [attendedSort,setAttendedSort]=useState<"number"|"duration">("number");
   const [attendedAscending,setAttendedAscending]=useState(false);
   const toggleAttendedSort=(key:"number"|"duration")=>{if(key===attendedSort)setAttendedAscending(value=>!value);else{setAttendedSort(key);setAttendedAscending(false)}};
-  const [dateFrom,setDateFrom]=useState(()=>madridDate(new Date()));
+  const [dateFrom,setDateFrom]=useState(ordersMonthAgo);
   const [dateTo,setDateTo]=useState(()=>madridDate(new Date()));
   const [webState,setWebState]=useState("TODOS");
   const [now,setNow]=useState(Date.now());

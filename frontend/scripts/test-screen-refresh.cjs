@@ -43,6 +43,9 @@ function setInput(input,value){Object.getOwnPropertyDescriptor(window.HTMLInputE
  const onRefresh=async(...args)=>{boardCalls.push(args);if(offlineBoard)throw Error('Consulta temporalmente no disponible');if(holdBoard)await new Promise(resolve=>releaseBoard=resolve)};
  await React.act(async()=>root.render(React.createElement(AutoRefreshProvider,null,React.createElement(Operations,{orders:[],onRefresh}))));
  assert.match(document.body.textContent,/Todas las vistas se actualizan cada 5 segundos/);
+ const initialWeb=[...document.querySelectorAll('nav[aria-label="Tipo de pedidos"] button')][0];
+ assert.match(initialWeb.textContent,/Pedidos WEB/);assert.ok(initialWeb.classList.contains('active'),'WEB is selected on opening the operator board');
+ await React.act(async()=>tick(5000));assert.equal(boardCalls.at(-1)[0],'web');assert.ok(boardCalls.at(-1)[1]<boardCalls.at(-1)[2],'Initial WEB query uses a previous-month date range');
  for(const [button,mode] of [['Activos Kardex','active_kardex'],['Atendidos','attended'],['Activos SGA','active_sga'],['Pedidos WEB','web']]){
   await React.act(async()=>clickText(button));boardCalls.length=0;
   await React.act(async()=>tick(5000));assert.equal(boardCalls.length,1,`${mode} automatic refresh`);assert.equal(boardCalls[0][0],mode);
