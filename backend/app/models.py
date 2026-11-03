@@ -309,6 +309,7 @@ class Order(Base, TimestampMixin):
     attention_deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     preparation_minutes_snapshot: Mapped[int | None] = mapped_column(Integer)
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    pickup_managed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     origen_pedido: Mapped[str] = mapped_column(String(20), default="B2B", index=True)
     estado_registro_exit: Mapped[str] = mapped_column(String(80), default="PENDIENTE", index=True)
     customer_reference: Mapped[str | None] = mapped_column(String(100))
@@ -342,6 +343,8 @@ class OrderItem(Base, TimestampMixin):
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"), index=True)
     exit_line_number: Mapped[str | None] = mapped_column(String(40))
     exit_removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_in_web: Mapped[bool | None] = mapped_column(Boolean)
+    exit_entered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"))
     sku: Mapped[str] = mapped_column(String(50))
     description: Mapped[str] = mapped_column(Text)
@@ -571,3 +574,50 @@ class ScreenRefreshSettings(Base):
     __tablename__ = "screen_refresh_settings"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     interval_seconds: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
+
+
+class OrderDeliveryNote(Base):
+    __tablename__ = "order_delivery_notes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), index=True)
+    company_code: Mapped[int] = mapped_column(Integer)
+    year: Mapped[int] = mapped_column(Integer)
+    series: Mapped[str] = mapped_column(String(100))
+    number: Mapped[str] = mapped_column(String(80))
+    status: Mapped[str] = mapped_column(String(40))
+    current: Mapped[bool] = mapped_column(Boolean, default=True)
+    synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (UniqueConstraint("company_code", "year", "series", "number"),)
+
+
+class OrderDeliveryNoteLine(Base):
+    __tablename__ = "order_delivery_note_lines"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    delivery_note_id: Mapped[int] = mapped_column(ForeignKey("order_delivery_notes.id"), index=True)
+    line_number: Mapped[str] = mapped_column(String(40))
+    order_item_id: Mapped[int | None] = mapped_column(ForeignKey("order_items.id"), index=True)
+    sku: Mapped[str] = mapped_column(String(50))
+    description: Mapped[str] = mapped_column(Text)
+    unit: Mapped[str] = mapped_column(String(20))
+    quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3))
+    current: Mapped[bool] = mapped_column(Boolean, default=True)
+    warning: Mapped[str | None] = mapped_column(String(300))
+    __table_args__ = (UniqueConstraint("delivery_note_id", "line_number"),)
+
+
+class OrderPickup(Base):
+    __tablename__ = "order_pickups"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), index=True)
+    request_id: Mapped[str] = mapped_column(String(36), unique=True)
+    confirmed_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    confirmed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    observation: Mapped[str | None] = mapped_column(String(1000))
+
+
+class OrderPickupLine(Base):
+    __tablename__ = "order_pickup_lines"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    pickup_id: Mapped[int] = mapped_column(ForeignKey("order_pickups.id"), index=True)
+    delivery_line_id: Mapped[int] = mapped_column(ForeignKey("order_delivery_note_lines.id"), unique=True)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3))

@@ -504,3 +504,14 @@ body{background:linear-gradient(180deg,#f6f9fb 0,#f1f5f7 420px,#f5f6f7 100%)}.se
 
 /* Preserve removed EXIT lines as visible order history. */
 .exit-line-removed{color:#8a4200;font-weight:700}
+
+/* Per-line history: compact, read-only check marks, including on narrow screens. */
+.order-line-marks{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:5px;white-space:normal}
+.order-line-marks label{display:inline-flex;align-items:center;gap:4px;font-size:10px;line-height:1.4;color:#36556b}
+.order-line-marks input[type=checkbox]{appearance:none;position:relative;width:13px;height:13px;min-height:0;margin:0;border:1px solid #7b929f;border-radius:2px;background:#fff;opacity:1;flex:none}
+.order-line-marks label:last-child:has(:checked){color:#a32920;font-weight:700}
+
+.order-line-marks input:checked{background:#1d6590;border-color:#1d6590}
+.order-line-marks input:checked::after{content:'✓';position:absolute;inset:0;color:#fff;text-align:center;font-size:11px;line-height:11px;font-weight:900}
+.order-line-marks input[aria-checked=mixed]::after{content:'−';position:absolute;inset:0;text-align:center;color:#36556b;line-height:11px}
+.order-line-marks label:last-child input:checked{background:#a32920;border-color:#a32920}

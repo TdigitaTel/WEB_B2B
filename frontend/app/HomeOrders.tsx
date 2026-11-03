@@ -1,9 +1,10 @@
 "use client";
 
 import {useEffect, useState} from "react";
+import {PickupSummaryView,type PickupSummary} from './OrderPickup';
 import {useRefreshSeconds} from "./AutoRefresh";
 
-type SummaryOrder = {id:string;number:string;store:string;job_name?:string|null;estado_registro_exit?:string|null};
+type SummaryOrder = {pickup_summary?:PickupSummary|null;id:string;number:string;store:string;job_name?:string|null;estado_registro_exit?:string|null};
 const labels:Record<string,string>={BORRADOR:"Borrador",PENDIENTE:"Pendiente",BLOQUEADO:"En procesamiento",REGISTRADO:"En procesamiento",EN_PROCESO:"En procesamiento",EN_PREPARACION:"En procesamiento",ATENDIDO:"Pendiente de recogida",ENTREGADO:"Entregado"};
 
 export default function HomeOrders({load,onNavigate}:{load:(signal:AbortSignal)=>Promise<SummaryOrder[]>;onNavigate:()=>void}) {
@@ -30,12 +31,12 @@ export default function HomeOrders({load,onNavigate}:{load:(signal:AbortSignal)=
     document.addEventListener("visibilitychange",refresh);
     return ()=>{controller.abort();window.clearInterval(timer);window.removeEventListener("focus",refresh);document.removeEventListener("visibilitychange",refresh);};
   },[load,retry,refreshSeconds]);
-  const active=orders?.filter(order=>order.estado_registro_exit!=="FACTURADO")??[];
+  const active=orders?.filter(order=>order.pickup_summary?order.pickup_summary.state!=="ENTREGADO_TOTAL"&&order.pickup_summary.total_materials>0:order.estado_registro_exit!=="FACTURADO")??[];
   return <>
     <div className="section-heading"><h2>Mis pedidos</h2><span className="count">{orders===null?"…":active.length}</span></div>
     <p className="small">El estado de tus últimas compras.</p>
     {orders===null&&!error&&<p className="small" role="status">Consultando pedidos…</p>}
-    {active.slice(0,3).map(order=><div className="compact-order" key={order.id}><b>{order.number}</b><span className="small">{order.store} · {order.job_name||"Sin obra"}</span><span className="status">{labels[order.estado_registro_exit||"PENDIENTE"]||order.estado_registro_exit}</span></div>)}
+    {active.slice(0,3).map(order=><div className="compact-order" key={order.id}><b>{order.number}</b><span className="small">{order.store} · {order.job_name||"Sin obra"}</span>{order.pickup_summary?<PickupSummaryView summary={order.pickup_summary}/>:<span className="status">{labels[order.estado_registro_exit||"PENDIENTE"]||order.estado_registro_exit}</span>}</div>)}
     {error&&<p className="small" role="alert">No se pudieron actualizar los pedidos. <button className="text-button" onClick={()=>setRetry(value=>value+1)}>Reintentar</button></p>}
     {orders!==null&&!error&&!active.length&&<p className="small">No tienes pedidos activos.</p>}
     <button className="secondary block home-orders-button" onClick={onNavigate}>Ver todos mis pedidos →</button>

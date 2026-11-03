@@ -23,5 +23,10 @@ page._compile(ts.transpileModule(fs.readFileSync(filename,'utf8')+'\nexport {Ord
 const order={id:'example',number:'WEB-TEST',origen_pedido:'B2B',estado_registro_exit:'ATENDIDO',created_at:'2026-11-03T10:00:00Z',items:lines.map((line,index)=>({...line,sku:'TEST-'+index,description:'Material '+index,unit:'UD',unit_price:1,line_total:2})),total:10};
 for(const [Component,props] of [[page.exports.Orders,{onRefresh:async()=>{},onRepeat:()=>{},onDelete:()=>{},onSubmitDraft:()=>{},refreshing:false}],[page.exports.OperatorWebOrders,{onDelivered:async()=>{}}]]){
  const rendered=renderToStaticMarkup(React.createElement(Component,{orders:[order],...props}));assert.match(rendered,/Atendido al 80%/);assert.match(rendered,/Falta 1 material/);
+ const pickup_summary={state:'PENDIENTE_RECOGIDA_PARCIAL',total_materials:5,prepared_materials:4,delivered_materials:2,partial_delivered_materials:0,ready_materials:2,pending_materials:3,prepared_percent:80,delivered_percent:40,prepared_complete:false,legacy_delivery:false,requires_review:false,lines:[]};
+ const current=renderToStaticMarkup(React.createElement(Component,{orders:[{...order,pickup_summary}],...props}));
+ assert.match(current,/Preparados completos: 4 de 5 materiales \(80%\)/);
+ assert.match(current,/Recogidos: 2 de 5 completos \(40%\)/);
+ assert.doesNotMatch(current,/Atendido al/,'The albaran preparation and collection summary replaces the legacy indicator');
 }
 console.log('Order fulfilment: partial attention, deleted/restored lines, different units, empty orders, truthful percentages and both actual lists passed');
