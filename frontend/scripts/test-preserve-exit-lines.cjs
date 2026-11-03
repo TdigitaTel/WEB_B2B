@@ -17,7 +17,7 @@ const path=require('node:path'),Module=require('node:module');
 const filename=path.resolve(__dirname,'../app/page.tsx');
 const pageModule=new Module(filename,module);pageModule.filename=filename;pageModule.paths=Module._nodeModulePaths(path.dirname(filename));
 pageModule._compile(ts.transpileModule(fs.readFileSync(filename,'utf8')+'\nexport {Orders,OperatorWebOrders};',{compilerOptions:{jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS,esModuleInterop:true}}).outputText,filename);
-const original={line_key:'101',sku:'01067',description:'CURVA 90° CU M-H 5001A D.22',quantity:2,unit:'UD',unit_price:5,line_total:10,served_quantity:0,pending_quantity:2,fulfillment_zone:'OTROS',exit_removed_at:'2026-11-02T10:00:00Z'};
+const original={created_in_web:true,entered_in_exit:true,line_key:'101',sku:'01067',description:'CURVA 90° CU M-H 5001A D.22',quantity:2,unit:'UD',unit_price:5,line_total:10,served_quantity:0,pending_quantity:2,fulfillment_zone:'OTROS',exit_removed_at:'2026-11-02T10:00:00Z'};
 const order={id:'example',number:'6008552',order_number:'WEB-2026-0000321',web_number:'WEB-2026-0000321',exit_number:'6008552',nro_pedido_exit:'6008552',origen_pedido:'B2B',is_web_order:true,local_order:true,customer:'Cliente de ejemplo',customer_code:'PRUEBA',store:'Bermúdez Ulloa Almeiras',created_at:'2026-11-02T10:00:00Z',estado_registro_exit:'REGISTRADO',items:[original,{...original,line_key:'102',sku:'23493',description:'VASO EXPANSIÓN ACS 12L',exit_removed_at:null}],total:24.2,history:[],delivery_notes:[]};
 const customer=renderToStaticMarkup(React.createElement(pageModule.exports.Orders,{orders:[order],refreshing:false,onRefresh:async()=>{},onRepeat:()=>{},onSubmitDraft:()=>{},onDelete:()=>{}}));
 const operator=renderToStaticMarkup(React.createElement(pageModule.exports.OperatorWebOrders,{orders:[order],onDelivered:async()=>{}}));
@@ -28,3 +28,24 @@ if(process.env.LINE_PREVIEW_DIR){
  const css=['globals.css','settings.css'].map(file=>fs.readFileSync(path.resolve(__dirname,'../app',file),'utf8')).join('\n');
  fs.writeFileSync(path.join(process.env.LINE_PREVIEW_DIR,'index.html'),'<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>'+css+'</style><body><p style="padding:16px">Vista de comprobación con datos simulados</p><h2>Cliente</h2>'+customer+'<h2>Operador</h2>'+operator+'</body></html>');
 }
+
+const {JSDOM}=require('jsdom');
+for(const markup of [customer,operator]){
+ const document=new JSDOM(markup).window.document;
+ const groups=[...document.querySelectorAll('[aria-label="Seguimiento del artículo"]')];
+ assert.equal(groups.length,2);
+ for(const group of groups){
+  const marks=group.querySelectorAll('input');
+  assert.equal(marks.length,3);
+  assert.ok([...marks].every(mark=>mark.disabled&&mark.readOnly));
+  assert.equal(marks[0].checked,true);assert.equal(marks[1].checked,true);
+ }
+ assert.equal(groups[0].querySelectorAll('input')[2].checked,true);
+ assert.equal(groups[1].querySelectorAll('input')[2].checked,false);
+ assert.match(markup,/No se va a atender/i);
+}
+const {OrderLineMarks}=require('../app/OrderLineMarks.tsx');
+const imported=new JSDOM(renderToStaticMarkup(React.createElement(OrderLineMarks,{line:{created_in_web:false,entered_in_exit:true}}))).window.document.querySelectorAll('input');
+assert.equal(imported[0].checked,false);assert.equal(imported[1].checked,true);assert.equal(imported[2].checked,false);
+assert.match(renderToStaticMarkup(React.createElement(OrderLineMarks,{line:{created_in_web:null}})),/aria-checked="mixed"/);
+console.log('Per-line WEB, EXIT and deletion check marks are accurate and read-only in both lists');

@@ -69,6 +69,8 @@ def main():
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS exit_order_number VARCHAR(80)",
                 "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS exit_line_number VARCHAR(40)",
                 "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS exit_removed_at TIMESTAMPTZ",
+                "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS created_in_web BOOLEAN",
+                "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS exit_entered_at TIMESTAMPTZ",
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS fecha_registro_exit TIMESTAMPTZ",
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ",
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS pickup_date DATE",
