@@ -29,6 +29,8 @@ from .order_identity import linked_customer_order, customer_history_without_shad
 from .order_reconciliation import reconcile_orders
 from .order_search import matches_order_search, order_number_sort_key
 from .exit_order_key import FIELDS as EXIT_KEY_FIELDS, key_payload, apply_key, record_key
+from .schemas import PickupConfirmation
+from . import order_pickups
 from .delivery_links import note_order_key, order_key as delivery_order_key, live_order_key, matches_note
 from .kardex_timing import fetch_kardex_timings, sales_order_number
 from .order_timeline import exit_events, sync_history, instant, dispatch_timing, is_web_order
@@ -225,7 +227,9 @@ def order_payload(order: Order, db: Session, include_items: bool = False, histor
               "principal_user_name": order.principal_user_name or (principal_for(creator, db).full_name if creator and not creator.parent_user_id else None),
               "creator_user_name": order.creator_user_name or (creator.full_name if creator else "Integración EXIT"),
               "nro_pedido_exit": order.nro_pedido_exit, "fecha_registro_exit": order.fecha_registro_exit, "delivered_at": order.delivered_at,
-              "origen_pedido": order.origen_pedido, "is_web_order": order.origen_pedido == "B2B", "estado_registro_exit": order.estado_registro_exit}
+              "pickup_summary": order_pickups.summary(db, order), "origen_pedido": order.origen_pedido, "is_web_order": order.origen_pedido == "B2B", "estado_registro_exit": order.estado_registro_exit}
+    if result["pickup_summary"] and not result["pickup_summary"]["legacy_delivery"]:
+        result["delivered_at"] = result["pickup_summary"]["completed_at"]
     if include_items:
         result["items"] = []
         for item in db.scalars(select(OrderItem).where(OrderItem.order_id == order.id).order_by(OrderItem.id)).all():
@@ -834,6 +838,7 @@ def orders(date_from: date | None = None, date_to: date | None = None,
                 Order.nro_pedido_exit.endswith("~" + query))
         condition = condition & search_condition
     all_local_rows = db.scalars(select(Order).where(condition).order_by(Order.created_at.desc()).limit(5000)).all()
+    order_pickups.prime_summaries(db, all_local_rows)
     local_rows = list(all_local_rows) if query else [row for row in all_local_rows if start <= row.created_at.date() <= end]
     if query:
         numbers = {query} if query.isdecimal() else {
@@ -975,13 +980,21 @@ def orders(date_from: date | None = None, date_to: date | None = None,
         result.append(payload)
     emitted = {payload['id'] for payload in result}
     hidden = reconcile_orders(db, [row for row in all_local_rows if row.public_id in emitted],
-                              all_local_rows, exit_rows, deliveries.keys(), user, notes_available)
+                              all_local_rows, exit_rows, [*deliveries.keys(), *order_pickups.receipt_order_keys(db, all_local_rows)], user, notes_available)
     result = [payload for payload in result if payload['id'] not in hidden]
     result = customer_history_without_shadows(result)
     for payload in result:
         key = note_order_key(payload)
         matched = [row for row in delivery_rows if key and note_order_key(row) == key]
         payload["delivery_notes"] = (delivery_notes_payload(matched) if notes_available else None) if user.can_view_delivery_notes else []
+    pickup_rows = [row for row in all_local_rows if row.public_id in {payload['id'] for payload in result}]
+    pickup_warnings = order_pickups.refresh_documents(db, pickup_rows, fetch_customer_delivery_notes)
+    order_pickups.prime_summaries(db, pickup_rows)
+    for payload in result:
+        local = next((row for row in pickup_rows if row.public_id == payload['id']), None)
+        if local:
+            payload['pickup_summary'] = order_pickups.summary(db, local)
+            payload['pickup_warning'] = pickup_warnings.get(local.id)
     db.commit()
     requested = state.strip().upper()
     groups = {"BORRADOR": {"BORRADOR"}, "PENDIENTE": {"BORRADOR", "PENDIENTE"},
@@ -991,7 +1004,7 @@ def orders(date_from: date | None = None, date_to: date | None = None,
         result = [item for item in result if matches_order_search(item, query)]
     if not query and requested not in {"", "TODOS"}:
         accepted = groups.get(requested, {requested})
-        result = [item for item in result if str(item.get("estado_registro_exit") or "").upper() in accepted]
+        result = [item for item in result if order_pickups.matches_state(item, requested, accepted)]
     return sorted(result, key=order_number_sort_key, reverse=True)
 
 
@@ -1244,6 +1257,7 @@ def integration_orders(
         count_query = count_query.where(Order.estado_registro_exit.in_(requested))
     total = db.scalar(count_query) or 0
     orders = db.scalars(query.order_by(Order.created_at.desc(), Order.id.desc()).offset(offset).limit(limit)).all()
+    order_pickups.prime_summaries(db, orders)
     return {
         "total": total,
         "limit": limit,
@@ -1413,8 +1427,14 @@ def web_store_orders(db: Session, user: User, date_from: date | None, date_to: d
                        if matches_order_reference(note, row)]
         linked_notes[row.id] = matched
     hidden = reconcile_orders(db, rows, rows, list(exit_by_key.values()),
-                              [delivery_order_key(row) for row in rows if linked_notes.get(row.id)],
+                              [delivery_order_key(row) for row in rows if linked_notes.get(row.id)] + order_pickups.receipt_order_keys(db, rows),
                               user, notes_available and not fallback_failed)
+    for row in rows:
+        record = exit_by_key.get((row.customer_code, (row.nro_pedido_exit or "").replace("~", "/").upper()))
+        if record and (record.company_code, record.store_code) == (row.company_code, row.delegation_code):
+            reconcile_exit_lines(db, row, record.lines)
+    pickup_warnings = order_pickups.refresh_documents(db, rows, fetch_customer_delivery_notes)
+    order_pickups.prime_summaries(db, rows)
     requested = state.strip().upper()
     groups = {"EN_PROCESAMIENTO": {"BLOQUEADO", "REGISTRADO", "EN_PROCESO", "EN_PREPARACION"}, "PENDIENTE_RECOJO": {"ATENDIDO"}}
     result = []
@@ -1433,8 +1453,6 @@ def web_store_orders(db: Session, user: User, date_from: date | None, date_to: d
                 row.estado_registro_exit = "ATENDIDO"
             sync_history(db, row, [("ATENDIDO", instant(delivery["attended_at"]), f"Albarán {delivery['delivery_number']} generado")] if delivery.get("attended_at") else [])
         record = exit_by_key.get((row.customer_code, (row.nro_pedido_exit or "").replace("~", "/").upper()))
-        if record and (record.company_code, record.store_code) == (row.company_code, row.delegation_code):
-            reconcile_exit_lines(db, row, record.lines)
         payload = order_payload(row, db, include_items=True, history_for_operator=True)
         payload["delivery_notes"] = delivery_notes_payload(order_notes) if notes_available and row.customer_code not in fallback_failed else None
         record = exit_by_key.get((row.customer_code, (row.nro_pedido_exit or "").replace("~", "/").upper()))
@@ -1443,8 +1461,8 @@ def web_store_orders(db: Session, user: User, date_from: date | None, date_to: d
             payload["auxiliary_reference"] = record.auxiliary_reference
         if row.delivered_at and row.estado_registro_exit != "FACTURADO":
             payload["estado_registro_exit"] = "ENTREGADO"
-        actual = payload["estado_registro_exit"]
-        if requested not in {"", "TODOS"} and actual not in groups.get(requested, {requested}):
+        payload["pickup_warning"] = pickup_warnings.get(row.id)
+        if requested not in {"", "TODOS"} and not order_pickups.matches_state(payload, requested, groups.get(requested, {requested})):
             continue
         result.append(payload)
     if rows:
@@ -1585,7 +1603,9 @@ def operator_order_delivery_note(order_id: str, number: str = Query(min_length=1
 def change_order_planning(order_id: str, data: OrderPlanningChange,
         user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
     order = operator_web_order(db, order_id, user)
-    if order.delivered_at or order.estado_registro_exit in {"ATENDIDO", "ENTREGADO", "FACTURADO"}:
+    pickup_state = order_pickups.summary(db, order)
+    partially_pending = pickup_state and not pickup_state['legacy_delivery'] and not pickup_state['prepared_complete'] and pickup_state['total_materials'] > 0
+    if not partially_pending and (order.delivered_at or order.estado_registro_exit in {"ATENDIDO", "ENTREGADO", "FACTURADO"}):
         raise HTTPException(409, "No se puede cambiar la previsión de un pedido ya atendido")
     def utc(value):
         return (value if value.tzinfo else value.replace(tzinfo=timezone.utc)).astimezone(timezone.utc) if value else None
@@ -1636,6 +1656,8 @@ def change_web_pickup(order_id: str, data: PickupChange,
 def change_web_registration(order_id: str, data: WebOrderRegistrationChange,
                             user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
     order = operator_web_order(db, order_id, user)
+    if data.state == "PENDIENTE" and order_pickups.has_pickups(db, order):
+        raise HTTPException(409, "No se puede desvincular un pedido con recogidas registradas")
     if data.state == "PENDIENTE" and (order.estado_registro_exit not in {"REGISTRADO", "BLOQUEADO"} or order.delivered_at):
         raise HTTPException(409, "Solo se puede volver a PENDIENTE desde REGISTRADO o BLOQUEADO y sin entrega confirmada")
     previous = {"state": order.estado_registro_exit, "exit_order_number": order.nro_pedido_exit, "exit_registered_at": order.fecha_registro_exit.isoformat() if order.fecha_registro_exit else None}
@@ -1749,36 +1771,49 @@ def retry_web_order(order_id: str, user: User = Depends(require_roles("OPERADOR_
     return order_payload(order, db, True)
 
 
+@app.get("/api/v1/store/orders/{order_id}/pickups")
+def pickup_detail(order_id: str, user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
+    order = operator_web_order(db, order_id, user)
+    warnings = order_pickups.refresh_documents(db, [order], fetch_customer_delivery_notes)
+    result = order_pickups.detail(db, order, warnings.get(order.id))
+    db.commit()
+    return result
+
+
+@app.post("/api/v1/store/orders/{order_id}/pickups")
+def record_pickup(order_id: str, data: PickupConfirmation, user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
+    order = operator_web_order(db, order_id, user)  # Serializes simultaneous confirmations.
+    from .models import OrderPickup
+    prior = db.scalar(select(OrderPickup).where(OrderPickup.request_id == str(data.request_id)))
+    if not prior:
+        if not order.nro_pedido_exit:
+            raise HTTPException(409, "El pedido todavía no está vinculado a EXIT")
+        identity = delivery_order_key(order)
+        if not identity:
+            raise HTTPException(409, "Completa empresa, ejercicio, serie y número del pedido EXIT antes de recoger")
+        try:
+            records = fetch_exit_orders_live("web", exit_order_id=f"{identity[1]}/{identity[2]}/{identity[3]}")
+        except Exception as exc:
+            raise HTTPException(503, "No se pudo verificar el pedido actual en EXIT") from exc
+        record = next((row for row in records if live_order_key(row) == identity and row.customer_code == order.customer_code), None)
+        if not record or 'lines' not in record.model_fields_set:
+            raise HTTPException(409, "No se pudo confirmar el detalle completo del pedido en EXIT; actualiza el vínculo")
+        reconcile_exit_lines(db, order, record.lines)
+        order_pickups.refresh_documents(db, [order], fetch_customer_delivery_notes, strict=True)
+        if data.expected_version != order_pickups.detail(db, order)["version"]:
+            raise HTTPException(409, "Los albaranes o materiales han cambiado. Cierra y vuelve a abrir la recogida antes de confirmar")
+    result = order_pickups.confirm(db, order, user, data.request_id, data.line_ids, data.observation)
+    if not prior:
+        audit(db, user, "ORDER_PICKUP_CONFIRMED", "ORDER", order.public_id,
+              {"request_id": str(data.request_id), "line_ids": data.line_ids, "state": result['summary']['state']})
+    db.commit()
+    return result
+
+
 @app.post("/api/v1/store/orders/delivery")
 def confirm_delivery(data: DeliveryConfirmation, user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
-    order = db.scalar(select(Order).where((Order.public_id == data.order_id) | (Order.nro_pedido_exit == data.order_id)).with_for_update())
-    if order is None:
-        records = fetch_exit_orders_live("web", data.order_date, data.order_date)
-        record = next((r for r in records if r.exit_order_id == data.order_id), None)
-        if not record or "PEDIDOGENERADOWEBB2B" not in "".join(str(record.auxiliary_reference or "").upper().split()):
-            raise HTTPException(404, "Pedido WEB no encontrado")
-        store = resolve_delegation(record.store_code, company_code=record.company_code)
-        if not store or (not can_operate_delegation(user, db, store.company, store.code)):
-            raise HTTPException(404, "Pedido no encontrado")
-        linked = db.scalar(select(Order).where(Order.order_number == record.customer_reference, Order.origen_pedido == "B2B")) if record.customer_reference else None
-        if linked:
-            record = record.model_copy(update={"web_order_number": linked.order_number})
-        order = upsert_exit_order(db, record, user)
-    if not can_operate_delegation(user, db, order.company_code, order.delegation_code):
-        raise HTTPException(404, "Pedido no encontrado")
-    if order.delivered_at:
-        return order_payload(order, db, True)
-    if order.estado_registro_exit != "ATENDIDO":
-        raise HTTPException(409, "Solo se puede entregar un pedido en estado ATENDIDO")
-    stamp = datetime.now(timezone.utc)
-    order.delivered_at = stamp
-    if order.estado_registro_exit != "FACTURADO":
-        order.estado_registro_exit = "ENTREGADO"
-    db.add(OrderStatusHistory(order_id=order.id, estado_registro_exit="ENTREGADO", changed_by_user_id=user.id,
-                              source="WEB", note="Entrega confirmada en Operaciones", created_at=stamp))
-    audit(db, user, "ORDER_DELIVERY_CONFIRMED", "ORDER", order.public_id, {"delivered_at": stamp.isoformat()})
-    db.commit()
-    return order_payload(order, db, True)
+    operator_web_order(db, data.order_id, user)
+    raise HTTPException(409, "Registra la recogida por albarán y líneas; ya no se confirma todo el pedido con este botón")
 
 
 @app.post("/api/v1/store/orders/{order_id}/transitions")
@@ -1786,6 +1821,8 @@ def transition(order_id: str, data: StatusChange, user: User = Depends(require_r
     order = db.scalar(select(Order).where(Order.public_id == order_id))
     if not order or (not can_operate_delegation(user, db, order.company_code, order.delegation_code)): raise HTTPException(404, "Pedido no encontrado")
     new_status = data.estado_registro_exit.strip().upper()
+    if order.origen_pedido == "B2B" and new_status == "ENTREGADO":
+        raise HTTPException(409, "Registra la recogida por albarán y líneas")
     if new_status not in ALLOWED_TRANSITIONS.get(order.estado_registro_exit, set()):
         raise HTTPException(409, f"No se puede pasar de {order.estado_registro_exit} a {new_status}")
     order.estado_registro_exit = new_status

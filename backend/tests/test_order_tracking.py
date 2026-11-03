@@ -21,6 +21,7 @@ def tracking_sources(monkeypatch):
     from app import order_tracking as module
     monkeypatch.setattr(module, "fetch_customer_exit_orders", lambda *a, **k: [])
     monkeypatch.setattr(module, "fetch_delivery_statuses_for_orders", lambda *a, **k: [])
+    monkeypatch.setattr(module, "fetch_customer_delivery_notes", lambda *a, **k: [])
 
 
 def operator():

@@ -17,7 +17,8 @@
     "test:login-screen": "node scripts/test-login-screen.cjs",
     "test:preserve-exit-lines": "node scripts/test-preserve-exit-lines.cjs",
     "test:order-tracking": "node scripts/test-order-tracking.cjs",
-    "test:order-planning": "node scripts/test-order-planning.cjs"
+    "test:order-planning": "node scripts/test-order-planning.cjs",
+    "test:order-pickups": "node scripts/test-order-pickups.cjs"
   },
   "dependencies": {
     "jsqr": "^1.4.0",
