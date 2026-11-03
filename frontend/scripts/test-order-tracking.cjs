@@ -25,6 +25,7 @@ const click=text=>{const button=[...document.querySelectorAll('button')].find(el
  await React.act(async()=>click('Copiar mensaje para WhatsApp'));assert.match(clipboard,/6008552/);assert.ok(clipboard.endsWith(token));
  await React.act(async()=>click('Desactivar enlace'));assert.equal(document.querySelector('input'),null);assert.ok(calls.some(c=>c.options.method==='DELETE'));
  await React.act(async()=>root.render(React.createElement(Tracking)));
+ assert.match(document.body.textContent,/Atendido al 0%/);assert.match(document.body.textContent,/Falta 1 material/);
  assert.match(document.body.textContent,/WEB-2026-0000321/);assert.match(document.body.textContent,/En gestión proveedor/);assert.match(document.body.textContent,/CURVA 90/);
  assert.equal(document.querySelector('input,button'),null,'Public view has no editing controls or login fields');
  const read=calls.find(c=>c.url.endsWith('/read'));assert.equal(JSON.parse(read.options.body).token,token);assert.equal(read.options.credentials,'omit');assert.ok(calls.every(c=>!c.url.includes(token)),'Secret never appears in API URLs');
