@@ -36,3 +36,7 @@ Las lecturas de albaranes se filtran en SQL por las cuatro claves de los pedidos
 ## Validación y límites
 
 Pruebas locales con SQLite y fuentes EXIT simuladas: ciclo 4+3+3 de un material, selección por línea, dos unidades de medida, exclusión de bajas, albaranes desaparecidos/cambiados, permisos, facturación independiente, idempotencia, versión, filtros, SQL parametrizado y seguimiento público sin escrituras. La web prueba selección completa, líneas no disponibles, ausencia de cantidades editables, reintento, historial y actualización. Pendiente validar en desarrollo con SQL Server/PostgreSQL y albaranes reales, incluyendo artículos repetidos y devoluciones. Las devoluciones no revierten automáticamente una recogida física ya confirmada: requieren revisión.
+
+### Resumen compacto
+
+El resumen compartido por cliente, operador y seguimiento público muestra el estado y el porcentaje de materiales recogidos con una barra. «Información avanzada» despliega preparación, disponibilidad, recogidos, pendientes, última recogida y avisos. El detalle empieza cerrado, conserva su apertura durante el refresco y su botón no abre/cierra la ficha del pedido. El cálculo y los estados permanecen intactos; sin materiales activos no se muestra un porcentaje inventado.
