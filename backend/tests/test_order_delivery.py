@@ -11,7 +11,7 @@ bootstrap()
 def same_time(a,b):
     return datetime.fromisoformat(a).replace(tzinfo=timezone.utc)==datetime.fromisoformat(b).replace(tzinfo=timezone.utc)
 
-def test_delivery_is_persisted_and_survives_refresh(monkeypatch):
+def test_legacy_global_delivery_is_blocked(monkeypatch):
     from app import main as module
     operator=TestClient(app)
     operator.post('/api/v1/auth/login',json={'email':'operador@bermudez.test','password':'123456'})
@@ -24,30 +24,10 @@ def test_delivery_is_persisted_and_survives_refresh(monkeypatch):
     body={'order_id':public_id,'order_date':'2026-10-11'}
     assert customer.post('/api/v1/store/orders/delivery',json=body).status_code==403
     first=operator.post('/api/v1/store/orders/delivery',json=body)
-    assert first.status_code==200,first.text
-    stamp=first.json()['delivered_at']
-    assert stamp and first.json()['estado_registro_exit']=='ENTREGADO'
-    repeat=operator.post('/api/v1/store/orders/delivery',json=body)
-    assert repeat.status_code==200 and same_time(repeat.json()['delivered_at'],stamp)
-    record=ExitOrderInput(exit_order_id='2026/TEST/DELIVERY',order_number='DELIVERY',customer_code='CLI00001',store_code=code,company_code=company,estado_registro_exit='REGISTRADO',source_updated_at=datetime.now(timezone.utc),recorded_at=datetime.now(timezone.utc),customer_reference='WEB-DELIVERY-TEST',auxiliary_reference='PEDIDO GENERADO WEB B2B',lines=[])
+    assert first.status_code == 409, first.text
     with SessionLocal() as db:
-        synced=upsert_exit_order(db,record,db.get(User,actor_id))
-        assert synced.estado_registro_exit=='ENTREGADO' and synced.delivered_at
-        events=db.scalars(select(OrderStatusHistory).where(OrderStatusHistory.order_id==synced.id,OrderStatusHistory.source=='WEB',OrderStatusHistory.estado_registro_exit=='ENTREGADO')).all()
-        assert len(events)==1 and events[0].changed_by_user_id==actor_id
-        db.commit()
-    monkeypatch.setattr(module,'fetch_exit_orders_live',lambda *args:[record])
-    monkeypatch.setattr(module,'fetch_delivery_statuses_for_orders',lambda *args:[])
-    assert not any(row['nro_pedido_exit'] == record.exit_order_id for row in operator.get('/api/v1/store/orders?view=web&delegation=TODAS&state=PENDIENTE').json())
-    listed=operator.get('/api/v1/store/orders?view=web&delegation=TODAS&state=ENTREGADO').json()
-    delivered = [row for row in listed if row['nro_pedido_exit'] == record.exit_order_id]
-    assert len(delivered)==1 and same_time(delivered[0]['delivered_at'],stamp)
-    monkeypatch.setattr(module,'fetch_customer_exit_orders',lambda *args:[record])
-    monkeypatch.setattr(module,'fetch_customer_delivery_statuses',lambda *args:[])
-    visible=customer.get('/api/v1/orders?state=ENTREGADO&date_from=2026-01-01&date_to=2027-01-01')
-    assert visible.status_code==200,visible.text
-    found=next(o for o in visible.json() if o['id']==public_id)
-    assert same_time(found['delivered_at'],stamp) and found['estado_registro_exit']=='ENTREGADO'
+        assert db.scalar(select(Order).where(Order.public_id==public_id)).delivered_at is None
+
 
 def test_other_delegation_cannot_confirm_delivery():
     operator=TestClient(app)
@@ -59,7 +39,7 @@ def test_other_delegation_cannot_confirm_delivery():
     with SessionLocal() as db:
         assert db.scalar(select(Order).where(Order.public_id==order_id)).delivered_at is None
 
-def test_live_web_delivery_creates_local_record_once(monkeypatch):
+def test_legacy_delivery_cannot_create_or_deliver_a_live_order(monkeypatch):
     from app import main as module
     operator=TestClient(app)
     operator.post('/api/v1/auth/login',json={'email':'operador@bermudez.test','password':'123456'})
@@ -69,13 +49,10 @@ def test_live_web_delivery_creates_local_record_once(monkeypatch):
     monkeypatch.setattr(module,'fetch_exit_orders_live',lambda *args:[record])
     data={'order_id':record.exit_order_id,'order_date':'2026-10-11'}
     first=operator.post('/api/v1/store/orders/delivery',json=data)
-    assert first.status_code==200,first.text
-    repeat=operator.post('/api/v1/store/orders/delivery',json=data)
-    assert repeat.status_code==200 and same_time(first.json()['delivered_at'],repeat.json()['delivered_at'])
+    assert first.status_code == 404, first.text
     with SessionLocal() as db:
-        rows=db.scalars(select(Order).where(Order.nro_pedido_exit==record.exit_order_id)).all()
-        assert len(rows)==1 and rows[0].delivered_at is not None
-    assert operator.post('/api/v1/store/orders/delivery',json={'order_id':'missing','order_date':'2026-10-11'}).status_code==404
+        assert not db.scalars(select(Order).where(Order.nro_pedido_exit==record.exit_order_id)).all()
+
 
 
 def test_delivery_requires_attended_state():
@@ -129,13 +106,10 @@ def test_printed_exit_order_stays_attended_until_web_confirmation(monkeypatch):
     assert live['estado_registro_exit']=='ATENDIDO' and live['closed_at'] is not None
     attended_stamp = live['closed_at']
     response = operator.post('/api/v1/store/orders/delivery', json={'order_id':oid,'order_date':'2026-10-22'})
-    assert response.status_code==200, response.text
-    stamp = response.json()['delivered_at']
-    attended = operator.get('/api/v1/store/orders?view=attended').json()
-    live = next(row for row in attended if row['nro_pedido_exit']==record.exit_order_id)
-    assert live['estado_registro_exit']=='ENTREGADO'
-    assert same_time(live['delivered_at'], stamp)
-    assert same_time(live['closed_at'], attended_stamp)
+    assert response.status_code == 409, response.text
+    with SessionLocal() as db:
+        assert db.scalar(select(Order).where(Order.public_id==oid)).delivered_at is None
+
 
 
 def test_non_web_uses_exit_delivered_state_and_date(monkeypatch, operator_with_almeiras_access):
@@ -178,10 +152,9 @@ def test_all_delegations_permission_is_explicit_and_preserves_delivery_history()
         db.add(OperatorAccess(user_id=user_id,exit_code='TEST-ALL-SCOPE',permissions={'orders':True,'all_delegations':True}));db.commit()
     try:
         response=operator.post('/api/v1/store/orders/delivery',json={'order_id':oid,'order_date':'2026-10-26'})
-        assert response.status_code==200,response.text
-        stamp=response.json()['delivered_at']
-        repeat=operator.post('/api/v1/store/orders/delivery',json={'order_id':oid,'order_date':'2026-10-26'})
-        assert same_time(repeat.json()['delivered_at'],stamp)
+        assert response.status_code==409,response.text
+        with SessionLocal() as db:
+            assert db.scalar(select(Order).where(Order.public_id==oid)).delivered_at is None
     finally:
         with SessionLocal() as db:
             db.execute(delete(OperatorAccess).where(OperatorAccess.user_id==user_id));db.commit()

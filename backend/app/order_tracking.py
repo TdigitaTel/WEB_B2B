@@ -8,13 +8,14 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from . import order_pickups
 from .auth import audit, require_roles
 from .db import get_db
 from .models import Order, OrderItem, OrderLinePlanning, OrderTrackingLink, User
 from .operator_permissions import can_operate_delegation
 from .exit_order_key import record_key, stored_key
 from .exit_db import fetch_customer_exit_orders
-from .erp_db import fetch_delivery_statuses_for_orders
+from .erp_db import fetch_delivery_statuses_for_orders, fetch_customer_delivery_notes
 
 router = APIRouter(tags=["Seguimiento de pedidos"])
 operator = require_roles("OPERADOR_TIENDA", "ADMIN")
@@ -151,7 +152,16 @@ def read_tracking(body: TrackingRead, response: Response, db: Session = Depends(
                       "quantity": float(item.quantity), "unit": item.unit, "served_quantity": float(served),
                       "expected_at": plan.get("expected_at"), "situation": plan.get("status"),
                       "removed_in_exit": removed})
+    pickup_summary = order_pickups.summary(db, order)
+    if identity and order.customer_code:
+        try:
+            documents = fetch_customer_delivery_notes(order.customer_code, 1000, order_keys=[identity])
+            if len(documents) >= 1000:
+                raise ValueError("Consulta incompleta")
+            pickup_summary = order_pickups.preview_summary(db, order, documents, remote)
+        except Exception:
+            warning = warning or "No se pudo actualizar el detalle de albaranes; se muestra el último seguimiento guardado."
     # Explicit allowlist: no prices, customer/contact data, notes, documents or mutation URLs.
     return {"web_number": order.order_number, "exit_number": str(identity[3]) if identity else order.nro_pedido_exit,
             "state": state, "expected_at": order.attention_deadline_at, "delivered_at": order.delivered_at,
-            "items": items, "checked_at": now, "warning": warning, "expires_at": link.expires_at}
+            "pickup_summary": pickup_summary, "items": items, "checked_at": now, "warning": warning, "expires_at": link.expires_at}

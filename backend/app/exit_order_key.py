@@ -56,6 +56,11 @@ def apply_key(db, order, supplied, legacy=None, validate_number=True):
         values['exit_order_number'] = values['exit_order_number'].strip()
     full = all(value is not None for value in values.values())
     identity = tuple(values[field] for field in FIELDS) if full else None
+    if identity and stored_key(order) and identity != stored_key(order):
+        from .models import OrderPickup
+        if db.scalar(select(OrderPickup.id).where(OrderPickup.order_id == order.id).limit(1)):
+            raise HTTPException(409, 'No se puede cambiar la llave EXIT de un pedido con recogidas registradas')
+
     if db.bind.dialect.name == 'postgresql':
         lock = repr(identity) if identity else f'order:{order.id}'
         db.execute(text('SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))'), {'key': 'exit-key:'+lock})
