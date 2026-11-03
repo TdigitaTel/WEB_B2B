@@ -1,3 +1,4 @@
+from uuid import UUID
 from datetime import date, datetime
 from decimal import Decimal
 from pydantic import AwareDatetime, BaseModel, Field, model_validator
@@ -134,3 +135,10 @@ class UserDisplayPreferences(BaseModel):
     model_config = {"extra": "forbid"}
     show_delivery_note_images: bool
     show_order_images: bool
+
+
+class PickupConfirmation(BaseModel):
+    expected_version: str = Field(pattern=r"^[a-f0-9]{64}$")
+    request_id: UUID
+    line_ids: list[int] = Field(min_length=1, max_length=500)
+    observation: str | None = Field(default=None, max_length=1000)

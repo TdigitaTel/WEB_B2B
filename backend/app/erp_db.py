@@ -499,11 +499,23 @@ def _document_filters(alias: str, prefix: str, document_number: str = "", date_f
 
 
 def fetch_customer_delivery_notes(customer_code: str, limit: int = 200, document_number: str = "",
-                                  date_from: date | None = None, date_to: date | None = None) -> list[dict]:
+                                  date_from: date | None = None, date_to: date | None = None,
+                                  order_keys: list[tuple[int, int, str, str]] | None = None) -> list[dict]:
     """Consulta albaranes de venta directamente en EXITERP."""
     schema = _identifier(SALES_DOCUMENTS["schema"])
     table = _identifier(SALES_DOCUMENTS["delivery_header"])
     filters_sql, filter_parameters = _document_filters("a", "Albaran", document_number, date_from, date_to)
+    if order_keys is not None:
+        if not order_keys:
+            return []
+        if len(order_keys) > 200:
+            raise ValueError("Consulta de albaranes limitada a 200 llaves de pedido por bloque")
+        predicates = []
+        for company, year, series, number in order_keys:
+            predicates.append("(a.CodigoEmpresa=%s AND a.EjercicioPedido=%s AND LTRIM(RTRIM(a.SeriePedido))=%s AND a.NumeroPedido=%s)")
+            filter_parameters.extend([company, year, series, number])
+        filters_sql += " AND (" + " OR ".join(predicates) + ")"
+
     sql = (
         f"SELECT TOP {max(1, min(limit, 1000))} CodigoEmpresa, EjercicioAlbaran, SerieAlbaran, NumeroAlbaran, "
         "FechaAlbaran, CodigoCliente, IdDelegacion, BaseImponible, TotalCuotaIva AS TaxTotal, ImporteFactura, "
