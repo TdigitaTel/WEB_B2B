@@ -1800,3 +1800,6 @@ def transition(order_id: str, data: StatusChange, user: User = Depends(require_r
 from .line_planning import router as line_planning_router, public_router as public_line_planning_router
 app.include_router(line_planning_router)
 app.include_router(public_line_planning_router)
+
+from .order_tracking import router as order_tracking_router
+app.include_router(order_tracking_router)
