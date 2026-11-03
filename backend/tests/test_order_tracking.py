@@ -10,7 +10,7 @@ from app.bootstrap import main as bootstrap
 from app.db import SessionLocal
 from app.main import app
 from app.models import Order, OrderItem, OrderLinePlanning, OrderTrackingLink, User
-from app.exit_orders import ExitOrderInput
+from app.exit_orders import ExitOrderInput, ExitOrderLineInput
 
 bootstrap()
 pytestmark = pytest.mark.usefixtures("operator_with_almeiras_access")
@@ -116,7 +116,15 @@ def test_live_status_matches_all_four_keys_and_outage_retains_snapshot(monkeypat
     monkeypatch.setattr(module,"fetch_customer_exit_orders",lambda *a,**k:[wrong])
     assert read(token).json()["state"]=="REGISTRADO"
     monkeypatch.setattr(module,"fetch_customer_exit_orders",lambda *a,**k:[wrong,live])
-    assert read(token).json()["state"]=="ATENDIDO"
+    visible=read(token).json()
+    assert visible["state"]=="ATENDIDO" and visible["items"][0]["removed_in_exit"] is True
+    restored=live.model_copy(update={"lines":[ExitOrderLineInput(line_number="1",sku="TRACK-ARTICLE",description="Material de prueba",quantity=2,served_quantity=2)]})
+    monkeypatch.setattr(module,"fetch_customer_exit_orders",lambda *a,**k:[restored])
+    visible=read(token).json()
+    assert visible["items"][0]["removed_in_exit"] is False and visible["items"][0]["served_quantity"]==2
+    with SessionLocal() as db:
+        order=db.scalar(select(Order).where(Order.public_id==order_id))
+        assert len(list(db.scalars(select(OrderItem).where(OrderItem.order_id==order.id))))==1
     def unavailable(*a,**k):raise RuntimeError("SQL no disponible")
     monkeypatch.setattr(module,"fetch_customer_exit_orders",unavailable)
     data=read(token).json();assert data["state"]=="REGISTRADO" and data["warning"] and len(data["items"])==1

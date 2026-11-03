@@ -133,20 +133,24 @@ def read_tracking(body: TrackingRead, response: Response, db: Session = Depends(
     stored_items = list(db.scalars(select(OrderItem).where(OrderItem.order_id == order.id).order_by(OrderItem.id)))
     for item in stored_items:
         served = item.served_quantity if item.served_quantity is not None else max(0, item.quantity - (item.pending_quantity if item.pending_quantity is not None else item.quantity))
+        removed = bool(getattr(item, "exit_removed_at", None))
         if remote:
             candidates = [line for line in remote.lines if line.sku == item.sku and
                           (line.line_number == item.exit_line_number if item.exit_line_number else
                            sum(1 for other in remote.lines if other.sku == item.sku) == 1 and
                            sum(1 for other in stored_items if other.sku == item.sku) == 1)]
+            if item.exit_line_number:
+                removed = not candidates
             if len(candidates) == 1:
-                served = candidates[0].served_quantity or 0
+                line = candidates[0]
+                served = line.served_quantity if line.served_quantity is not None else max(0, line.quantity - (line.pending_quantity if line.pending_quantity is not None else line.quantity))
         plan = saved.get(str(item.id), {})
         if plan.get("sku") != item.sku:
             plan = {}
         items.append({"line_key": str(item.id), "sku": item.sku, "description": item.description,
                       "quantity": float(item.quantity), "unit": item.unit, "served_quantity": float(served),
                       "expected_at": plan.get("expected_at"), "situation": plan.get("status"),
-                      "removed_in_exit": bool(getattr(item, "exit_removed_at", None))})
+                      "removed_in_exit": removed})
     # Explicit allowlist: no prices, customer/contact data, notes, documents or mutation URLs.
     return {"web_number": order.order_number, "exit_number": str(identity[3]) if identity else order.nro_pedido_exit,
             "state": state, "expected_at": order.attention_deadline_at, "delivered_at": order.delivered_at,
