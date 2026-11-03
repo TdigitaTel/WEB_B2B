@@ -206,6 +206,7 @@ def cart_payload(cart: Cart, user: User, db: Session) -> dict:
 
 
 def order_payload(order: Order, db: Session, include_items: bool = False, history_for_operator: bool = False) -> dict:
+    from .order_line_marks import line_marks
     store = get_delegation(order.delegation_code, order.company_code)
     customer_name = order.customer_code or "Cliente EXITERP"
     if order.customer_code:
@@ -233,7 +234,7 @@ def order_payload(order: Order, db: Session, include_items: bool = False, histor
                       if item.pending_quantity is not None else Decimal("0"))
             pending = (item.pending_quantity if item.pending_quantity is not None
                        else max(Decimal("0"), item.quantity - served))
-            result["items"].append({**key_payload(order), "exit_line_number": item.exit_line_number, "exit_removed_at": item.exit_removed_at, "exit_line_status": "ELIMINADA_EN_EXIT" if item.exit_removed_at else "ACTIVA", "line_key": str(item.id), "sku": item.sku, "description": item.description,
+            result["items"].append({**key_payload(order), **line_marks(item), "exit_line_number": item.exit_line_number, "exit_removed_at": item.exit_removed_at, "exit_line_status": "ELIMINADA_EN_EXIT" if item.exit_removed_at else "ACTIVA", "line_key": str(item.id), "sku": item.sku, "description": item.description,
                                     "quantity": float(item.quantity), "served_quantity": float(served),
                                     "pending_quantity": float(pending), "unit": item.unit,
                                     "unit_price": float(item.unit_price), "discount_pct": float(item.discount_pct),
@@ -724,7 +725,7 @@ def create_order(data: OrderCreate, user: User = Depends(current_user), db: Sess
         )
         description = product.short_description if has_homologated_name else article["description"]
         price = prices[product.sku]; line = (price * cart_item.quantity).quantize(Decimal("0.01")); subtotal += line
-        db.add(OrderItem(order_id=order.id, product_id=product.id, sku=product.sku, description=description,
+        db.add(OrderItem(order_id=order.id, created_in_web=True, product_id=product.id, sku=product.sku, description=description,
                          quantity=cart_item.quantity, unit=article["unit"], unit_price=price, discount_pct=Decimal("0"),
                          tax_rate=product.tax_rate, line_total=line))
         db.delete(cart_item)

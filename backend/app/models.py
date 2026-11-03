@@ -342,6 +342,8 @@ class OrderItem(Base, TimestampMixin):
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"), index=True)
     exit_line_number: Mapped[str | None] = mapped_column(String(40))
     exit_removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_in_web: Mapped[bool | None] = mapped_column(Boolean)
+    exit_entered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"))
     sku: Mapped[str] = mapped_column(String(50))
     description: Mapped[str] = mapped_column(Text)

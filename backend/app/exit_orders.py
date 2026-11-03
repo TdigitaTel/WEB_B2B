@@ -118,12 +118,13 @@ def reconcile_exit_lines(db: Session, order: Order, lines: list[ExitOrderLineInp
     for item, line in assignments:
         if item is None:
             product = products.get(line.sku)
-            item = OrderItem(order_id=order.id, product_id=product.id if product else None,
+            item = OrderItem(order_id=order.id, created_in_web=False, product_id=product.id if product else None,
                              sku=line.sku, description=line.description, quantity=line.quantity,
                              unit=line.unit, unit_price=line.unit_price, discount_pct=line.discount_pct,
                              tax_rate=line.tax_rate,
                              line_total=line.line_total if line.line_total is not None else line.quantity * line.unit_price)
             db.add(item)
+        item.exit_entered_at = item.exit_entered_at or datetime.now(timezone.utc)
         item.exit_line_number = line.line_number or item.exit_line_number
         item.exit_removed_at = None
         item.fulfillment_zone = line.fulfillment_zone
