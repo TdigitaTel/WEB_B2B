@@ -26,6 +26,8 @@ def test_customer_can_search_add_and_order(monkeypatch, pickup_schedule, classif
     order = client.post("/api/v1/orders", json={"company_code": stores[0]["company_code"], "delegation_code": stores[0]["code"], "job_name": "Prueba automática", "pickup_date": (datetime.now(ZoneInfo("Europe/Madrid")).date()+timedelta(days=1)).isoformat()})
     assert order.status_code == 201
     assert order.json()["estado_registro_exit"] == "PENDIENTE"
+    assert order.json()['items'] and all(item['created_in_web'] is True for item in order.json()['items'])
+    assert all(item['entered_in_exit'] is False for item in order.json()['items'])
     assert order.json()["company_code"] == stores[0]["company_code"]
     assert order.json()["delegation_code"] == stores[0]["code"]
     assert ":" not in order.json()["delegation_code"]

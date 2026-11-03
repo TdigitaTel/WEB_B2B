@@ -21,7 +21,7 @@ const original={created_in_web:true,entered_in_exit:true,line_key:'101',sku:'010
 const order={id:'example',number:'6008552',order_number:'WEB-2026-0000321',web_number:'WEB-2026-0000321',exit_number:'6008552',nro_pedido_exit:'6008552',origen_pedido:'B2B',is_web_order:true,local_order:true,customer:'Cliente de ejemplo',customer_code:'PRUEBA',store:'Bermúdez Ulloa Almeiras',created_at:'2026-11-02T10:00:00Z',estado_registro_exit:'REGISTRADO',items:[original,{...original,line_key:'102',sku:'23493',description:'VASO EXPANSIÓN ACS 12L',exit_removed_at:null}],total:24.2,history:[],delivery_notes:[]};
 const customer=renderToStaticMarkup(React.createElement(pageModule.exports.Orders,{orders:[order],refreshing:false,onRefresh:async()=>{},onRepeat:()=>{},onSubmitDraft:()=>{},onDelete:()=>{}}));
 const operator=renderToStaticMarkup(React.createElement(pageModule.exports.OperatorWebOrders,{orders:[order],onDelivered:async()=>{}}));
-for(const markup of [customer,operator]){assert.match(markup,/CURVA 90/);assert.match(markup,/VASO EXPANSIÓN/);assert.match(markup,/Eliminada en EXIT/);assert.match(markup,/Se conserva el pedido original/);}
+for(const markup of [customer,operator]){assert.match(markup,/CURVA 90/);assert.match(markup,/VASO EXPANSIÓN/);assert.match(markup,/Se conserva el pedido original/);}
 console.log('Actual customer and operator order rows retain both articles and display the removed-line notice');
 if(process.env.LINE_PREVIEW_DIR){
  fs.mkdirSync(process.env.LINE_PREVIEW_DIR,{recursive:true});
@@ -49,3 +49,18 @@ const imported=new JSDOM(renderToStaticMarkup(React.createElement(OrderLineMarks
 assert.equal(imported[0].checked,false);assert.equal(imported[1].checked,true);assert.equal(imported[2].checked,false);
 assert.match(renderToStaticMarkup(React.createElement(OrderLineMarks,{line:{created_in_web:null}})),/aria-checked="mixed"/);
 console.log('Per-line WEB, EXIT and deletion check marks are accurate and read-only in both lists');
+
+for(const [markup,expected] of [[customer,['WEB','Tienda','Eliminado']],[operator,['WEB','EXIT','Eliminado']]]){
+ const doc=new JSDOM(markup).window.document;
+ const head=doc.querySelector('.order-line-marks-head');assert.ok(head);
+ assert.deepEqual([...head.children].map(el=>el.textContent),expected);
+ const headerIndex=[...head.parentElement.children].indexOf(head);
+ for(const group of doc.querySelectorAll('.order-line-marks')){
+  assert.ok(group.parentElement.matches('.order-line,.web-order-line'),'Checks belong to the same material row');
+  assert.equal([...group.parentElement.children].indexOf(group),headerIndex,'Checks align with column headings');
+  assert.equal(group.textContent.trim(),'','No repeated descriptions inside rows');
+  assert.deepEqual([...group.querySelectorAll('input')].map(el=>el.getAttribute('aria-label')),expected);
+ }
+}
+assert.doesNotMatch(customer,/Ingresado en EXIT|Generado en WEB|Eliminado en EXIT|Eliminada en EXIT|sin registro/);
+console.log('Compact origin columns: customer WEB/Tienda/Eliminado, operator WEB/EXIT/Eliminado, headings aligned with row checks, no repeated text');
