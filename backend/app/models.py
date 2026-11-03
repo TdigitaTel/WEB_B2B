@@ -621,3 +621,10 @@ class OrderPickupLine(Base):
     pickup_id: Mapped[int] = mapped_column(ForeignKey("order_pickups.id"), index=True)
     delivery_line_id: Mapped[int] = mapped_column(ForeignKey("order_delivery_note_lines.id"), unique=True)
     quantity: Mapped[Decimal] = mapped_column(Numeric(14, 3))
+
+
+class OrderEmailSettings(Base, TimestampMixin):
+    __tablename__ = "order_email_settings"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    configuration: Mapped[dict] = mapped_column(JSON, default=dict)
+    password_ciphertext: Mapped[str | None] = mapped_column(Text)
