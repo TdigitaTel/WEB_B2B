@@ -15,8 +15,8 @@ def material_groups(config):
     return result
 
 
-def occurrences(text, phrase):
-    phrase = normalize_query(phrase)
+def occurrences(text, phrase, measures=None):
+    phrase = normalize_query(phrase, measures)
     if not phrase:
         return []
     return [(match.start(), match.end()) for match in re.finditer(r'(?<!\w)' + re.escape(phrase) + r'(?!\w)', text)]
@@ -33,19 +33,20 @@ def non_overlapping(matches):
 
 
 def resolve_search(query, config, groups):
-    text = normalize_query(query)
+    measures = config.get("measure_equivalences")
+    text = normalize_query(query, measures)
     matches = []
     for group in groups:
         for phrase in dict.fromkeys([group['name'], *group['synonyms']]):
-            for start,end in occurrences(text,phrase):
+            for start,end in occurrences(text,phrase,measures):
                 matches.append({'start':start,'end':end,'group':group})
     matches = non_overlapping(matches)
     specific = [item for item in matches if not item['group']['is_general']]
     materials = []
     for group in material_groups(config):
-        alternatives = list(dict.fromkeys(normalize_query(word) for word in [group['name'], *group['synonyms']]))
+        alternatives = list(dict.fromkeys(normalize_query(word, measures) for word in [group['name'], *group['synonyms']]))
         for phrase in alternatives:
-            for start,end in occurrences(text,phrase):
+            for start,end in occurrences(text,phrase,measures):
                 if any(item['start'] <= start and end <= item['end'] for item in matches):
                     continue
                 materials.append({'start':start,'end':end,'name':group['name'],'alternatives':alternatives})
@@ -65,7 +66,7 @@ def resolve_search(query, config, groups):
         # A configured specific type/synonym is protected from the old general-word list.
         if config['enabled']:
             for phrase in config['accessory_terms']:
-                for start,end in occurrences(text,phrase):
+                for start,end in occurrences(text,phrase,measures):
                     if not any(start < item['end'] and end > item['start'] for item in specific):
                         removed.append({'start':start,'end':end});ignored.append(text[start:end])
     spans = [(item['start'],item['end']) for item in removed]
@@ -76,9 +77,9 @@ def resolve_search(query, config, groups):
     material_names = []
     candidates = []
     for group in material_groups(config):
-        alternatives = list(dict.fromkeys(normalize_query(word) for word in [group['name'],*group['synonyms']]))
+        alternatives = list(dict.fromkeys(normalize_query(word, measures) for word in [group['name'],*group['synonyms']]))
         for phrase in alternatives:
-            for start,end in occurrences(remaining,phrase):
+            for start,end in occurrences(remaining,phrase,measures):
                 candidates.append({'start':start,'end':end,'name':group['name'],'alternatives':alternatives})
     candidates = non_overlapping(candidates)
     cursor = 0

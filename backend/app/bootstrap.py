@@ -185,6 +185,11 @@ def main():
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_products_search_trgm ON products USING gin (normalized_search gin_trgm_ops)"))
     from .seed import seed
     seed()
+    from .db import SessionLocal
+    from .measure_equivalences import initialize_measure_equivalences
+    with SessionLocal() as db:
+        initialize_measure_equivalences(db)
+        db.commit()
     if engine.dialect.name == "postgresql":
         # La sustitución se realiza solo después de verificar RPA en MCusuarios.
         # Un fallo de conexión no elimina el único acceso disponible.

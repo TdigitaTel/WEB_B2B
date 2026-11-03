@@ -1,0 +1,26 @@
+[
+  {
+    "value": "1/2",
+    "aliases": [
+      "media",
+      "medio",
+      "una media",
+      "½"
+    ]
+  },
+  {
+    "value": "1/4",
+    "aliases": [
+      "cuarto",
+      "un cuarto",
+      "¼"
+    ]
+  },
+  {
+    "value": "3/4",
+    "aliases": [
+      "tres cuartos",
+      "¾"
+    ]
+  }
+]
