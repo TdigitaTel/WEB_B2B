@@ -3,20 +3,25 @@ import re
 import unicodedata
 
 
-def normalize_query(query: str) -> str:
+def normalize_query(query: str, measure_equivalences: list[dict] | None = None) -> str:
+    """Normalize spelling, then apply only the measure aliases supplied by settings."""
     value = ''.join(c for c in unicodedata.normalize('NFD', query.lower()) if not unicodedata.combining(c))
-    value = value.replace('½', '1/2').replace('¼', '1/4').replace('¾', '3/4')
-    for phrase, measure in (
-        (r'tres\s+cuartos', '3/4'),
-        (r'(?:un\s+)?cuarto', '1/4'),
-        (r'(?:una\s+)?media(?:\s+pulgada)?', '1/2'),
-        (r'medio(?:\s+pulgada)?', '1/2'),
-    ):
-        value = re.sub(r'\b' + phrase + r'\b', measure, value)
     value = re.sub(r'(\d)\s*/\s*(\d)', r'\1/\2', value)
     value = re.sub(r'\b(?:de|del|la|el|pulgadas?)\b', ' ', value)
     value = value.replace('"', '').replace('″', '')
-    return ' '.join(value.split())
+    value = ' '.join(value.split())
+    aliases = {}
+    for group in measure_equivalences or []:
+        target = normalize_query(group['value'])
+        for alias in group['aliases']:
+            key = normalize_query(alias)
+            if key:
+                aliases[key] = target
+    if aliases:
+        # One substitution prevents chained/circular replacements. Longest phrase wins.
+        pattern = r'(?<!\w)(?:' + '|'.join(re.escape(alias) for alias in sorted(aliases, key=len, reverse=True)) + r')(?!\w)'
+        value = re.sub(pattern, lambda match: aliases[match.group()], value)
+    return value
 
 
 # Solo se amplía el término genérico cuando el cliente también indica material.
@@ -41,8 +46,8 @@ def default_search_config() -> dict:
 
 def catalog_search_intent(query: str, config: dict | None = None) -> tuple[list[str], bool]:
     """Devuelve palabras obligatorias y si se buscan accesorios por material."""
-    terms = normalize_query(query).split()
     config = config if config is not None else default_search_config()
+    terms = normalize_query(query, config.get("measure_equivalences")).split()
     generic_terms = set(config["accessory_terms"])
     accessories = any(term in generic_terms for term in terms)
     by_material = config["enabled"] and accessories and any(term in config["materials"] for term in terms)
