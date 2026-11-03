@@ -28,7 +28,7 @@ def setup_order(db, numbered=True):
     db.add(order); db.flush()
     items = []
     for n in (1, 2):
-        item = OrderItem(order_id=order.id, exit_line_number=str(n) if numbered else None,
+        item = OrderItem(order_id=order.id, created_in_web=True, exit_line_number=str(n) if numbered else None,
                          sku="REPEATED", description="Original WEB", quantity=2,
                          unit="MT", unit_price=5, tax_rate=21, line_total=Decimal("12.10"),
                          served_quantity=0, pending_quantity=2)
@@ -131,6 +131,9 @@ def test_customer_operator_refresh_keep_removed_rows_and_failures_do_not_retire(
     found = next(row for row in response.json() if row["id"] == public_id)
     assert [item["line_key"] for item in found["items"]] == ids
     assert found["items"][0]["exit_removed_at"]
+    assert found["items"][0]["created_in_web"] is True
+    assert found["items"][0]["will_not_be_served"] is True
+    assert found["items"][1]["entered_in_exit"] is True
     def unavailable(*a, **k):
         raise RuntimeError("EXIT no disponible")
     monkeypatch.setattr(module, "fetch_customer_exit_orders", unavailable)
@@ -147,3 +150,41 @@ def test_duplicate_exit_numbers_leave_original_detail_intact():
         with pytest.raises(ValueError, match="duplicados"):
             reconcile_exit_lines(db, order, [line("1"), line("1")])
         assert all(item.exit_removed_at is None and item.served_quantity == 0 for item in items)
+
+
+def test_per_line_marks_are_confirmed_by_detail_and_remain_historical():
+    from app.order_line_marks import line_marks
+    with SessionLocal() as db:
+        _, order, items = setup_order(db, numbered=False)
+        items[0].sku = "OTHER"
+        db.commit()
+        assert line_marks(items[1]) == {"created_in_web": True, "entered_in_exit": False,
+            "exit_entered_at": None, "removed_in_exit": False, "will_not_be_served": False}
+        # A registered header is not proof that its materials were entered.
+        new = ExitOrderLineInput(line_number="3", sku="EXIT-ONLY", description="Added in EXIT", quantity=1)
+        reconcile_exit_lines(db, order, [line("2"), new]); db.commit()
+        stamp = items[1].exit_entered_at
+        assert stamp and line_marks(items[1])["entered_in_exit"]
+        assert not line_marks(items[0])["entered_in_exit"]
+        imported = db.scalar(select(OrderItem).where(OrderItem.order_id == order.id, OrderItem.sku == "EXIT-ONLY"))
+        assert line_marks(imported)["created_in_web"] is False
+        assert line_marks(imported)["entered_in_exit"] is True
+        reconcile_exit_lines(db, order, []); db.commit()
+        marks = line_marks(items[1])
+        assert marks["created_in_web"] and marks["entered_in_exit"]
+        assert marks["removed_in_exit"] and marks["will_not_be_served"]
+        assert items[1].exit_entered_at == stamp
+        reconcile_exit_lines(db, order, [line("2")]); db.commit()
+        assert items[1].exit_entered_at == stamp
+        assert not line_marks(items[1])["will_not_be_served"]
+        assert not line_marks(items[1])["removed_in_exit"]
+        assert line_marks(imported)["created_in_web"] is False
+
+def test_legacy_origin_is_unknown_and_ambiguous_matches_do_not_confirm_entry():
+    from app.order_line_marks import line_marks
+    with SessionLocal() as db:
+        _, order, items = setup_order(db, numbered=False)
+        items[0].created_in_web = None
+        reconcile_exit_lines(db, order, [line("2")]); db.commit()
+        assert line_marks(items[0])["created_in_web"] is None
+        assert all(not line_marks(item)["entered_in_exit"] for item in items)

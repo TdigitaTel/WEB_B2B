@@ -25,7 +25,7 @@ export function LinePlanningProvider({orderId,customer=false,children}:{orderId:
 export function LinePlanningInfo({sku,lineKey,removed=false,served=false,part='note'}:{sku:string;lineKey?:string;removed?:boolean;served?:boolean;part?:'date'|'stock'|'note'}){
  const state=useContext(Context);
  const matches=state.lines.filter(line=>line.sku===sku);const line=matches.find(line=>line.line_key===lineKey)||(matches.length===1?matches[0]:undefined);
- if(removed&&part==='note')return <span className="line-plan-cell exit-line-removed"><b>Eliminada en EXIT</b><small>Se conserva el pedido original</small></span>;
+ if(removed&&part==='note')return <span className="line-plan-cell exit-line-removed"><b>No se va a atender</b><small>Eliminada en EXIT · Se conserva el pedido original</small></span>;
  if(state.loading)return <span className="line-plan-cell">Cargando…</span>;
  if(!line)return <span className="line-plan-cell" title={state.error}>{served?'—':state.error?'Consulta no disponible':part==='note'?'Pendiente de planificación':'—'}</span>;
  if(part==='date')return <span className="line-plan-cell">{line.expected_at?new Date(line.expected_at).toLocaleString('es-ES',{timeZone:'Europe/Madrid',dateStyle:'short',timeStyle:'short'}):'Sin fecha'}{line.manual&&<small>Manual</small>}</span>;
