@@ -192,6 +192,8 @@ def main():
     from .measure_equivalences import initialize_measure_equivalences
     with SessionLocal() as db:
         initialize_measure_equivalences(db)
+        from .repair_web_line_origins import repair_confirmed_web_origins
+        repair_confirmed_web_origins(db, apply=True)
         db.commit()
     if engine.dialect.name == "postgresql":
         # La sustitución se realiza solo después de verificar RPA en MCusuarios.
