@@ -1,7 +1,7 @@
 import pytest
 from app.search import normalize_query
-from app.search_settings import get_search_config
-from app.db import SessionLocal
+import json
+from pathlib import Path
 
 
 @pytest.mark.parametrize(('query','expected'), [
@@ -15,8 +15,7 @@ from app.db import SessionLocal
     ('B2B000001', 'b2b000001'),
 ])
 def test_professional_measure_aliases(query, expected):
-    with SessionLocal() as db:
-        measures = get_search_config(db)["measure_equivalences"]
+    measures = json.loads((Path(__file__).parents[1] / "app/data/search_measure_equivalences.json").read_text())
     assert normalize_query(query, measures) == expected
 
 
