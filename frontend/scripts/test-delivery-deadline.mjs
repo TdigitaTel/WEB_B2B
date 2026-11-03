@@ -27,3 +27,10 @@ test('Atendido detiene el retraso antes de entregar',()=>{
  assert.deepEqual(deliveryDelay(attended,Date.parse('2026-10-25T10:00:00Z')),{seconds:300,closed:true});
  assert.deepEqual(deliveryDelay({...order,estado_registro_exit:'ATENDIDO'},Date.now()),{seconds:null,closed:true});
 });
+
+test('una preparación parcial no cierra el plazo aunque EXIT indique Atendido',()=>{
+ const partial={...order,estado_registro_exit:'ATENDIDO',attended_at:'2026-10-22T09:05:00+02:00',pickup_summary:{prepared_complete:false}};
+ assert.equal(deliveryDelay(partial,Date.parse('2026-10-22T07:10:00Z')).closed,false);
+ assert.equal(deliveryDelay(partial,Date.parse('2026-10-22T07:10:00Z')).seconds,600);
+ assert.deepEqual(deliveryDelay({...partial,pickup_summary:{prepared_complete:true}},Date.now()),{seconds:null,closed:true});
+});

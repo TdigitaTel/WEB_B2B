@@ -156,6 +156,10 @@ def upsert_exit_order(db: Session, incoming: ExitOrderInput, integration_user: U
     order = next((row for row in matches if row.origen_pedido == 'B2B'), matches[0] if len(matches) == 1 else None)
     if not order and incoming.web_order_number:
         order = db.scalar(select(Order).where(Order.order_number == incoming.web_order_number, Order.company_code == store.company, Order.customer_code == incoming.customer_code))
+    if order and identity and stored_key(order) != identity:
+        from .models import OrderPickup
+        if db.scalar(select(OrderPickup.id).where(OrderPickup.order_id == order.id).limit(1)):
+            raise ValueError('El pedido tiene recogidas registradas y no se puede cambiar su llave EXIT')
     is_new = order is None
     if is_new:
         order = Order(
