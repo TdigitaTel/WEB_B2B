@@ -10,21 +10,22 @@ export function LinePlanningProvider({orderId,customer=false,children}:{orderId:
  const seconds=useRefreshSeconds();
  const ref=useRef<HTMLSpanElement>(null);const [state,setState]=useState<State>({lines:[],loading:false,error:''});
  useEffect(()=>{const details=ref.current?.closest('details');const card=details||ref.current?.closest('article');if(!card)return;let visible=!!details?.open;let active=true,loaded=false,loading=false;let controller:AbortController|undefined;
-  async function load(force=false){if(loading||!(details?details.open:visible)||loaded&&!force)return;loading=true;loaded=true;controller?.abort();controller=new AbortController();setState(old=>({...old,loading:old.lines.length===0,error:''}));try{
+  async function load(force=false){if(loading||!(details?details.open:visible)||loaded&&!force)return;loading=true;const initial=!loaded;loaded=true;controller?.abort();controller=new AbortController();if(initial)setState(old=>({...old,loading:true,error:''}));try{
    const url=customer?`/api/v1/orders/${encodeURIComponent(orderId)}/line-planning`:`/api/v1/store/orders/line-planning/preview?order_id=${encodeURIComponent(orderId)}`;
    const res=await fetch(url,{credentials:'include',signal:controller.signal});if(res.status===401)window.dispatchEvent(new Event('session-expired'));
    const body=await res.json().catch(()=>({detail:'No se pudieron consultar las fechas'}));if(!res.ok)throw Error(typeof body.detail==='string'?body.detail:'No se pudieron consultar las fechas');
-   if(active)setState({lines:body.lines,loading:false,error:body.warning||''});
+   if(active)setState(old=>{const next={lines:body.lines,loading:false,error:body.warning||''};return JSON.stringify(old)===JSON.stringify(next)?old:next});
   }catch(e){if(active&&!(e instanceof DOMException&&e.name==='AbortError'))setState(old=>({...old,loading:false,error:(e as Error).message}))}finally{loading=false}}
-  const toggle=()=>void load();const updated=(e:Event)=>{if((e as CustomEvent).detail===orderId){loaded=false;void load(true)}};details?.addEventListener('toggle',toggle);const observer=!details?new IntersectionObserver(entries=>{visible=entries.some(entry=>entry.isIntersecting);if(visible)void load()}):null;observer?.observe(card);window.addEventListener('line-planning-updated',updated);void load();
+  const toggle=()=>void load();const updated=(e:Event)=>{if((e as CustomEvent).detail===orderId){void load(true)}};details?.addEventListener('toggle',toggle);const observer=!details?new IntersectionObserver(entries=>{visible=entries.some(entry=>entry.isIntersecting);if(visible)void load()}):null;observer?.observe(card);window.addEventListener('line-planning-updated',updated);void load();
   const stop=startPolling(()=>load(true),seconds);
   return()=>{stop();active=false;controller?.abort();details?.removeEventListener('toggle',toggle);observer?.disconnect();window.removeEventListener('line-planning-updated',updated)};
  },[orderId,customer,seconds]);
  return <Context.Provider value={state}><span ref={ref} hidden/>{children}</Context.Provider>
 }
-export function LinePlanningInfo({sku,lineKey,served=false,part='note'}:{sku:string;lineKey?:string;served?:boolean;part?:'date'|'stock'|'note'}){
+export function LinePlanningInfo({sku,lineKey,removed=false,served=false,part='note'}:{sku:string;lineKey?:string;removed?:boolean;served?:boolean;part?:'date'|'stock'|'note'}){
  const state=useContext(Context);
  const matches=state.lines.filter(line=>line.sku===sku);const line=matches.find(line=>line.line_key===lineKey)||(matches.length===1?matches[0]:undefined);
+ if(removed&&part==='note')return <span className="line-plan-cell exit-line-removed"><b>Eliminada en EXIT</b><small>Se conserva el pedido original</small></span>;
  if(state.loading)return <span className="line-plan-cell">Cargando…</span>;
  if(!line)return <span className="line-plan-cell" title={state.error}>{served?'—':state.error?'Consulta no disponible':part==='note'?'Pendiente de planificación':'—'}</span>;
  if(part==='date')return <span className="line-plan-cell">{line.expected_at?new Date(line.expected_at).toLocaleString('es-ES',{timeZone:'Europe/Madrid',dateStyle:'short',timeStyle:'short'}):'Sin fecha'}{line.manual&&<small>Manual</small>}</span>;

@@ -15,6 +15,7 @@
     "test:screen-refresh": "node scripts/test-screen-refresh.cjs",
     "test:unified-search": "node scripts/test-unified-search.cjs",
     "test:login-screen": "node scripts/test-login-screen.cjs",
+    "test:preserve-exit-lines": "node scripts/test-preserve-exit-lines.cjs",
     "test:order-tracking": "node scripts/test-order-tracking.cjs",
     "test:order-planning": "node scripts/test-order-planning.cjs"
   },
