@@ -40,9 +40,13 @@ const click=text=>{const button=[...document.querySelectorAll('button')].find(el
  navigator.clipboard.writeText=successfulCopy;delete document.execCommand;
  await React.act(async()=>click('Desactivar enlace'));assert.equal(document.querySelector('input'),null);assert.ok(calls.some(c=>c.options.method==='DELETE'));
  await React.act(async()=>root.render(React.createElement(Tracking)));
+ assert.match(document.body.textContent,/Atendido al 0%/);assert.match(document.body.textContent,/Falta 1 material/);
  assert.match(document.body.textContent,/WEB-2026-0000321/);assert.match(document.body.textContent,/En gestión proveedor/);assert.match(document.body.textContent,/CURVA 90/);
  assert.equal(document.querySelector('input,button'),null,'Public view has no editing controls or login fields');
  const read=calls.find(c=>c.url.endsWith('/read'));assert.equal(JSON.parse(read.options.body).token,token);assert.equal(read.options.credentials,'omit');assert.ok(calls.every(c=>!c.url.includes(token)),'Secret never appears in API URLs');
+ tracking.pickup_summary={state:'PENDIENTE_RECOGIDA_PARCIAL',total_materials:5,prepared_materials:4,delivered_materials:2,partial_delivered_materials:0,ready_materials:2,pending_materials:3,prepared_percent:80,delivered_percent:40,prepared_complete:false,legacy_delivery:false,requires_review:false,lines:[]};
+ await React.act(async()=>{for(const timer of [...timers.values()])if(timer.ms===5000)void timer.fn()});
+ assert.match(document.body.textContent,/Preparados completos: 4 de 5 materiales \(80%\)/);assert.match(document.body.textContent,/Recogidos: 2 de 5 completos \(40%\)/);assert.doesNotMatch(document.body.textContent,/Atendido al/,'Tracking must not duplicate the summary or mistake preparation for collection');
  revoked=true;await React.act(async()=>{for(const timer of [...timers.values()])if(timer.ms===5000)void timer.fn()});
  assert.match(document.body.textContent,/no está disponible/);assert.doesNotMatch(document.body.textContent,/CURVA 90|WEB-2026-0000321/,'Revocation clears the visible order');
  await React.act(async()=>root.unmount());assert.equal(timers.size,0);dom.window.close();
