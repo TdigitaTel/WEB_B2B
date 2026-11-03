@@ -1,0 +1,18 @@
+[
+  {
+    "web_number": "WEB-2026-0000321",
+    "customer_code": "11264",
+    "exit_year": 2026,
+    "exit_series": "AL",
+    "exit_number": "6008552",
+    "skus": ["23622", "23493", "23508", "22498"]
+  },
+  {
+    "web_number": "WEB-2026-0000260",
+    "customer_code": "11264",
+    "exit_year": 2026,
+    "exit_series": "AL",
+    "exit_number": "6007768",
+    "skus": ["21679", "23538"]
+  }
+]
