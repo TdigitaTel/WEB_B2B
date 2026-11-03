@@ -1,13 +1,24 @@
 'use client';
-import {useEffect,useRef,useState} from 'react';
+import {useEffect,useId,useRef,useState} from 'react';
 import './order-pickup.css';
 import {newPickupRequestId} from './pickupRequestId';
 export type PickupSummary={state:string;total_materials:number;prepared_materials:number;delivered_materials:number;partial_delivered_materials:number;ready_materials:number;pending_materials:number;prepared_percent:number|null;delivered_percent:number|null;prepared_complete:boolean;legacy_delivery:boolean;requires_review:boolean;last_pickup_at?:string|null;completed_at?:string|null;lines:{line_key:string;delivered_quantity:number;ready_quantity:number;removed_in_exit:boolean}[]};
 export const pickupLabels:Record<string,string>={EN_PREPARACION:'En preparación',PENDIENTE_RECOGIDA_PARCIAL:'Pendiente de recogida parcial',PENDIENTE_RECOGIDA_TOTAL:'Pendiente de recogida total',ENTREGADO_PARCIAL:'Entregado parcial',ENTREGADO_TOTAL:'Entregado total',SIN_MATERIALES_ACTIVOS:'Sin materiales activos',REVISAR_ENTREGA_HISTORICA:'Entrega histórica · revisar desglose'};
 const date=(value:string)=>new Date(value).toLocaleString('es-ES',{timeZone:'Europe/Madrid',dateStyle:'short',timeStyle:'short'});
 export function PickupSummaryView({summary,warning}:{summary?:PickupSummary|null;warning?:string|null}){
+ const [expanded,setExpanded]=useState(false),infoId=useId();
  if(!summary)return warning?<small className="pickup-warning">{warning}</small>:null;
- return <span className="pickup-summary" role="group" aria-label="Preparación y recogida del pedido"><b className={`pickup-state ${summary.state==='ENTREGADO_TOTAL'?'complete':''}`}>{pickupLabels[summary.state]||summary.state}</b>{summary.total_materials>0&&<><small>Preparados completos: {summary.prepared_materials} de {summary.total_materials} materiales ({summary.prepared_percent}%)</small><small>Disponibles para recoger: {summary.ready_materials} {summary.ready_materials===1?'material':'materiales'}</small><small>Recogidos: {summary.delivered_materials} de {summary.total_materials} completos ({summary.delivered_percent}%){summary.partial_delivered_materials>0&&` · ${summary.partial_delivered_materials} con entrega parcial`}</small><progress aria-label="Materiales recogidos" value={summary.delivered_materials} max={summary.total_materials}/><small>Faltan por completar: {summary.pending_materials} {summary.pending_materials===1?'material':'materiales'}</small></>}{summary.last_pickup_at&&<small>Última recogida: {date(summary.last_pickup_at)}</small>}{summary.requires_review&&<small className="pickup-warning">Hay líneas que requieren revisión</small>}{warning&&<small className="pickup-warning">{warning}</small>}</span>
+ return <span className="pickup-summary" role="group" aria-label="Estado y avance del pedido">
+  <b className={`pickup-state ${summary.state==='ENTREGADO_TOTAL'?'complete':''}`}>{pickupLabels[summary.state]||summary.state}</b>
+  {summary.total_materials>0&&<><small className="pickup-progress-label">Avance: {summary.delivered_percent}%</small><progress aria-label="Materiales recogidos" value={summary.delivered_materials} max={summary.total_materials}/></>}
+  <button type="button" className="pickup-info-button" aria-expanded={expanded} aria-controls={infoId} onClick={event=>{event.preventDefault();event.stopPropagation();setExpanded(value=>!value)}}>{expanded?'Ocultar información avanzada':'Información avanzada'}</button>
+  <span id={infoId} className="pickup-advanced" hidden={!expanded}>
+   {summary.total_materials>0&&<><small>Preparados completos: {summary.prepared_materials} de {summary.total_materials} materiales ({summary.prepared_percent}%)</small><small>Disponibles para recoger: {summary.ready_materials} {summary.ready_materials===1?'material':'materiales'}</small><small>Recogidos: {summary.delivered_materials} de {summary.total_materials} completos ({summary.delivered_percent}%){summary.partial_delivered_materials>0&&` · ${summary.partial_delivered_materials} con entrega parcial`}</small><small>Faltan por completar: {summary.pending_materials} {summary.pending_materials===1?'material':'materiales'}</small></>}
+   {summary.last_pickup_at&&<small>Última recogida: {date(summary.last_pickup_at)}</small>}
+   {summary.requires_review&&<small className="pickup-warning">Hay líneas que requieren revisión</small>}{warning&&<small className="pickup-warning">{warning}</small>}
+   {summary.total_materials===0&&!summary.last_pickup_at&&!summary.requires_review&&!warning&&<small>No hay materiales activos para calcular el avance.</small>}
+  </span>
+ </span>
 }
 export function PickupLineStatus({summary,lineKey,removed=false}:{summary?:PickupSummary|null;lineKey?:string;removed?:boolean}){
  if(!summary||removed)return null;
