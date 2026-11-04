@@ -21,8 +21,7 @@
     "test:order-pickups": "node scripts/test-order-pickups.cjs",
     "test:order-fulfillment": "node scripts/test-order-fulfillment.cjs",
     "test:pickup-summary": "node scripts/test-pickup-summary.cjs",
-    "test:order-email": "node scripts/test-order-email.cjs",
-    "test:order-email-preview": "node scripts/test-order-email-preview.cjs"
+    "test:order-email": "node scripts/test-order-email.cjs"
   },
   "dependencies": {
     "jsqr": "^1.4.0",
