@@ -29,6 +29,6 @@ export function LinePlanningInfo({sku,lineKey,removed=false,served=false,part='n
  if(state.loading)return <span className="line-plan-cell">Cargando…</span>;
  if(!line)return <span className="line-plan-cell" title={state.error}>{served?'—':state.error?'Consulta no disponible':part==='note'?'Pendiente de planificación':'—'}</span>;
  if(part==='date')return <span className="line-plan-cell">{line.expected_at?new Date(line.expected_at).toLocaleString('es-ES',{timeZone:'Europe/Madrid',dateStyle:'short',timeStyle:'short'}):'Sin fecha'}{line.manual&&<small>Manual</small>}</span>;
- if(part==='stock')return <span className="line-plan-cell">{line.local_available!=null?line.local_available.toLocaleString('es-ES'):'—'}<small>Stock consultado</small></span>;
+ if(part==='stock')return <span className="line-plan-cell" title="Disponible de la delegación del pedido guardado al planificar: saldo menos pendiente de servir. No es una consulta en tiempo real.">{line.local_available!=null?line.local_available.toLocaleString('es-ES'):'—'}</span>;
  return <span className={`line-plan-cell plan-${line.status||'REVISAR'}`}><b>{labels[line.status||'REVISAR']}</b>{line.observation&&line.observation!==labels[line.status||'REVISAR']&&<small>{line.observation}</small>}</span>
 }
