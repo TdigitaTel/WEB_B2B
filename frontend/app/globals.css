@@ -504,3 +504,5 @@ body{background:linear-gradient(180deg,#f6f9fb 0,#f1f5f7 420px,#f5f6f7 100%)}.se
 
 /* Preserve removed EXIT lines as visible order history. */
 .exit-line-removed{color:#8a4200;font-weight:700}
+
+.order-card>summary>.order-total-amount{display:flex;flex-direction:column;gap:4px}.order-total-amount>small{font-size:10px;color:var(--muted);font-weight:600}.order-total-amount>strong{white-space:nowrap}
