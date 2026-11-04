@@ -106,3 +106,53 @@ def test_test_message_tls_ssl_and_safe_errors(monkeypatch):
     assert failure.status_code==502 and 'secret' not in failure.text
     smtp.send_message.side_effect=None;smtp.send_message.return_value={'receiver@example.test':(550,b'no')}
     assert client.post(PATH+'/test',json={'recipient':'receiver@example.test'}).status_code==502
+
+
+@pytest.mark.parametrize('phase,exception,code',[
+    ('CONNECT', mail.socket.gaierror(-2,'DNS unavailable'), 'HOST_NOT_FOUND'),
+    ('CONNECT', ConnectionRefusedError('Connection refused'), 'CONNECTION_REFUSED'),
+    ('CONNECT', TimeoutError('timed out'), 'TIMEOUT'),
+    ('TLS', mail.ssl.SSLCertVerificationError('invalid certificate'), 'CERTIFICATE_INVALID'),
+    ('TLS', mail.ssl.SSLError('wrong TLS version'), 'TLS_FAILED'),
+    ('TLS', mail.smtplib.SMTPNotSupportedError('STARTTLS missing'), 'STARTTLS_UNAVAILABLE'),
+    ('AUTH', mail.smtplib.SMTPNotSupportedError('AUTH missing'), 'AUTH_UNAVAILABLE'),
+    ('AUTH', mail.smtplib.SMTPAuthenticationError(535,b'5.7.139 Authentication unsuccessful'), 'AUTH_REJECTED'),
+    ('SEND', mail.smtplib.SMTPSenderRefused(550,b'5.7.60 SendAs denied','sender@example.test'), 'SENDER_REJECTED'),
+    ('SEND', mail.smtplib.SMTPRecipientsRefused({'receiver@example.test':(550,b'5.1.1 Mailbox not found')}), 'RECIPIENT_REJECTED'),
+    ('SEND', mail.smtplib.SMTPDataError(554,b'Message rejected'), 'MESSAGE_REJECTED'),
+])
+def test_smtp_diagnosis_exposes_library_response_and_records_safe_log(monkeypatch,caplog,phase,exception,code):
+    from app.models import AuditEvent
+    client=login();client.put(PATH,json={'smtp_host':'smtp.example.test','password':'private-credential'})
+    smtp=MagicMock();smtp.__enter__.return_value=smtp;smtp.send_message.return_value={}
+    connect=MagicMock(return_value=smtp);monkeypatch.setattr(mail.smtplib,'SMTP',connect)
+    if phase=='CONNECT':connect.side_effect=exception
+    elif phase=='TLS':smtp.starttls.side_effect=exception
+    elif phase=='AUTH':smtp.login.side_effect=exception
+    else:smtp.send_message.side_effect=exception
+    result=client.post(PATH+'/test',json={'recipient':'receiver@example.test'})
+    assert result.status_code==502 and result.headers['X-Mail-Error']==code
+    detail=result.json()['detail'];assert f'Fase: {phase}' in detail and type(exception).__name__ in detail
+    assert 'Referencia ' in detail and 'Respuesta:' in detail
+    assert 'private-credential' not in detail+caplog.text
+    assert 'receiver@example.test' not in detail+caplog.text
+    with SessionLocal() as db:
+        event=db.scalar(select(AuditEvent).where(AuditEvent.action=='ORDER_EMAIL_TEST_FAILED').order_by(AuditEvent.id.desc()))
+        assert event.metadata_json['code']==code and event.metadata_json['phase']==phase
+        assert event.metadata_json['reference'] in detail and event.metadata_json['response'] in detail
+    if phase in {'CONNECT','TLS','AUTH'}:smtp.send_message.assert_not_called()
+
+
+def test_library_response_redacts_password_encoded_auth_and_addresses():
+    import base64,json
+    password='very-private-password';username='b2b@example.test'
+    config=mail.MailConfiguration(username=username,sender_email=username)
+    encoded=base64.b64encode(('\0'+username+'\0'+password).encode()).decode()
+    response=f'5.7.139 Authentication unsuccessful {password} {encoded} {username} receiver@example.test token=private-token'
+    error=mail.smtplib.SMTPAuthenticationError(535,response.encode())
+    log=mail.smtp_diagnostic(error,'AUTH',config,password,'receiver@example.test')
+    value=json.dumps(log)
+    assert log['smtp_code']==535 and '5.7.139 Authentication unsuccessful' in value
+    for secret in [password,encoded,username,'receiver@example.test','private-token']:
+        assert secret not in value
+    assert len(log['response'])<=1500

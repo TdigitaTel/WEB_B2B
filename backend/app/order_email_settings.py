@@ -5,8 +5,12 @@ change dispatcher is deliberately not claimed to exist by the API or interface.
 """
 import base64
 import hashlib
+import logging
+import json
+from uuid import uuid4
 import re
 import smtplib
+import socket
 import ssl
 from email.message import EmailMessage
 from email.utils import formataddr
@@ -185,6 +189,57 @@ def preview_draft(data: PreviewDraft, response: Response, db: Session = Depends(
     return example_email(data.state, config.portal_url, content=data.content)
 
 
+def smtp_failure(exc, phase):
+    """Operator-safe diagnosis: never return the provider response or credentials."""
+    if isinstance(exc, smtplib.SMTPAuthenticationError):
+        return 'AUTH_REJECTED', 'El servidor rechazó la autenticación SMTP. Revisa el usuario y las credenciales, y confirma qué método de acceso permite el proveedor; la cuenta puede requerir OAuth.'
+    if isinstance(exc, smtplib.SMTPSenderRefused):
+        return 'SENDER_REJECTED', 'El servidor rechazó el correo de origen. La cuenta autenticada debe tener permiso para enviar con ese remitente.'
+    if isinstance(exc, smtplib.SMTPRecipientsRefused):
+        return 'RECIPIENT_REJECTED', 'El servidor rechazó el destinatario de prueba. Revisa esa dirección y los permisos de envío a destinatarios externos.'
+    if isinstance(exc, smtplib.SMTPDataError):
+        return 'MESSAGE_REJECTED', 'El servidor rechazó el mensaje. Consulta con el proveedor los límites y las políticas de envío de esta cuenta.'
+    if isinstance(exc, ssl.SSLCertVerificationError):
+        return 'CERTIFICATE_INVALID', 'No se pudo verificar el certificado del servidor SMTP. Revisa el nombre del servidor y su certificado con el proveedor.'
+    if isinstance(exc, ssl.SSLError):
+        return 'TLS_FAILED', 'Falló la conexión segura con el servidor SMTP. Confirma que el puerto corresponde a la seguridad configurada: STARTTLS o SSL directo.'
+    if isinstance(exc, socket.gaierror):
+        return 'HOST_NOT_FOUND', 'No se pudo resolver el nombre del servidor SMTP desde el servidor de la extranet. Revisa el nombre configurado y el DNS del servidor.'
+    if isinstance(exc, TimeoutError):
+        return 'TIMEOUT', 'El servidor SMTP no respondió a tiempo. Revisa el puerto, la conectividad y las restricciones de salida del servidor de la extranet.'
+    if isinstance(exc, ConnectionRefusedError):
+        return 'CONNECTION_REFUSED', 'El servidor SMTP rechazó la conexión. Revisa el servidor, el puerto y las reglas de red o cortafuegos.'
+    if isinstance(exc, smtplib.SMTPNotSupportedError):
+        if phase == 'TLS':
+            return 'STARTTLS_UNAVAILABLE', 'El servidor no ofrece STARTTLS en este puerto. Confirma el puerto y el tipo de seguridad con tu proveedor.'
+        return 'AUTH_UNAVAILABLE', 'El servidor no ofrece un método de autenticación compatible con esta conexión. Consulta los requisitos SMTP de tu proveedor.'
+    stage = {'CONNECT':'conectar con el servidor', 'TLS':'negociar la conexión segura', 'AUTH':'autenticar la cuenta', 'SEND':'enviar el mensaje'}[phase]
+    return 'SMTP_FAILED', f'No se pudo {stage}. Revisa con tu proveedor la conexión SMTP y sus permisos. No se ha confirmado el envío.'
+
+
+def smtp_diagnostic(exc, phase, config, password, recipient):
+    """Only exception replies, never an SMTP transcript (AUTH can contain secrets)."""
+    def sanitize(value):
+        value = value.decode('utf-8', errors='replace') if isinstance(value, bytes) else str(value)
+        credentials = [password, config.username, config.sender_email, recipient]
+        credentials += [base64.b64encode(password.encode()).decode(),
+                        base64.b64encode(config.username.encode()).decode(),
+                        base64.b64encode(('\0'+config.username+'\0'+password).encode()).decode()]
+        for secret in sorted(set(filter(None, credentials)), key=len, reverse=True):
+            value = value.replace(secret, '[oculto]')
+        value = re.sub(r'(?i)\b(?:bearer|authorization|password|passwd|token|secret)\s*[:= ]+\S+', '[credencial oculta]', value)
+        value = re.sub(r'[A-Za-z0-9.!#$%&\'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+', '[correo oculto]', value)
+        return ' '.join(value.split())[:1500]
+    smtp_code = getattr(exc, 'smtp_code', None)
+    reply = getattr(exc, 'smtp_error', None)
+    if isinstance(exc, smtplib.SMTPRecipientsRefused):
+        replies = list(exc.recipients.values())[:5]
+        reply = ' | '.join(f'{code} {sanitize(reason)}' for code, reason in replies)
+    return {'reference':uuid4().hex[:12], 'phase':phase, 'exception':type(exc).__name__,
+            'smtp_code':smtp_code if isinstance(smtp_code,int) else None,
+            'response':sanitize(reply if reply is not None else str(exc))}
+
+
 @router.post("/test")
 def test_mail(data: TestMail, db: Session = Depends(get_db), user: User = Depends(operator)):
     row, config = configuration(db)
@@ -202,6 +257,7 @@ def test_mail(data: TestMail, db: Session = Depends(get_db), user: User = Depend
     message["Subject"] = "[PRUEBA] " + template["subject"]
     message.set_content(template["text"])
     message.add_alternative(template["html"], subtype="html")
+    phase = 'CONNECT'
     try:
         context = ssl.create_default_context()
         if config.security == "SSL":
@@ -210,14 +266,26 @@ def test_mail(data: TestMail, db: Session = Depends(get_db), user: User = Depend
             connection = smtplib.SMTP(config.smtp_host, config.smtp_port, timeout=15)
         with connection as smtp:
             if config.security == "STARTTLS":
+                phase = 'TLS'
                 smtp.starttls(context=context)
+            phase = 'AUTH'
             smtp.login(config.username, password)
-            if smtp.send_message(message):
-                raise smtplib.SMTPRecipientsRefused({})
-    except (smtplib.SMTPException, OSError):
-        audit(db, user, "ORDER_EMAIL_TEST_FAILED", "ORDER_EMAIL_SETTINGS", "1")
+            phase = 'SEND'
+            refused = smtp.send_message(message)
+            if refused:
+                raise smtplib.SMTPRecipientsRefused(refused)
+    except (smtplib.SMTPException, OSError) as exc:
+        code, explanation = smtp_failure(exc, phase)
+        diagnostic = smtp_diagnostic(exc, phase, config, password, data.recipient)
+        diagnostic['code'] = code
+        logging.getLogger(__name__).warning('ORDER_EMAIL_TEST_FAILED %s', json.dumps(diagnostic, ensure_ascii=False))
+        audit(db, user, "ORDER_EMAIL_TEST_FAILED", "ORDER_EMAIL_SETTINGS", "1", diagnostic)
         db.commit()
-        raise HTTPException(502, "No se pudo enviar. Revisa servidor, puerto, seguridad, credenciales y permisos del remitente con tu proveedor") from None
+        detail = (explanation + '\n\nDiagnóstico SMTP · Referencia ' + diagnostic['reference']
+                  + '\nFase: ' + phase + ' · Librería: ' + diagnostic['exception']
+                  + (' · Código SMTP: ' + str(diagnostic['smtp_code']) if diagnostic['smtp_code'] is not None else '')
+                  + '\nRespuesta: ' + diagnostic['response'])
+        raise HTTPException(502, detail, headers={"X-Mail-Error":code}) from None
     audit(db, user, "ORDER_EMAIL_TEST_SENT", "ORDER_EMAIL_SETTINGS", "1")
     db.commit()
     return {"message": "El servidor de correo ha aceptado el mensaje de prueba. Comprueba la bandeja de entrada y correo no deseado."}

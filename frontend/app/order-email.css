@@ -3,3 +3,5 @@
 .email-preview{margin-top:28px;padding-top:20px;border-top:1px solid #cadbe5}.email-preview label{max-width:520px;margin-bottom:16px}.email-preview iframe{display:block;width:100%;max-width:680px;min-height:780px;box-sizing:border-box;border:1px solid #cadbe5;border-radius:10px;background:#f1f5f7}.email-preview pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;line-height:1.5}.email-preview details{margin-top:16px}.email-preview summary{cursor:pointer;color:#1b608a}@media(max-width:640px){.email-preview iframe{min-height:960px}}
 
 .order-email-settings textarea{width:100%;box-sizing:border-box;resize:vertical;min-height:80px;border:1px solid #9bb3c2;border-radius:8px;padding:12px;font:inherit;color:#243b49;background:#fff}.order-email-settings fieldset>label{margin:18px 0}.email-connection{margin:24px 0}.email-connection>summary{cursor:pointer;font-weight:700;padding:18px;background:#edf5fa;border-radius:8px}.email-preview{margin-bottom:28px}
+
+.order-email-settings .error{white-space:pre-wrap;overflow-wrap:anywhere}
