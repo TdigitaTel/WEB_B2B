@@ -11,3 +11,11 @@ API (operador/administrador con permiso de Parámetros): GET y PUT `/api/v1/stor
 Se preparan y persisten los parámetros, preferencias de estados y prueba manual. **El envío automático por cambios de estado no está conectado en esta revisión.** La API devuelve `automatic_dispatch_available=false` y la pantalla lo indica; no existe un interruptor que prometa activarlo. La tabla nueva se crea mediante el bootstrap habitual, sin migración manual.
 
 Para conectar el envío automático se necesita un servicio de eventos y cola persistente por pedido y transición visible al cliente, con historial, destinatarios deduplicados de su ficha, reintentos y prevención de duplicados entre refrescos. El estado de preparación por albarán y la recogida física deben conservarse separados. La activación debe partir del estado actual para evitar un envío masivo de estados históricos. Los fallos de correo no deben impedir registrar ni atender el pedido.
+
+## Mensajes según el estado
+
+`order_status_email.py` genera HTML con estilos en línea y alternativa de texto, partiendo de los campos públicos de seguimiento. Incluye pedido, estado, una frase de acción, avance de recogida por materiales, fecha relevante y botón de seguimiento; no incluye precios, observaciones internas ni datos fiscales. La facturación no sustituye el estado físico de recogida. Sin desglose fiable no inventa porcentajes. El detalle de artículos queda en la web.
+
+En Parámetros, «Contenido del correo» permite seleccionar estado y abrir una vista previa aislada. GET `/api/v1/store/order-email-settings/preview?state=ENTREGADO_PARCIAL` devuelve asunto, HTML y texto con datos ficticios. POST `/test` admite `preview_state` (por defecto ENTREGADO_PARCIAL) y envía la misma plantilla, marcada PRUEBA y con enlace a la entrada de la extranet. No crea pedidos ni enlaces privados. La generación real de enlaces y el despachador automático siguen pendientes de integración, como indica la pantalla.
+
+Prueba de la vista previa: `node frontend/scripts/test-order-email-preview.cjs`. No se añaden entradas al manifiesto para mantener independiente esta mejora de otros menús y pantallas.

@@ -14,7 +14,7 @@ from typing import Literal
 from urllib.parse import urlsplit
 
 from cryptography.fernet import Fernet, InvalidToken
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response, Query
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 from sqlalchemy.orm import Session
 from .auth import audit, require_roles
@@ -24,16 +24,7 @@ from .models import OrderEmailSettings, User
 
 router = APIRouter(prefix="/api/v1/store/order-email-settings", tags=["Correo de pedidos"])
 operator = require_roles("OPERADOR_TIENDA", "ADMIN")
-STATES = {
-    "PENDIENTE": "Pedido recibido",
-    "EN_PREPARACION": "En preparación",
-    "PENDIENTE_RECOGIDA_PARCIAL": "Pendiente de recogida parcial",
-    "PENDIENTE_RECOGIDA_TOTAL": "Pendiente de recogida total",
-    "ENTREGADO_PARCIAL": "Entregado parcial",
-    "ENTREGADO_TOTAL": "Entregado total",
-    "FACTURADO": "Facturado",
-    "ELIMINADO_EN_EXIT": "No se va a atender",
-}
+from .order_status_email import STATES, example_email
 
 
 def email_address(value):
@@ -99,6 +90,14 @@ class MailSave(MailConfiguration):
 class TestMail(BaseModel):
     model_config = ConfigDict(extra="forbid")
     recipient: str
+    preview_state: str = "ENTREGADO_PARCIAL"
+
+    @field_validator("preview_state")
+    @classmethod
+    def valid_state(cls, value):
+        if value not in STATES:
+            raise ValueError("Estado no disponible")
+        return value
 
     @field_validator("recipient")
     @classmethod
@@ -153,6 +152,16 @@ def save_settings(data: MailSave, response: Response, db: Session = Depends(get_
     return public_settings(row, MailConfiguration(**row.configuration))
 
 
+@router.get("/preview")
+def preview_mail(response: Response, state: str = Query(default="ENTREGADO_PARCIAL"),
+                 db: Session = Depends(get_db), user: User = Depends(operator)):
+    response.headers["Cache-Control"] = "no-store"
+    if state not in STATES:
+        raise HTTPException(422, "Estado no disponible")
+    _, config = configuration(db)
+    return example_email(state, config.portal_url)
+
+
 @router.post("/test")
 def test_mail(data: TestMail, db: Session = Depends(get_db), user: User = Depends(operator)):
     row, config = configuration(db)
@@ -166,8 +175,10 @@ def test_mail(data: TestMail, db: Session = Depends(get_db), user: User = Depend
     message["From"] = formataddr((config.sender_name, config.sender_email))
     message["To"] = data.recipient
     message["Reply-To"] = config.reply_to
-    message["Subject"] = "Prueba de correo · Bermúdez Ulloa"
-    message.set_content("Este es un correo de prueba de la configuración de la extranet.\nNo corresponde a un cambio de estado de un pedido.\n")
+    template = example_email(data.preview_state, config.portal_url)
+    message["Subject"] = "[PRUEBA] " + template["subject"]
+    message.set_content(template["text"])
+    message.add_alternative(template["html"], subtype="html")
     try:
         context = ssl.create_default_context()
         if config.security == "SSL":
