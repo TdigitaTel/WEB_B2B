@@ -816,14 +816,19 @@ def delete_order(order_id: str, user: User = Depends(current_user), db: Session 
 
 @app.get("/api/v1/orders")
 def orders(date_from: date | None = None, date_to: date | None = None,
-           state: str = "PENDIENTE", order_query: str = "", user: User = Depends(current_user), db: Session = Depends(get_db)):
+           state: str = "PENDIENTE", order_query: str = "", recent_web: bool = False,
+           user: User = Depends(current_user), db: Session = Depends(get_db)):
     customer_for(user, db); customer_code = customer_code_for(user, db)
     query = order_query.strip().upper()
+    if recent_web:
+        if query:
+            raise HTTPException(422, "El resumen de inicio no admite búsqueda individual")
+        state = "TODOS"
     if len(query) > 80 or (query and not (query.isascii() and query.isdecimal()) and not query.startswith("WEB-")):
         raise HTTPException(422, "Introduce el código WEB completo o el número EXIT, sin año ni serie")
     today = datetime.now(ZoneInfo("Europe/Madrid")).date()
     start, end = date_from or today, date_to or date_from or today
-    if not query and start > end:
+    if not query and not recent_web and start > end:
         raise HTTPException(422, "La fecha desde no puede ser posterior a la fecha hasta")
     condition = Order.customer_code == customer_code
     if user.customer_id:
@@ -839,10 +844,19 @@ def orders(date_from: date | None = None, date_to: date | None = None,
                 Order.nro_pedido_exit == query, Order.nro_pedido_exit.endswith("/" + query),
                 Order.nro_pedido_exit.endswith("~" + query))
         condition = condition & search_condition
-    all_local_rows = db.scalars(select(Order).where(condition).order_by(Order.created_at.desc()).limit(5000)).all()
+    local_statement = select(Order).where(condition)
+    if recent_web:
+        # Generated WEB codes contain year and a padded seven-digit sequence.
+        # Limit before EXIT reads: never load/import unrelated store orders.
+        local_statement = local_statement.where(Order.origen_pedido == "B2B", Order.deleted_at.is_(None)).order_by(Order.order_number.desc(), Order.id.desc()).limit(5)
+    else:
+        local_statement = local_statement.order_by(Order.created_at.desc()).limit(5000)
+    all_local_rows = db.scalars(local_statement).all()
+    if recent_web and not all_local_rows:
+        return []
     order_pickups.prime_summaries(db, all_local_rows)
-    local_rows = list(all_local_rows) if query else [row for row in all_local_rows if start <= row.created_at.date() <= end]
-    if query:
+    local_rows = list(all_local_rows) if query or recent_web else [row for row in all_local_rows if start <= row.created_at.date() <= end]
+    if query or recent_web:
         numbers = {query} if query.isdecimal() else {
             str(row.exit_order_number or row.nro_pedido_exit.replace("~", "/").split("/")[-1])
             for row in local_rows if row.exit_order_number or row.nro_pedido_exit}
@@ -852,7 +866,8 @@ def orders(date_from: date | None = None, date_to: date | None = None,
         exit_rows = fetch_customer_exit_orders(customer_code, start, end)
     notes_available = True
     try:
-        delivery_rows = fetch_customer_delivery_statuses(customer_code)
+        delivery_rows = (fetch_delivery_statuses_for_orders([key for row in local_rows if (key := delivery_order_key(row))])
+                         if recent_web else fetch_customer_delivery_statuses(customer_code))
     except Exception:
         logger.exception("No se pudieron consultar los albaranes para actualizar el historial")
         notes_available = False
@@ -884,6 +899,8 @@ def orders(date_from: date | None = None, date_to: date | None = None,
             else:
                 effective_state = "ATENDIDO"
         local, shadows = linked_customer_order(all_local_rows, record, exit_rows)
+        if recent_web and local is None:
+            continue  # A matching EXIT number alone never creates a WEB origin.
         if local and not local.nro_pedido_exit:
             local.nro_pedido_exit = record.exit_order_id
             local.fecha_registro_exit = record.recorded_at
@@ -983,7 +1000,7 @@ def orders(date_from: date | None = None, date_to: date | None = None,
     emitted = {payload['id'] for payload in result}
     hidden = reconcile_orders(db, [row for row in all_local_rows if row.public_id in emitted],
                               all_local_rows, exit_rows, [*deliveries.keys(), *order_pickups.receipt_order_keys(db, all_local_rows)], user, notes_available)
-    result = [payload for payload in result if payload['id'] not in hidden]
+    result = [payload for payload in result if payload['id'] not in hidden or (recent_web and payload.get('origen_pedido') == 'B2B')]
     result = customer_history_without_shadows(result)
     for payload in result:
         key = note_order_key(payload)
@@ -997,7 +1014,12 @@ def orders(date_from: date | None = None, date_to: date | None = None,
         if local:
             payload['pickup_summary'] = order_pickups.summary(db, local)
             payload['pickup_warning'] = pickup_warnings.get(local.id)
+            if recent_web and local.reconciliation_reason == 'MISSING_EXIT':
+                payload['estado_registro_exit'] = 'ELIMINADO_EN_EXIT'
     db.commit()
+    if recent_web:
+        by_id = {payload['id']: payload for payload in result if payload.get('origen_pedido') == 'B2B'}
+        return [by_id[row.public_id] for row in local_rows if row.public_id in by_id][:5]
     requested = state.strip().upper()
     groups = {"BORRADOR": {"BORRADOR"}, "PENDIENTE": {"BORRADOR", "PENDIENTE"},
               "EN_PROCESAMIENTO": {"BLOQUEADO", "REGISTRADO", "EN_PROCESO", "EN_PREPARACION"},

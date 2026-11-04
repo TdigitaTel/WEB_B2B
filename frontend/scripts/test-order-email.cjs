@@ -33,7 +33,7 @@ async function change(el,value){assert.ok(el);await React.act(async()=>{Object.g
  const lastSave=JSON.parse(calls.filter(c=>c.options.method==='PUT').at(-1).options.body);assert.equal(lastSave.password,undefined,'Blank password preserves stored credential');
  await change(input('Destinatario de prueba'),'operator@example.test');
  await React.act(async()=>click('Enviar prueba'));
- assert.deepEqual(JSON.parse(calls.find(c=>String(c.url).endsWith('/test')).options.body),{recipient:'operator@example.test'});
+ assert.deepEqual(JSON.parse(calls.find(c=>String(c.url).endsWith('/test')).options.body),{recipient:'operator@example.test',preview_state:'ENTREGADO_PARCIAL'});
  assert.match(document.body.textContent,/aceptado la prueba/);
  if(process.env.EMAIL_PREVIEW){const css=fs.readFileSync(require('node:path').resolve(__dirname,'../app/order-email.css'),'utf8');fs.writeFileSync(process.env.EMAIL_PREVIEW,'<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font:16px system-ui;color:#233c4a;margin:24px}button{padding:12px;border-radius:8px;border:0;background:#1c608b;color:white}button:disabled{opacity:.55}'+css+'</style><h1>Parámetros</h1>'+document.getElementById('root').innerHTML+'</html>')}
  fail=true;await React.act(async()=>click('Enviar prueba'));assert.equal(document.querySelector('[role=alert]').textContent,'Error de conexión');
