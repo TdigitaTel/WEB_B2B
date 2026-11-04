@@ -41,3 +41,19 @@ La configuración se almacena en `order_email_settings.configuration.content`
 El correo de prueba usa la configuración guardada. La conexión SMTP se conserva
 en una sección desplegable; no se envían sus credenciales a la vista previa.
 El envío automático por cambios de estado sigue pendiente de conectar.
+
+## Diagnóstico del correo de prueba
+
+El error de la prueba incluye fase (CONNECT/TLS/AUTH/SEND), clase de excepción de
+`smtplib`, código SMTP cuando existe y respuesta recibida del servidor. Una
+referencia permite encontrarlo en los registros de la API y en `audit_events`
+(acción `ORDER_EMAIL_TEST_FAILED`, `metadata_json`). Se ocultan credenciales,
+representaciones de autenticación en base64 y direcciones de correo, y se limita
+la longitud de la respuesta. No se activa `set_debuglevel`: una transcripción
+SMTP completa podría registrar las credenciales de AUTH.
+
+Los fallos anteriores al cambio solo guardaban la marca de error, sin respuesta;
+no se puede recuperar retrospectivamente el detalle. Hay que repetir la prueba
+tras desplegar. El diagnóstico no cambia la configuración de Microsoft 365 ni
+confirma por sí solo que una contraseña sea incorrecta. La cuenta puede exigir
+OAuth o tener restricciones de autenticación/envío.
