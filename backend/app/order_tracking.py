@@ -151,7 +151,7 @@ def read_tracking(body: TrackingRead, response: Response, db: Session = Depends(
         items.append({"line_key": str(item.id), "sku": item.sku, "description": item.description,
                       "quantity": float(item.quantity), "unit": item.unit, "served_quantity": float(served),
                       "expected_at": plan.get("expected_at"), "situation": plan.get("status"),
-                      "removed_in_exit": removed})
+                      "removed_in_exit": removed, "created_in_web": item.created_in_web})
     pickup_summary = order_pickups.summary(db, order)
     if identity and order.customer_code:
         try:

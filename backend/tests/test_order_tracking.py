@@ -40,7 +40,7 @@ def setup_order(company=None):
                       attention_deadline_at=datetime(2026,11,5,12,tzinfo=timezone.utc))
         db.add(order);db.flush()
         order.nro_pedido_exit=f"2026/AL/{order.exit_order_number}"
-        item = OrderItem(order_id=order.id, sku="TRACK-ARTICLE", description="Material de prueba", quantity=2, unit="MT", unit_price=50, tax_rate=21, line_total=100, served_quantity=0, pending_quantity=2, exit_line_number="1")
+        item = OrderItem(order_id=order.id, sku="TRACK-ARTICLE", description="Material de prueba", quantity=2, unit="MT", unit_price=50, tax_rate=21, line_total=100, served_quantity=0, pending_quantity=2, exit_line_number="1", created_in_web=True)
         db.add(item);db.flush()
         db.add(OrderLinePlanning(order_key=f"WEB:{order.public_id}", lines={str(item.id):{"sku":item.sku,"status":"PROVEEDOR","expected_at":"2026-11-05T12:00:00Z","observation":"PRIVATE-OBSERVATION"}}))
         db.commit()
@@ -62,6 +62,7 @@ def test_unlogged_tracking_is_read_only_minimal_and_hash_only():
     order_id=setup_order(); token=create(operator(),order_id)
     response=read(token);assert response.status_code==200,response.text
     data=response.json();assert data["state"]=="REGISTRADO" and data["items"][0]["situation"]=="PROVEEDOR"
+    assert data["items"][0]["created_in_web"] is True
     assert data["items"][0]["expected_at"]=="2026-11-05T12:00:00Z"
     assert "PRIVATE" not in response.text
     assert not ({"customer", "customer_code", "notes", "total", "subtotal", "documents", "delivery_address", "id"} & data.keys())
