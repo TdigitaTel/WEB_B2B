@@ -19,3 +19,25 @@ Para conectar el envío automático se necesita un servicio de eventos y cola pe
 En Parámetros, «Contenido del correo» permite seleccionar estado y abrir una vista previa aislada. GET `/api/v1/store/order-email-settings/preview?state=ENTREGADO_PARCIAL` devuelve asunto, HTML y texto con datos ficticios. POST `/test` admite `preview_state` (por defecto ENTREGADO_PARCIAL) y envía la misma plantilla, marcada PRUEBA y con enlace a la entrada de la extranet. No crea pedidos ni enlaces privados. La generación real de enlaces y el despachador automático siguen pendientes de integración, como indica la pantalla.
 
 Prueba de la vista previa: `node frontend/scripts/test-order-email-preview.cjs`. No se añaden entradas al manifiesto para mantener independiente esta mejora de otros menús y pantallas.
+
+## Contenido configurable
+
+El editor separa «Qué quieres decir», «Qué información incluir» y la vista previa.
+Se pueden cambiar inicio del asunto, saludo, mensaje por estado, despedida,
+condiciones y texto del botón. Los textos sugeridos se pueden recuperar para un
+estado sin sustituir los demás. Un texto vacío se omite; todo se trata como texto
+simple y se escapa al generar HTML.
+
+Se elige mostrar avance, fechas, número de tienda, materiales, cantidades,
+condiciones y enlace directo. Si se desactiva el enlace no se incluye ninguna URL
+en ninguna versión del correo. Los materiales se obtienen del mismo contenido
+público autorizado del seguimiento: no se exponen precios ni notas internas.
+Se conservan las líneas eliminadas con su marca; se muestran como máximo 50 y
+se avisa si hay más.
+
+La configuración se almacena en `order_email_settings.configuration.content`
+(JSON existente; sin migración). La vista previa `POST /preview` recibe solo
+`state` y `content`, está protegida para operadores, no guarda ni envía mensajes.
+El correo de prueba usa la configuración guardada. La conexión SMTP se conserva
+en una sección desplegable; no se envían sus credenciales a la vista previa.
+El envío automático por cambios de estado sigue pendiente de conectar.
