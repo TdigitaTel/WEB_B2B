@@ -3,3 +3,5 @@
 .tracking-share-dialog textarea{box-sizing:border-box;width:100%;margin-top:8px;padding:12px;border:1px solid #8ca4b4;border-radius:8px;font:inherit;font-size:16px;resize:vertical;overflow-wrap:anywhere}
 .tracking-open-link{display:inline-block;margin:10px 0 18px;color:#1b6089;text-decoration:underline;overflow-wrap:anywhere}
 .tracking-actions a{display:inline-flex;align-items:center;justify-content:center;min-height:44px;box-sizing:border-box;text-decoration:none}
+
+.tracking-line-origin{display:flex;align-items:center;gap:10px;font-size:12px;color:#536b7b}.tracking-materials article.order-line-is-removed{padding:18px 12px}

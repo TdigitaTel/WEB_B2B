@@ -25,42 +25,38 @@ for(const markup of [customer,operator]){assert.match(markup,/CURVA 90/);assert.
 console.log('Actual customer and operator order rows retain both articles and display the removed-line notice');
 if(process.env.LINE_PREVIEW_DIR){
  fs.mkdirSync(process.env.LINE_PREVIEW_DIR,{recursive:true});
- const css=['globals.css','settings.css'].map(file=>fs.readFileSync(path.resolve(__dirname,'../app',file),'utf8')).join('\n');
+ const css=['globals.css','settings.css','order-line-origin.css'].map(file=>fs.readFileSync(path.resolve(__dirname,'../app',file),'utf8')).join('\n');
  fs.writeFileSync(path.join(process.env.LINE_PREVIEW_DIR,'index.html'),'<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>'+css+'</style><body><p style="padding:16px">Vista de comprobación con datos simulados</p><h2>Cliente</h2>'+customer+'<h2>Operador</h2>'+operator+'</body></html>');
 }
 
 const {JSDOM}=require('jsdom');
 for(const markup of [customer,operator]){
- const document=new JSDOM(markup).window.document;
- const groups=[...document.querySelectorAll('[aria-label="Seguimiento del artículo"]')];
- assert.equal(groups.length,2);
+ const doc=new JSDOM(markup).window.document;
+ const head=doc.querySelector('.order-line-marks-head');assert.equal(head.textContent,'WEB/Tienda');
+ const column=[...head.parentElement.children].indexOf(head);
+ const groups=[...doc.querySelectorAll('[aria-label="Origen del artículo"]')];assert.equal(groups.length,2);
  for(const group of groups){
-  const marks=group.querySelectorAll('input');
-  assert.equal(marks.length,3);
-  assert.ok([...marks].every(mark=>mark.disabled&&mark.readOnly));
-  assert.equal(marks[0].checked,true);assert.equal(marks[1].checked,true);
+  assert.equal(group.querySelectorAll('input').length,1,'Only the origin has a check');
+  const mark=group.querySelector('input');assert.ok(mark.checked&&mark.disabled&&mark.readOnly);
+  assert.equal([...group.parentElement.children].indexOf(group),column,'Origin aligns with its heading');
+  assert.equal(group.textContent,'WEB');
  }
- assert.equal(groups[0].querySelectorAll('input')[2].checked,true);
- assert.equal(groups[1].querySelectorAll('input')[2].checked,false);
- assert.match(markup,/No se va a atender/i);
+ const rows=doc.querySelectorAll('.order-line,.web-order-line');
+ assert.ok(rows[0].classList.contains('order-line-is-removed'));
+ assert.match(rows[0].querySelector('.order-line-removed-label').textContent,/No se va a atender/);
+ assert.ok(rows[0].querySelector('.order-line-description'));
+ assert.ok(!rows[1].classList.contains('order-line-is-removed'));
+ assert.equal(rows[1].querySelector('.order-line-removed-label'),null);
+ assert.doesNotMatch(head.parentElement.textContent,/Eliminado|EXIT/);
 }
 const {OrderLineMarks}=require('../app/OrderLineMarks.tsx');
-const imported=new JSDOM(renderToStaticMarkup(React.createElement(OrderLineMarks,{line:{created_in_web:false,entered_in_exit:true}}))).window.document.querySelectorAll('input');
-assert.equal(imported[0].checked,false);assert.equal(imported[1].checked,true);assert.equal(imported[2].checked,false);
-assert.match(renderToStaticMarkup(React.createElement(OrderLineMarks,{line:{created_in_web:null}})),/aria-checked="mixed"/);
-console.log('Per-line WEB, EXIT and deletion check marks are accurate and read-only in both lists');
-
-for(const [markup,expected] of [[customer,['WEB','Tienda','Eliminado']],[operator,['WEB','EXIT','Eliminado']]]){
- const doc=new JSDOM(markup).window.document;
- const head=doc.querySelector('.order-line-marks-head');assert.ok(head);
- assert.deepEqual([...head.children].map(el=>el.textContent),expected);
- const headerIndex=[...head.parentElement.children].indexOf(head);
- for(const group of doc.querySelectorAll('.order-line-marks')){
-  assert.ok(group.parentElement.matches('.order-line,.web-order-line'),'Checks belong to the same material row');
-  assert.equal([...group.parentElement.children].indexOf(group),headerIndex,'Checks align with column headings');
-  assert.equal(group.textContent.trim(),'','No repeated descriptions inside rows');
-  assert.deepEqual([...group.querySelectorAll('input')].map(el=>el.getAttribute('aria-label')),expected);
- }
+for(const entered_in_exit of [true,false]){
+ const store=new JSDOM(renderToStaticMarkup(React.createElement(OrderLineMarks,{line:{created_in_web:false,entered_in_exit}}))).window.document;
+ assert.equal(store.querySelector('input').checked,false);assert.equal(store.body.textContent,'Tienda');
+ const web=new JSDOM(renderToStaticMarkup(React.createElement(OrderLineMarks,{line:{created_in_web:true,entered_in_exit}}))).window.document;
+ assert.equal(web.querySelector('input').checked,true);assert.equal(web.body.textContent,'WEB');
 }
+assert.match(renderToStaticMarkup(React.createElement(OrderLineMarks,{line:{created_in_web:null}})),/aria-checked="mixed"/);
+assert.match(renderToStaticMarkup(React.createElement(OrderLineMarks,{line:{created_in_web:null}})),/Sin confirmar/);
 assert.doesNotMatch(customer,/Ingresado en EXIT|Generado en WEB|Eliminado en EXIT|Eliminada en EXIT|sin registro/);
-console.log('Compact origin columns: customer WEB/Tienda/Eliminado, operator WEB/EXIT/Eliminado, headings aligned with row checks, no repeated text');
+console.log('Single WEB/Tienda origin independent of synchronization; removed rows retain data, strike-through class and explicit notice, without deletion checks');

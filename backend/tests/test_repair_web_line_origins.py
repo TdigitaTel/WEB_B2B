@@ -24,10 +24,10 @@ def target():
     return {'web_number':'WEB-ORIGIN-'+uuid4().hex[:16],'customer_code':'11264','exit_year':2026,'exit_series':'AL','exit_number':str(int(uuid4().hex[:7],16)),'skus':['23622','23493','23508','22498']}
 
 
-def test_exact_six_confirmed_materials_are_listed():
+def test_exact_seven_confirmed_materials_are_listed():
     targets=confirmed_targets()
     assert [(row['web_number'],row['skus']) for row in targets]==[
-        ('WEB-2026-0000321',['23622','23493','23508','22498']),
+        ('WEB-2026-0000321',['23622','23493','23508','22498','23568']),
         ('WEB-2026-0000260',['21679','23538'])]
 
 
@@ -75,3 +75,16 @@ def test_duplicate_sku_is_not_arbitrarily_attributed_to_web():
         assert len(report['changed'])==3
         assert report['skipped'][0]['sku']==expected['skus'][0]
         assert [row.created_in_web for row in db.scalars(select(OrderItem).where(OrderItem.order_id==order.id,OrderItem.sku==expected['skus'][0]))]==[None,False]
+
+
+def test_confirmed_23568_is_repaired_only_in_its_order_and_is_idempotent():
+    with SessionLocal() as db:
+        expected=target();expected['skus']=['23568'];expected['confirmed_on']='2026-11-04'
+        order=prepare(db,expected)
+        other=target();other['skus']=['23568'];another=prepare(db,other)
+        report=repair_confirmed_web_origins(db,apply=True,targets=[expected])
+        assert len(report['changed'])==1 and report['changed'][0]['sku']=='23568'
+        assert '2026-11-04' in report['changed'][0]['reason']
+        assert db.scalar(select(OrderItem).where(OrderItem.order_id==order.id,OrderItem.sku=='23568')).created_in_web is True
+        assert db.scalar(select(OrderItem).where(OrderItem.order_id==another.id,OrderItem.sku=='23568')).created_in_web is None
+        assert repair_confirmed_web_origins(db,apply=True,targets=[expected])['changed']==[]

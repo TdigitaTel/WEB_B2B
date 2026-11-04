@@ -1,4 +1,4 @@
-"""Scoped origin correction explicitly confirmed by the customer on 2026-11-03.
+"""Scoped origin correction explicitly confirmed by the customer.
 
 No blanket inference from a WEB header: other lines can have been added in EXIT.
 """
@@ -43,7 +43,7 @@ def repair_confirmed_web_origins(db, apply=False, targets=None):
                 continue
             change = {'web_number': order.order_number, 'sku': sku, 'line_id': item.id,
                       'previous_created_in_web': item.created_in_web, 'created_in_web': True,
-                      'reason': 'Origen WEB confirmado por el usuario el 2026-11-03'}
+                      'reason': 'Origen WEB confirmado por el usuario el '+target.get('confirmed_on','2026-11-03')}
             report['changed'].append(change)
             if apply:
                 item.created_in_web = True
