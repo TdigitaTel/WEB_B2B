@@ -25,6 +25,8 @@ from .models import OrderEmailSettings, User
 router = APIRouter(prefix="/api/v1/store/order-email-settings", tags=["Correo de pedidos"])
 operator = require_roles("OPERADOR_TIENDA", "ADMIN")
 from .order_status_email import STATES, example_email
+from .order_email_texts import LABELS, MESSAGES
+from .order_email_content import EmailContent
 
 
 def email_address(value):
@@ -36,6 +38,7 @@ def email_address(value):
 
 class MailConfiguration(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    content: EmailContent = Field(default_factory=EmailContent)
     sender_name: str = Field(default="Bermúdez Ulloa", min_length=1, max_length=100)
     sender_email: str = "info@bermudezulloa.es"
     reply_to: str = "info@bermudezulloa.es"
@@ -95,7 +98,7 @@ class TestMail(BaseModel):
     @field_validator("preview_state")
     @classmethod
     def valid_state(cls, value):
-        if value not in STATES:
+        if value not in LABELS:
             raise ValueError("Estado no disponible")
         return value
 
@@ -118,7 +121,7 @@ def configuration(db):
 def public_settings(row, data):
     return {**data.model_dump(), "password_configured": bool(row and row.password_ciphertext),
             "available_states": STATES, "recipient_source": "CUSTOMER_RECORD",
-            "automatic_dispatch_available": False}
+            "automatic_dispatch_available": False, "content_states": LABELS, "content_suggestions": MESSAGES}
 
 
 @router.get("")
@@ -156,10 +159,30 @@ def save_settings(data: MailSave, response: Response, db: Session = Depends(get_
 def preview_mail(response: Response, state: str = Query(default="ENTREGADO_PARCIAL"),
                  db: Session = Depends(get_db), user: User = Depends(operator)):
     response.headers["Cache-Control"] = "no-store"
-    if state not in STATES:
+    if state not in LABELS:
         raise HTTPException(422, "Estado no disponible")
     _, config = configuration(db)
-    return example_email(state, config.portal_url)
+    return example_email(state, config.portal_url, content=config.content)
+
+
+class PreviewDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    state: str
+    content: EmailContent
+
+    @field_validator("state")
+    @classmethod
+    def valid_state(cls, value):
+        if value not in LABELS:
+            raise ValueError("Estado no disponible")
+        return value
+
+
+@router.post("/preview")
+def preview_draft(data: PreviewDraft, response: Response, db: Session = Depends(get_db), user: User = Depends(operator)):
+    response.headers["Cache-Control"] = "no-store"
+    _, config = configuration(db)
+    return example_email(data.state, config.portal_url, content=data.content)
 
 
 @router.post("/test")
@@ -175,7 +198,7 @@ def test_mail(data: TestMail, db: Session = Depends(get_db), user: User = Depend
     message["From"] = formataddr((config.sender_name, config.sender_email))
     message["To"] = data.recipient
     message["Reply-To"] = config.reply_to
-    template = example_email(data.preview_state, config.portal_url)
+    template = example_email(data.preview_state, config.portal_url, content=config.content)
     message["Subject"] = "[PRUEBA] " + template["subject"]
     message.set_content(template["text"])
     message.add_alternative(template["html"], subtype="html")

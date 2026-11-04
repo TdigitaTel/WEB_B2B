@@ -24,7 +24,7 @@ def test_each_state_has_concise_html_and_plain_message(state):
     assert MESSAGES[state] in result['text']
     assert len(MESSAGES[state].split())<35
     assert result['html'].startswith('<!doctype html>')
-    assert 'EJEMPLO' in result['text'] and 'Abrir extranet' in result['text']
+    assert 'EJEMPLO' in result['text'] and 'Ver seguimiento del pedido' in result['text']
     assert '<script' not in result['html'] and '<img' not in result['html']
     assert 'No corresponde a un pedido real' in result['html']
 
@@ -100,4 +100,42 @@ def test_preview_permission_and_test_use_same_multipart_template(monkeypatch):
     assert message['Subject'].startswith('[PRUEBA]')
     assert message.get_body(preferencelist=('plain',)).get_content().strip()==preview.json()['text']
     assert message.get_body(preferencelist=('html',)).get_content().strip()==preview.json()['html']
+    assert 'private-secret' not in str(message)
+
+
+def test_configurable_content_flags_escaping_and_empty_copy():
+    from app.order_email_content import EmailContent
+    content=EmailContent(greeting='Buen día <cliente>',messages={'ENTREGADO_PARCIAL':'Puedes pasar mañana.\nTe esperamos.'},closing='Hasta pronto',subject_prefix='Tu compra',show_link=False,show_progress=False,show_dates=False,show_store_number=False,show_materials=True,show_conditions=True,conditions='Recogida en horario de tienda. <b>Texto</b>')
+    result=render_status_email(payload(items=[{'description':'Material <inox>','quantity':2,'unit':'UD','unit_price':98765,'removed_in_exit':True}]),None,content=content)
+    assert result['subject'].startswith('Tu compra · WEB-')
+    assert 'Buen día <cliente>' in result['text'] and 'Hasta pronto' in result['text']
+    assert 'Puedes pasar mañana.' in result['text'] and 'no se atenderá' in result['text']
+    assert 'Pedido: 2 UD' in result['text'] and 'Condiciones' in result['text']
+    assert '&lt;cliente&gt;' in result['html'] and '<b>Texto</b>' not in result['html']
+    for hidden in ['https://','href=','Avance','Última recogida','6008552','98765']:
+        assert hidden not in result['text']+result['html']
+    assert result['progress'] is None
+    content.messages['ENTREGADO_PARCIAL']=''
+    empty=render_status_email(payload(),None,content=content)
+    assert MESSAGES['ENTREGADO_PARCIAL'] not in empty['text']
+
+
+def test_draft_preview_does_not_save_and_saved_test_matches_content(monkeypatch):
+    path='/api/v1/store/order-email-settings'
+    client=TestClient(app);client.post('/api/v1/auth/login',json={'email':'operador@bermudez.test','password':'123456'})
+    content={'greeting':'Buenos días','messages':{'ENTREGADO_PARCIAL':'Texto específico'},'show_link':False,'show_conditions':True,'conditions':'Condición de prueba','show_materials':True}
+    before=client.get(path).json()['content']
+    draft=client.post(path+'/preview',json={'state':'ENTREGADO_PARCIAL','content':content})
+    assert draft.status_code==200 and 'no-store' in draft.headers['cache-control']
+    assert 'Texto específico' in draft.json()['text'] and 'href=' not in draft.json()['html']
+    assert client.get(path).json()['content']==before
+    assert TestClient(app).post(path+'/preview',json={'state':'PENDIENTE','content':content}).status_code==401
+    assert client.post(path+'/preview',json={'state':'PENDIENTE','content':{'messages':{'INTERNAL':'x'}}}).status_code==422
+    assert client.put(path,json={'content':content,'smtp_host':'smtp.example.test','password':'private-secret'}).status_code==200
+    assert client.get(path).json()['content']['greeting']=='Buenos días'
+    smtp=MagicMock();smtp.__enter__.return_value=smtp;smtp.send_message.return_value={}
+    monkeypatch.setattr(mail.smtplib,'SMTP',MagicMock(return_value=smtp))
+    assert client.post(path+'/test',json={'recipient':'receiver@example.test'}).status_code==200
+    message=smtp.send_message.call_args.args[0]
+    assert message.get_body(preferencelist=('html',)).get_content().strip()==draft.json()['html']
     assert 'private-secret' not in str(message)

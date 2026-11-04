@@ -6,6 +6,7 @@ for(const ext of ['.ts','.tsx'])require.extensions[ext]=(m,f)=>m._compile(ts.tra
 require.extensions['.css']=m=>m.exports={};
 const React=require('react'),{createRoot}=require('react-dom/client'),Component=require('../app/OrderEmailParameters.tsx').default;
 let saved={sender_name:'Bermúdez Ulloa',sender_email:'info@bermudezulloa.es',reply_to:'info@bermudezulloa.es',smtp_host:'',smtp_port:587,security:'STARTTLS',username:'info@bermudezulloa.es',portal_url:'https://extranet.bermudezulloa.es/',selected_states:['EN_PREPARACION','ENTREGADO_PARCIAL'],password_configured:false,available_states:{PENDIENTE:'Pedido recibido',FACTURADO:'Facturado',ELIMINADO_EN_EXIT:'No se va a atender',EN_PREPARACION:'En preparación',PENDIENTE_RECOGIDA_PARCIAL:'Pendiente de recogida parcial',PENDIENTE_RECOGIDA_TOTAL:'Pendiente de recogida total',ENTREGADO_PARCIAL:'Entregado parcial',ENTREGADO_TOTAL:'Entregado total'},automatic_dispatch_available:false};
+saved.content={subject_prefix:'Pedido',greeting:'Hola,',messages:Object.fromEntries(Object.keys(saved.available_states).map(key=>[key,'Mensaje '+key])),closing:'Gracias',conditions:'',show_progress:true,show_dates:true,show_store_number:true,show_materials:false,show_quantities:true,show_conditions:false,show_link:true,button_text:'Ver seguimiento'};saved.content_states=saved.available_states;saved.content_suggestions=saved.content.messages;
 const calls=[];let fail=false;
 global.fetch=async(url,options={})=>{calls.push({url,options});if(fail)return new Response(JSON.stringify({detail:'Error de conexión'}),{status:502});if(options.method==='PUT'){const data=JSON.parse(options.body);saved={...saved,...data,password_configured:data.clear_password?false:!!data.password||saved.password_configured};delete saved.password;delete saved.clear_password;}return new Response(JSON.stringify(String(url).endsWith('/test')?{message:'Servidor ha aceptado la prueba'}:saved))};
 const root=createRoot(document.getElementById('root'));
@@ -18,10 +19,14 @@ async function change(el,value){assert.ok(el);await React.act(async()=>{Object.g
  assert.match(document.body.textContent,/todavía no está conectado/);
  assert.equal(document.querySelector('input[type=password]').value,'');
  assert.ok([...document.querySelectorAll('button')].find(b=>b.textContent==='Enviar prueba').disabled);
+ await React.act(async()=>{const el=[...document.querySelectorAll('label')].find(el=>el.firstChild.textContent==='Saludo').querySelector('textarea');Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype,'value').set.call(el,'Buenos días');el.dispatchEvent(new Event('input',{bubbles:true}));});
+ await React.act(async()=>[...document.querySelectorAll('.email-check')].find(el=>el.textContent==='Detalle de materiales').querySelector('input').click());
+ await React.act(async()=>[...document.querySelectorAll('.email-check')].find(el=>el.textContent==='Enlace directo al seguimiento').querySelector('input').click());
  await change(input('Servidor SMTP'),'smtp.example.test');
  await change(document.querySelector('input[type=password]'),'private-secret');
  await React.act(async()=>click('Guardar configuración'));
  assert.equal(JSON.parse(calls.find(c=>c.options.method==='PUT').options.body).password,'private-secret');
+ assert.equal(saved.content.greeting,'Buenos días');assert.equal(saved.content.show_materials,true);assert.equal(saved.content.show_link,false);
  assert.equal(document.querySelector('input[type=password]').value,'','Password is cleared from the form after save');
  assert.match(document.querySelector('input[type=password]').placeholder,/Guardada/);
  assert.doesNotMatch(document.body.textContent,/private-secret/);
