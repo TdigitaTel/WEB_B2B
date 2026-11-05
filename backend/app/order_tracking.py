@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from . import order_pickups
 from .auth import audit, require_roles
 from .db import get_db
-from .models import Order, OrderItem, OrderLinePlanning, OrderTrackingLink, User
+from .models import Order, OrderItem, OrderLinePlanning, OrderTrackingLink, User, OrderStatusHistory
 from .operator_permissions import can_operate_delegation
 from .exit_order_key import record_key, stored_key
 from .exit_db import fetch_customer_exit_orders
@@ -161,7 +161,19 @@ def read_tracking(body: TrackingRead, response: Response, db: Session = Depends(
             pickup_summary = order_pickups.preview_summary(db, order, documents, remote)
         except Exception:
             warning = warning or "No se pudo actualizar el detalle de albaranes; se muestra el último seguimiento guardado."
+    # Public timeline contains states and dates only, never actor names or notes.
+    timeline = []
+    allowed = {'BORRADOR','PENDIENTE','BLOQUEADO','REGISTRADO','EN_PROCESO','EN_PREPARACION',
+               'ATENDIDO','PENDIENTE_RECOJO','PENDIENTE_RECOGIDA_PARCIAL','PENDIENTE_RECOGIDA_TOTAL',
+               'ENTREGADO','ENTREGADO_PARCIAL','ENTREGADO_TOTAL','FACTURADO'}
+    for event in db.scalars(select(OrderStatusHistory).where(OrderStatusHistory.order_id == order.id).order_by(OrderStatusHistory.created_at, OrderStatusHistory.id)):
+        if event.estado_registro_exit not in allowed:
+            continue
+        if order.origen_pedido == 'B2B' and event.source == 'EXIT' and event.estado_registro_exit.startswith('ENTREGADO'):
+            continue  # Printing a delivery note is not physical collection.
+        timeline.append({'etapa':event.estado_registro_exit,'completed_at':event.created_at,
+                         'date_only':event.estado_registro_exit == 'FACTURADO'})
     # Explicit allowlist: no prices, customer/contact data, notes, documents or mutation URLs.
     return {"web_number": order.order_number, "exit_number": str(identity[3]) if identity else order.nro_pedido_exit,
             "state": state, "expected_at": order.attention_deadline_at, "delivered_at": order.delivered_at,
-            "pickup_summary": pickup_summary, "items": items, "checked_at": now, "warning": warning, "expires_at": link.expires_at}
+            "pickup_summary": pickup_summary, "workflow":timeline, "registered_at":order.fecha_registro_exit, "items": items, "checked_at": now, "warning": warning, "expires_at": link.expires_at}
