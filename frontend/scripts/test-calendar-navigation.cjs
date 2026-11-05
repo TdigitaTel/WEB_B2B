@@ -33,6 +33,12 @@ function respond(body,status=200){return new Response(JSON.stringify(body),{stat
  const button=document.querySelector('.calendar-order-shortcut');assert.ok(button);assert.match(button.textContent,/6008917/);assert.match(button.textContent,/12:00 – 13:00/);
  await React.act(async()=>button.click());
  const detail=document.querySelector('details[data-order-id="calendar-order"]');assert.ok(detail,'The calendar order appears even when absent from the creation-date list');assert.equal(detail.open,true);assert.equal(document.querySelector('.calendar-week-grid'),null);assert.match(document.querySelector('.calendar-selected-order').textContent,/seleccionado desde el calendario/);
+ assert.equal(document.querySelectorAll('[aria-label="Estado de la operación"]').length,1);
+ const operationSelect=document.querySelector('[aria-label="Estado de la operación"]');
+ assert.deepEqual([...operationSelect.options].map(option=>option.textContent),['Por atender','Atendido']);
+ await React.act(async()=>{operationSelect.value='ATENDIDO';operationSelect.dispatchEvent(new Event('change',{bubbles:true}))});
+ assert.equal(document.querySelector('.calendar-selected-order'),null);
+ assert.equal(document.querySelector('[aria-label="Buscar pedido por número"]').value,'','Changing the group clears the calendar detail search');
  function RadioScreen(){const [scheduled,setScheduled]=React.useState(false);return React.createElement(Choice,{scheduled,onChange:setScheduled})}
  await React.act(async()=>root.render(React.createElement(RadioScreen)));
  assert.equal(document.querySelectorAll('input[type=radio]').length,2);assert.equal(document.querySelector('input[value=immediate]').checked,true);
