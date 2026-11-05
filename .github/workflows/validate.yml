@@ -26,6 +26,8 @@ jobs:
       - run: npm run test:operation-filter
       - run: npm run test:operator-order-images
       - run: npm run test:settings-menu
+      - run: npm run test:customer-order-emails
+      - run: npm run test:order-email
       - run: npm run build
 
   backend:

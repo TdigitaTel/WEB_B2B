@@ -24,7 +24,8 @@
     "test:operator-order-images": "node scripts/test-operator-order-images.cjs",
     "test:settings-menu": "node scripts/test-settings-menu.cjs",
     "test:operation-filter": "node scripts/test-operation-filter.cjs",
-    "test:order-email": "node scripts/test-order-email.cjs"
+    "test:order-email": "node scripts/test-order-email.cjs",
+    "test:customer-order-emails": "node scripts/test-customer-order-emails.cjs"
   },
   "dependencies": {
     "jsqr": "^1.4.0",
