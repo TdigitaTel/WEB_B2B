@@ -13,7 +13,7 @@ Pedidos WEB → Calendario diario consulta por fecha de recogida o, en inmediato
 
 ## Vista semanal
 
-El calendario se abre por defecto en Pedidos WEB y muestra de lunes a domingo de la semana actual en Europe/Madrid. Todos los días aparecen aunque estén vacíos, con franjas y número de pedidos. Al seleccionar un día se conservan las acciones del gestor debajo. Desde/Hasta admite entre uno y siete días inclusive; el servidor también rechaza rangos mayores, invertidos o incompletos. Semana actual restablece la semana en curso. Los filtros del listado se ocultan en calendario para no confundir fechas de creación con previsiones. La delegación sigue aplicándose. La consulta antigua por `day` sigue disponible para compatibilidad.
+El calendario se abre por defecto en Pedidos WEB y muestra de lunes a domingo de la semana actual en Europe/Madrid. Todos los días aparecen aunque estén vacíos, con franjas y número de pedidos. Cada pedido se coloca en su celda de día y hora; al pulsarlo se abre el detalle del listado, con sus acciones. Desde/Hasta admite entre uno y siete días inclusive; el servidor también rechaza rangos mayores, invertidos o incompletos. Semana actual restablece la semana en curso. Los filtros del listado se ocultan en calendario para no confundir fechas de creación con previsiones. La delegación sigue aplicándose. La consulta antigua por `day` sigue disponible para compatibilidad.
 
 
 ## Previsión vigente, navegación y selección visible
@@ -25,3 +25,8 @@ Cada pedido del calendario abre su ficha en Listado y la enfoca, incluso fuera d
 Los errores estructurados de validación se presentan como texto legible. Si una API anterior exige `day`, se consultan los días del rango como compatibilidad y se avisa de que debe completarse la actualización para incluir previsiones modificadas. No se afirma que haya cero pedidos cuando falla la consulta.
 
 Carrito y Cambiar recogida ofrecen radios Inmediata / Fecha programada. En el carrito, Inmediata permanece visible pero desactivada si no está disponible; el operador conserva la posibilidad de forzarla con la confirmación ya existente.
+
+
+## Cuadrícula de calendario
+
+La vista semanal es una tabla con días en columnas y horas de inicio en filas, con cabecera y eje horario fijos al desplazarse. No duplica fichas grandes debajo del calendario. Cada evento muestra horario exacto, número, cliente y estado; el clic mantiene la apertura del detalle en Listado. Las franjas reservadas son violetas y las horas estimadas azules. Los eventos que coinciden se apilan sin ocultarse; se amplía el eje para horarios anteriores o posteriores al tramo habitual. Sin hora confirmada se muestra en una fila propia. Las franjas no alineadas a la hora se sitúan en la fila de su hora de inicio y conservan su rango exacto en el texto. En móvil la cuadrícula se desplaza horizontalmente, manteniendo la relación día/hora.
