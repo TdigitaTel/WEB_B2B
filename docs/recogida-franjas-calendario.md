@@ -14,3 +14,14 @@ Pedidos WEB → Calendario diario consulta por fecha de recogida o, en inmediato
 ## Vista semanal
 
 El calendario se abre por defecto en Pedidos WEB y muestra de lunes a domingo de la semana actual en Europe/Madrid. Todos los días aparecen aunque estén vacíos, con franjas y número de pedidos. Al seleccionar un día se conservan las acciones del gestor debajo. Desde/Hasta admite entre uno y siete días inclusive; el servidor también rechaza rangos mayores, invertidos o incompletos. Semana actual restablece la semana en curso. Los filtros del listado se ocultan en calendario para no confundir fechas de creación con previsiones. La delegación sigue aplicándose. La consulta antigua por `day` sigue disponible para compatibilidad.
+
+
+## Previsión vigente, navegación y selección visible
+
+La fecha de agenda se obtiene de `attention_deadline_at` en Madrid, o de `pickup_date` si aún no existe previsión. Nunca se usa la creación ni la entrega física. Si el operador mueve la previsión a otro día, el pedido se mueve en la agenda; no se aplica la franja antigua al nuevo día. La API etiqueta la fuente como PICKUP_WINDOW, EXPECTED o DATE_ONLY. Las franjas reservadas se diferencian de agrupaciones por hora estimada.
+
+Cada pedido del calendario abre su ficha en Listado y la enfoca, incluso fuera del filtro de creación habitual. Se muestra que es una selección del calendario y se puede volver al listado completo. La ficha mantiene las acciones y puede refrescarse con la consulta individual de operador, respetando su delegación y permiso de Pedidos.
+
+Los errores estructurados de validación se presentan como texto legible. Si una API anterior exige `day`, se consultan los días del rango como compatibilidad y se avisa de que debe completarse la actualización para incluir previsiones modificadas. No se afirma que haya cero pedidos cuando falla la consulta.
+
+Carrito y Cambiar recogida ofrecen radios Inmediata / Fecha programada. En el carrito, Inmediata permanece visible pero desactivada si no está disponible; el operador conserva la posibilidad de forzarla con la confirmación ya existente.

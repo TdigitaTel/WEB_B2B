@@ -1634,7 +1634,8 @@ def operator_order_calendar(day: date | None = None, delegation: str = "TODAS",
     end = datetime.combine(date_to+timedelta(days=1), time.min, ZoneInfo("Europe/Madrid")).astimezone(timezone.utc)
     query = select(Order).where(Order.origen_pedido == "B2B", Order.reconciliation_hidden_at.is_(None),
         Order.estado_registro_exit.notin_(["BORRADOR", "ELIMINADO"]),
-        or_(Order.pickup_date.between(date_from, date_to), (Order.pickup_date.is_(None)) & (Order.attention_deadline_at >= start) & (Order.attention_deadline_at < end)))
+        or_((Order.attention_deadline_at >= start) & (Order.attention_deadline_at < end),
+            Order.attention_deadline_at.is_(None) & Order.pickup_date.between(date_from, date_to)))
     rows = db.scalars(query.order_by(Order.attention_deadline_at, Order.id)).all()
     result = []
     for order in rows:
@@ -1643,9 +1644,17 @@ def operator_order_calendar(day: date | None = None, delegation: str = "TODAS",
         if delegation != "TODAS" and delegation not in {order.delegation_code, f"{order.company_code}:{order.delegation_code}"}:
             continue
         payload = order_payload(order, db, True, True)
+        from .order_calendar import appointment
+        payload.update(appointment(order))
         payload['calendar_kind'] = 'SCHEDULED' if order.pickup_date else 'IMMEDIATE'
         result.append(payload)
     return {"day":day, "date_from":date_from, "date_to":date_to, "timezone":"Europe/Madrid", "orders":result}
+
+
+@app.get("/api/v1/store/orders/{order_id}/detail")
+def operator_order_detail(order_id: str, user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
+    order = operator_web_order(db, order_id, user)
+    return order_payload(order, db, True, True)
 
 
 @app.get("/api/v1/store/orders/{order_id}/delivery-note")
