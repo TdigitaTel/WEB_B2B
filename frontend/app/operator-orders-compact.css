@@ -1,0 +1,23 @@
+/* Scoped to operation controls: order cards retain their existing presentation. */
+.ops-sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.operator-shell .page.ops-page{padding-top:8px}
+.ops-page .ops-toolbar-row{display:flex;flex-direction:row;align-items:flex-end;flex-wrap:wrap;gap:8px;margin-bottom:6px}
+.ops-page .ops-toolbar-row .ops-filters{display:flex;order:0;flex:0 1 auto;width:auto;align-items:center;gap:5px;margin:0;padding:0}
+.ops-page .ops-toolbar-row .ops-filters button{width:auto;min-height:32px;padding:5px 9px;font-size:12px;line-height:20px;box-shadow:none}
+.ops-page .ops-toolbar-row .ops-date-filters{order:1;flex:1 1 auto;justify-content:flex-end;align-items:flex-end;width:auto;gap:6px}
+.ops-page .ops-toolbar-row .ops-date-filters label{flex:0 1 auto;min-width:110px;font-size:10px;gap:2px}
+.operator-shell .ops-page .ops-date-filters input,.operator-shell .ops-page .ops-date-filters select{min-height:32px;height:32px;max-width:225px;padding:4px 7px;font-size:12px}
+.ops-page .ops-toolbar-row .ops-refresh{display:inline-flex;order:2;flex:none;align-items:center;gap:4px;min-height:32px;height:32px;padding:4px 8px;border:1px solid #a9c3d4;border-radius:6px;background:white;color:#155d89;font-size:12px;line-height:20px;cursor:pointer;white-space:nowrap}
+.ops-page .ops-refresh:disabled{opacity:.65;cursor:wait}
+.ops-page .order-calendar-switch{display:flex;gap:5px;margin:0 0 6px}
+.ops-page .order-calendar-switch button{min-height:32px;padding:5px 9px;font-size:12px;line-height:20px}
+.ops-page .order-daily-calendar>header{align-items:flex-end;gap:6px;margin:6px 0}
+.ops-page .order-daily-calendar>header>.order-calendar-switch{flex:1 1 auto;min-width:0;margin:0}
+.ops-page .order-daily-calendar>header>label{flex:0 1 auto;gap:2px;font-size:11px}
+.ops-page .order-daily-calendar>header input{width:140px;min-height:32px;height:32px;padding:4px 7px;font-size:12px}
+.ops-page .order-daily-calendar>header>button{min-height:32px;padding:5px 9px;font-size:12px;line-height:20px}
+.ops-page .calendar-legend{gap:12px;margin:5px 0;font-size:11px}
+.order-display-image-option{display:flex;align-items:center;gap:10px;margin:18px 0}
+.order-display-image-option input[type=checkbox]{width:18px;height:18px;min-height:0;accent-color:#1d6590}
+@media(pointer:coarse){.ops-page .ops-toolbar-row .ops-filters button,.ops-page .ops-toolbar-row .ops-refresh,.operator-shell .ops-page .ops-date-filters input,.operator-shell .ops-page .ops-date-filters select,.ops-page .order-calendar-switch button,.ops-page .order-daily-calendar>header input,.ops-page .order-daily-calendar>header>button{min-height:44px;height:auto}}
+@media(max-width:600px){.ops-page .ops-toolbar-row .ops-filters{flex:1 1 100%}.ops-page .ops-toolbar-row .ops-date-filters{justify-content:flex-start}.ops-page .ops-toolbar-row .ops-date-filters label{flex:1 1 110px}.operator-shell .ops-page .ops-date-filters input,.operator-shell .ops-page .ops-date-filters select{max-width:100%;width:100%}.ops-page .order-daily-calendar>header>.order-calendar-switch{flex-basis:100%}.ops-page .order-daily-calendar>header>label{flex:1;min-width:0}.ops-page .order-daily-calendar>header input{width:100%;min-width:0}}

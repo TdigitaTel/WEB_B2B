@@ -1,6 +1,6 @@
 'use client';
 export const settingsGroups=[
- {id:'orders',label:'Pedidos',options:[['pickup','Recogida y horarios'],['line-planning','Fechas por línea'],['series','Series de pedidos'],['email','Correo de pedidos']]},
+ {id:'orders',label:'Pedidos',options:[['order-display','Visualización de pedidos'],['pickup','Recogida y horarios'],['line-planning','Fechas por línea'],['series','Series de pedidos'],['email','Correo de pedidos']]},
  {id:'catalog',label:'Catálogo',options:[['search','Buscador y sinónimos'],['brands','Marcas']]},
  {id:'web',label:'Web',options:[['refresh','Actualización de pantallas'],['appearance','Imagen de acceso']]},
 ];

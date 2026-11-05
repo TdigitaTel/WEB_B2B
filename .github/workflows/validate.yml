@@ -24,6 +24,8 @@ jobs:
       - run: npm ci
       - run: npm run test:login-image
       - run: npm run test:operation-filter
+      - run: npm run test:operator-order-images
+      - run: npm run test:settings-menu
       - run: npm run build
 
   backend:
