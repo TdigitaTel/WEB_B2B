@@ -24,7 +24,7 @@ from .config import settings
 from .pickup import immediate_ready_at, immediate_available, next_open_date, scheduled_date_open, scheduled_ready_at, assign_attention_deadline, pickup_slots, pickup_slot_ready_at
 from .db import get_db
 from .schemas import OrderPlanningChange, PickupChange, PickupSettingsIn, DeliveryConfirmation, WebOrderRegistrationChange, UserDisplayPreferences
-from .exit_orders import upsert_exit_order, reconcile_exit_lines
+from .exit_orders import upsert_exit_order, reconcile_exit_lines, commercial_payload
 from .order_identity import linked_customer_order, customer_history_without_shadows
 from .order_reconciliation import reconcile_orders
 from .order_search import matches_order_search, order_number_sort_key
@@ -243,8 +243,7 @@ def order_payload(order: Order, db: Session, include_items: bool = False, histor
             result["items"].append({**key_payload(order), **line_marks(item), "exit_line_number": item.exit_line_number, "exit_removed_at": item.exit_removed_at, "exit_line_status": "ELIMINADA_EN_EXIT" if item.exit_removed_at else "ACTIVA", "line_key": str(item.id), "sku": item.sku, "description": item.description,
                                     "quantity": float(item.quantity), "served_quantity": float(served),
                                     "pending_quantity": float(pending), "unit": item.unit,
-                                    "unit_price": float(item.unit_price), "discount_pct": float(item.discount_pct),
-                                    "net_amount": float((item.quantity * item.unit_price * (1 - item.discount_pct / 100)).quantize(Decimal("0.01"))), "line_total": float(item.line_total),
+                                    **commercial_payload(item),
                                     "fulfillment_zone": item.fulfillment_zone or "OTROS"})
         history = db.scalars(select(OrderStatusHistory).where(OrderStatusHistory.order_id == order.id).order_by(OrderStatusHistory.created_at)).all()
         result["history_enabled"] = settings.show_order_status_history or history_for_operator

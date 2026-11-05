@@ -13,7 +13,7 @@ const view=s=>React.createElement('details',null,React.createElement('summary',n
  const button=document.querySelector('button'),advanced=document.getElementById(button.getAttribute('aria-controls'));
  assert.equal(button.textContent,'Información avanzada');assert.equal(button.getAttribute('aria-expanded'),'false');assert.ok(advanced.hidden);
  const top=[...document.querySelector('.pickup-summary').children].filter(el=>el!==advanced).map(el=>el.textContent).join(' ');
- assert.match(top,/Entregado parcial/);assert.match(top,/Avance: 28%/);assert.doesNotMatch(top,/Preparados|Disponibles|Última|Faltan|Revisar/);
+ assert.match(top,/Entregado parcial/);assert.match(top,/Avance de entrega: 28%/);assert.doesNotMatch(top,/Preparados|Disponibles|Última|Faltan|Revisar/);
  const progress=document.querySelector('progress');assert.equal(progress.value,2);assert.equal(progress.max,7);
  await React.act(async()=>button.click());assert.equal(button.getAttribute('aria-expanded'),'true');assert.equal(advanced.hidden,false);assert.equal(document.querySelector('details').open,false,'Information button does not open or close the order card');
  assert.match(advanced.textContent,/Preparados completos: 2 de 7/);assert.match(advanced.textContent,/Faltan por completar: 5/);assert.match(advanced.textContent,/Última recogida/);assert.match(advanced.textContent,/Revisar origen/);
@@ -21,7 +21,14 @@ const view=s=>React.createElement('details',null,React.createElement('summary',n
  assert.equal(document.querySelector('button').getAttribute('aria-expanded'),'true','Refresh preserves the chosen detail view');assert.match(document.querySelector('.pickup-progress-label').textContent,/42%/);
  await React.act(async()=>button.click());assert.ok(advanced.hidden);
  await React.act(async()=>root.render(view({...summary,state:'SIN_MATERIALES_ACTIVOS',total_materials:0,delivered_percent:null})));
- assert.equal(document.querySelector('progress'),null);assert.doesNotMatch(document.querySelector('.pickup-summary').textContent,/Avance: null/);
+ assert.equal(document.querySelector('progress'),null);assert.doesNotMatch(document.querySelector('.pickup-summary').textContent,/Avance de .*: null/);
+ await React.act(async()=>root.render(view({...summary,state:'PENDIENTE_RECOGIDA_TOTAL',total_materials:1,prepared_materials:1,prepared_percent:100,delivered_materials:0,delivered_percent:0,ready_materials:1})));
+ assert.match(document.querySelector('.pickup-progress-label').textContent,/Avance de preparación: 100%/);
+ assert.equal(document.querySelector('progress').value,1);assert.equal(document.querySelector('progress').max,1);assert.equal(document.querySelector('progress').getAttribute('aria-label'),'Materiales preparados');
+ await React.act(async()=>root.render(view({...summary,state:'PENDIENTE_RECOGIDA_PARCIAL',prepared_materials:4,prepared_percent:57,delivered_materials:2,delivered_percent:28})));
+ assert.match(document.querySelector('.pickup-progress-label').textContent,/preparación: 57%/);assert.equal(document.querySelector('progress').value,4);
+ await React.act(async()=>root.render(view({...summary,state:'ENTREGADO_TOTAL',delivered_materials:7,delivered_percent:100})));
+ assert.match(document.querySelector('.pickup-progress-label').textContent,/entrega: 100%/);assert.equal(document.querySelector('progress').value,7);
  if(process.env.SUMMARY_PREVIEW){await React.act(async()=>root.render(view(summary)));const css=fs.readFileSync(require('node:path').resolve(__dirname,'../app/order-pickup.css'),'utf8');fs.writeFileSync(process.env.SUMMARY_PREVIEW,'<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font:16px system-ui;color:#233c4a;margin:24px}.card{max-width:360px;padding:24px;border:1px solid #cad8e0;border-radius:12px}.pickup-summary{font-size:16px}.pickup-summary .pickup-state{font-size:20px}</style><style>'+css+'</style><h1>Resumen del pedido</h1><div class="card">'+document.querySelector('.pickup-summary').outerHTML+'</div></html>')}
  await React.act(async()=>root.unmount());dom.window.close();console.log('Compact pickup summary: status/progress, hidden advanced data, safe card interaction, refresh preservation and zero materials passed');
 })().catch(e=>{console.error(e);process.exitCode=1;dom.window.close()});

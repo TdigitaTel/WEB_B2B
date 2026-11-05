@@ -60,8 +60,25 @@ class ExitOrderInput(BaseModel):
     lines: list[ExitOrderLineInput] = Field(default_factory=list)
 
 
+def commercial_snapshot(line: ExitOrderLineInput) -> dict:
+    """Importes vigentes de PedidoVentaLineas, sin modificar la captura WEB."""
+    net = line.net_amount if line.net_amount is not None else (line.quantity * line.unit_price * (1-line.discount_pct/100)).quantize(Decimal("0.01"))
+    total = line.line_total if line.line_total is not None else (net * (1+line.tax_rate/100)).quantize(Decimal("0.01"))
+    return {"unit_price":str(line.unit_price), "discount_pct":str(line.discount_pct),
+            "tax_rate":str(line.tax_rate), "net_amount":str(net), "line_total":str(total)}
+
+
+def commercial_payload(item: OrderItem) -> dict:
+    snapshot = item.exit_commercial_snapshot
+    if snapshot is not None:
+        return {key:float(Decimal(snapshot[key])) for key in ("unit_price", "discount_pct", "net_amount", "line_total")}
+    return {"unit_price":float(item.unit_price), "discount_pct":float(item.discount_pct),
+            "net_amount":float((item.quantity*item.unit_price*(1-item.discount_pct/100)).quantize(Decimal("0.01"))),
+            "line_total":float(item.line_total)}
+
+
 def reconcile_exit_lines(db: Session, order: Order, lines: list[ExitOrderLineInput]) -> None:
-    """Retain the WEB snapshot and persistent line IDs; EXIT only updates fulfilment.
+    """Retain the WEB snapshot and persistent line IDs; EXIT updates fulfilment and a separate commercial snapshot.
 
     Line numbers are scoped by the parent order (which holds the four EXIT keys).
     Legacy lines can be linked by SKU only when unambiguous. Ambiguous legacy
@@ -124,6 +141,7 @@ def reconcile_exit_lines(db: Session, order: Order, lines: list[ExitOrderLineInp
                              tax_rate=line.tax_rate,
                              line_total=line.line_total if line.line_total is not None else line.quantity * line.unit_price)
             db.add(item)
+        item.exit_commercial_snapshot = commercial_snapshot(line)
         item.exit_entered_at = item.exit_entered_at or datetime.now(timezone.utc)
         item.exit_line_number = line.line_number or item.exit_line_number
         item.exit_removed_at = None
