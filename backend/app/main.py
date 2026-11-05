@@ -67,6 +67,9 @@ from .search_settings import router as search_settings_router
 app.include_router(search_settings_router)
 from .order_email_settings import router as order_email_settings_router
 app.include_router(order_email_settings_router)
+from .customer_order_email import router as customer_order_email_router
+app.include_router(customer_order_email_router)
+from . import order_email_events  # Transactional status notifications for all API writers.
 from .screen_refresh import router as screen_refresh_router
 app.include_router(screen_refresh_router)
 from .product_type_synonyms import router as product_type_synonyms_router, catalog_search_config
@@ -149,7 +152,8 @@ def customer_for(user: User, db: Session) -> dict:
         raise HTTPException(503, "No se pudo consultar el cliente en EXITERP") from exc
     if not customer:
         raise HTTPException(403, "El cliente no existe o no está disponible en EXITERP")
-    return {**customer, "highlight_price_without_tax": highlight_price_without_tax(db, code)}
+    from .customer_order_email import preferences
+    return {**customer, "order_email_recipients": preferences(db, code), "highlight_price_without_tax": highlight_price_without_tax(db, code)}
 
 
 def legacy_customer_id(user: User) -> int | None:

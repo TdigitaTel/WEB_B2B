@@ -33,7 +33,8 @@ def test_permissions_and_defaults():
     assert login('compras001@cliente.test').get(PATH).status_code==403
     client=login();data=client.get(PATH).json()
     assert data['sender_email']=='info@bermudezulloa.es'
-    assert data['automatic_dispatch_available'] is False
+    assert data['automatic_dispatch_available'] is True
+    assert data['automatic_enabled'] is False
     assert data['password_configured'] is False
     with SessionLocal() as db:
         user=db.scalar(select(User).where(User.email=='operador@bermudez.test'))

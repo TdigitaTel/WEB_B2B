@@ -1,8 +1,4 @@
-"""Operator configuration for customer-facing order status mail.
-
-This module persists preferences and sends an explicit test message only. A status
-change dispatcher is deliberately not claimed to exist by the API or interface.
-"""
+"""Operator SMTP configuration, explicit tests and automatic dispatch opt-in."""
 import base64
 import hashlib
 import logging
@@ -42,6 +38,7 @@ def email_address(value):
 
 class MailConfiguration(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    automatic_enabled: bool = Field(default=False, strict=True)
     content: EmailContent = Field(default_factory=EmailContent)
     sender_name: str = Field(default="Bermúdez Ulloa", min_length=1, max_length=100)
     sender_email: str = "info@bermudezulloa.es"
@@ -125,7 +122,7 @@ def configuration(db):
 def public_settings(row, data):
     return {**data.model_dump(), "password_configured": bool(row and row.password_ciphertext),
             "available_states": STATES, "recipient_source": "CUSTOMER_RECORD",
-            "automatic_dispatch_available": False, "content_states": LABELS, "content_suggestions": MESSAGES}
+            "automatic_dispatch_available": True, "content_states": LABELS, "content_suggestions": MESSAGES}
 
 
 @router.get("")
@@ -145,6 +142,10 @@ def save_settings(data: MailSave, response: Response, db: Session = Depends(get_
     if row is None:
         row = OrderEmailSettings(id=1)
         db.add(row)
+    previously_enabled = bool((row.configuration or {}).get("automatic_enabled"))
+    if data.automatic_enabled and not previously_enabled:
+        from .order_email_events import baseline_all
+        baseline_all(db)
     row.configuration = data.model_dump(exclude={"password", "clear_password"})
     changed = False
     if data.clear_password:
@@ -257,35 +258,39 @@ def test_mail(data: TestMail, db: Session = Depends(get_db), user: User = Depend
     message["Subject"] = "[PRUEBA] " + template["subject"]
     message.set_content(template["text"])
     message.add_alternative(template["html"], subtype="html")
-    phase = 'CONNECT'
+    phase = ['CONNECT']
     try:
-        context = ssl.create_default_context()
-        if config.security == "SSL":
-            connection = smtplib.SMTP_SSL(config.smtp_host, config.smtp_port, timeout=15, context=context)
-        else:
-            connection = smtplib.SMTP(config.smtp_host, config.smtp_port, timeout=15)
-        with connection as smtp:
-            if config.security == "STARTTLS":
-                phase = 'TLS'
-                smtp.starttls(context=context)
-            phase = 'AUTH'
-            smtp.login(config.username, password)
-            phase = 'SEND'
-            refused = smtp.send_message(message)
-            if refused:
-                raise smtplib.SMTPRecipientsRefused(refused)
+        send_message(config, password, message, phase)
     except (smtplib.SMTPException, OSError) as exc:
-        code, explanation = smtp_failure(exc, phase)
-        diagnostic = smtp_diagnostic(exc, phase, config, password, data.recipient)
+        code, explanation = smtp_failure(exc, phase[0])
+        diagnostic = smtp_diagnostic(exc, phase[0], config, password, data.recipient)
         diagnostic['code'] = code
         logging.getLogger(__name__).warning('ORDER_EMAIL_TEST_FAILED %s', json.dumps(diagnostic, ensure_ascii=False))
         audit(db, user, "ORDER_EMAIL_TEST_FAILED", "ORDER_EMAIL_SETTINGS", "1", diagnostic)
         db.commit()
         detail = (explanation + '\n\nDiagnóstico SMTP · Referencia ' + diagnostic['reference']
-                  + '\nFase: ' + phase + ' · Librería: ' + diagnostic['exception']
+                  + '\nFase: ' + phase[0] + ' · Librería: ' + diagnostic['exception']
                   + (' · Código SMTP: ' + str(diagnostic['smtp_code']) if diagnostic['smtp_code'] is not None else '')
                   + '\nRespuesta: ' + diagnostic['response'])
         raise HTTPException(502, detail, headers={"X-Mail-Error":code}) from None
     audit(db, user, "ORDER_EMAIL_TEST_SENT", "ORDER_EMAIL_SETTINGS", "1")
     db.commit()
     return {"message": "El servidor de correo ha aceptado el mensaje de prueba. Comprueba la bandeja de entrada y correo no deseado."}
+
+
+def send_message(config, password, message, phase):
+    context = ssl.create_default_context()
+    if config.security == "SSL":
+        connection = smtplib.SMTP_SSL(config.smtp_host, config.smtp_port, timeout=15, context=context)
+    else:
+        connection = smtplib.SMTP(config.smtp_host, config.smtp_port, timeout=15)
+    with connection as smtp:
+        if config.security == "STARTTLS":
+            phase[0] = 'TLS'
+            smtp.starttls(context=context)
+        phase[0] = 'AUTH'
+        smtp.login(config.username, password)
+        phase[0] = 'SEND'
+        refused = smtp.send_message(message)
+        if refused:
+            raise smtplib.SMTPRecipientsRefused(refused)

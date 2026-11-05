@@ -1,0 +1,6 @@
+.customer-order-emails{max-width:760px;margin:24px 0;padding:20px;border:1px solid #d5e0e7;border-radius:12px;background:#fff}
+.customer-order-emails h3{margin-top:0}.customer-email-options{display:grid;gap:12px}
+.customer-email-option{display:flex;justify-content:space-between;gap:18px;align-items:center;padding:14px;background:#f3f8fa;border-radius:8px}
+.customer-email-option>span{display:grid;gap:5px;min-width:0;overflow-wrap:anywhere}.customer-email-option label{display:flex;align-items:center;gap:8px;font-size:14px;flex-shrink:0}
+.customer-email-option input[type=checkbox]{width:18px;height:18px;min-height:0;accent-color:#1e648d}.customer-order-emails small{display:block;color:#607783;margin-bottom:14px}.customer-web-reference{overflow-wrap:anywhere}
+@media(max-width:600px){.customer-email-option{align-items:flex-start;flex-direction:column}.customer-order-emails{padding:16px}}

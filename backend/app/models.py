@@ -631,3 +631,35 @@ class OrderEmailSettings(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(primary_key=True)
     configuration: Mapped[dict] = mapped_column(JSON, default=dict)
     password_ciphertext: Mapped[str | None] = mapped_column(Text)
+
+
+class CustomerOrderEmailSetting(Base, TimestampMixin):
+    __tablename__ = "customer_order_email_settings"
+    customer_code: Mapped[str] = mapped_column(String(40), primary_key=True)
+    email1_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    email2_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+
+class OrderEmailCheckpoint(Base):
+    __tablename__ = "order_email_checkpoints"
+    order_id: Mapped[int] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"), primary_key=True)
+    state: Mapped[str] = mapped_column(String(120))
+    revision: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class OrderEmailDelivery(Base):
+    __tablename__ = "order_email_deliveries"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"), index=True)
+    revision: Mapped[int] = mapped_column(Integer)
+    state: Mapped[str] = mapped_column(String(80))
+    payload: Mapped[dict] = mapped_column(JSON)
+    status: Mapped[str] = mapped_column(String(20), default="PENDING", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    completed_slots: Mapped[list] = mapped_column(JSON, default=list)
+    diagnostic: Mapped[dict | None] = mapped_column(JSON)
+    tracking_token_ciphertext: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (UniqueConstraint("order_id", "revision", name="uq_order_email_revision"),)

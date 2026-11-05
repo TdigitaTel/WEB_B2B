@@ -66,6 +66,16 @@ services:
     mem_limit: ${REPLENISHMENT_WORKER_MEMORY:-1536m}
     restart: unless-stopped
 
+  order-email-worker:
+    image: webb2b-api:${IMAGE_TAG:-local}
+    command: ["python", "-m", "app.order_email_worker"]
+    environment: *api-environment
+    depends_on:
+      api:
+        condition: service_healthy
+    mem_limit: 256m
+    restart: unless-stopped
+
   customer-sync:
     image: webb2b-api:${IMAGE_TAG:-local}
     build: ./backend
