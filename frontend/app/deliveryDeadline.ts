@@ -1,5 +1,7 @@
 /** Cálculos puros para el plazo de entrega; las fechas incluyen zona horaria. */
 export type DeliveryTiming = {
+  pickup_slot_start?:string|null;
+  pickup_slot_end?:string|null;
   pickup_summary?:{prepared_complete:boolean}|null;
   attention_deadline_at?: string|null;
   delivered_at?: string|null;

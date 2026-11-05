@@ -188,3 +188,41 @@ def test_legacy_origin_is_unknown_and_ambiguous_matches_do_not_confirm_entry():
         reconcile_exit_lines(db, order, [line("2")]); db.commit()
         assert line_marks(items[0])["created_in_web"] is None
         assert all(not line_marks(item)["entered_in_exit"] for item in items)
+
+
+def test_exit_discount_and_amounts_are_visible_without_overwriting_web_snapshot():
+    from app.main import order_payload
+    from app.price_visibility import protect_payload
+    with SessionLocal() as db:
+        _, order, items = setup_order(db)
+        original=(items[0].unit_price,items[0].discount_pct,items[0].line_total)
+        incoming=ExitOrderLineInput(line_number='1',sku='REPEATED',description='Termo',quantity=1,
+            unit_price=Decimal('597'),discount_pct=Decimal('45'),net_amount=Decimal('328.35'),line_total=Decimal('397.30'))
+        reconcile_exit_lines(db,order,[incoming,line('2')]);db.commit()
+        payload=order_payload(order,db,True)
+        item=payload['items'][0]
+        assert item['unit_price']==597 and item['discount_pct']==45
+        assert item['net_amount']==328.35 and item['line_total']==397.30
+        db.refresh(items[0])
+        assert (items[0].unit_price,items[0].discount_pct,items[0].line_total)==original
+        assert items[0].created_in_web is True
+        assert db.get(OrderItem,items[0].id).exit_commercial_snapshot['discount_pct']=='45'
+        hidden=protect_payload(payload,{},hide_prices=True)['items'][0]
+        assert all(hidden[key] is None for key in ('unit_price','discount_pct','net_amount','line_total'))
+        incoming.discount_pct=Decimal('0');incoming.net_amount=Decimal('597');incoming.line_total=Decimal('722.37')
+        reconcile_exit_lines(db,order,[incoming,line('2')]);db.commit()
+        assert order_payload(order,db,True)['items'][0]['discount_pct']==0
+        reconcile_exit_lines(db,order,[line('2')]);db.commit()
+        removed=order_payload(order,db,True)['items'][0]
+        assert removed['exit_removed_at'] and removed['unit_price']==597
+
+
+def test_commercial_snapshot_preserves_exit_net_and_zero_values():
+    from app.exit_orders import commercial_snapshot
+    line=ExitOrderLineInput(sku='A',description='A',quantity=2,unit_price=Decimal('10'),discount_pct=Decimal('25'))
+    values=commercial_snapshot(line)
+    assert Decimal(values['net_amount'])==15 and Decimal(values['line_total'])==Decimal('18.15')
+    line.net_amount=Decimal('14.99');line.line_total=Decimal('18.14')
+    assert commercial_snapshot(line)['net_amount']=='14.99'
+    line.discount_pct=Decimal('100');line.net_amount=Decimal('0');line.line_total=Decimal('0')
+    assert commercial_snapshot(line)['net_amount']=='0' and commercial_snapshot(line)['line_total']=='0'

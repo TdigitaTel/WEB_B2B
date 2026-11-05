@@ -63,6 +63,50 @@ def scheduled_ready_at(db, company, delegation, pickup_date):
     return immediate_ready_at(db, company, delegation, start)
 
 
+def pickup_slots(db, company, delegation, pickup_date):
+    """Franjas locales de una hora; nunca atraviesan el cierre de una sede."""
+    config = db.get(PickupSettings, 1)
+    days = (config.schedules or {}).get(f"{company}:{delegation}") if config else None
+    if not days or not days[pickup_date.weekday()].get("enabled", True):
+        return []
+    day = days[pickup_date.weekday()]
+    windows = []
+    for period in ("morning", "afternoon"):
+        start, end = day.get(period+"_from"), day.get(period+"_to")
+        if start and end:
+            opening = datetime.combine(pickup_date, time.fromisoformat(start), ZoneInfo("Europe/Madrid"))
+            closing = datetime.combine(pickup_date, time.fromisoformat(end), opening.tzinfo)
+            if closing > opening:
+                windows.append((opening, closing))
+    merged = []
+    for opening, closing in sorted(windows):
+        if merged and opening <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(closing, merged[-1][1]))
+        else:
+            merged.append((opening, closing))
+    result = []
+    for opening, closing in merged:
+        earliest = opening + timedelta(minutes=config.preparation_minutes)
+        start = opening
+        while start < closing:
+            end = min(start + timedelta(hours=1), closing)
+            ready = max(start, earliest)
+            if ready <= end and ready <= closing:
+                result.append({"start":start.strftime("%H:%M"), "end":end.strftime("%H:%M"), "ready_at":ready.isoformat()})
+            start = end
+    return result
+
+
+def pickup_slot_ready_at(db, company, delegation, pickup_date, start=None, end=None):
+    from fastapi import HTTPException
+    if not start and not end:
+        return scheduled_ready_at(db, company, delegation, pickup_date)
+    for slot in pickup_slots(db, company, delegation, pickup_date):
+        if slot['start'] == start and slot['end'] == end:
+            return datetime.fromisoformat(slot['ready_at'])
+    raise HTTPException(422, "La franja elegida no está disponible en el horario de esta sede y fecha")
+
+
 def assign_attention_deadline(order, db, *, operator_override=False, now=None):
     """Conserva el compromiso del pedido aunque después cambien los parámetros."""
     from datetime import timezone
@@ -71,7 +115,8 @@ def assign_attention_deadline(order, db, *, operator_override=False, now=None):
     config = db.get(PickupSettings, 1)
     minutes = config.preparation_minutes if config else 60
     if order.pickup_date:
-        ready = scheduled_ready_at(db, order.company_code, order.delegation_code, order.pickup_date)
+        ready = pickup_slot_ready_at(db, order.company_code, order.delegation_code, order.pickup_date,
+            getattr(order, "pickup_slot_start", None), getattr(order, "pickup_slot_end", None))
     elif operator_override:
         ready = now + timedelta(minutes=minutes)
     else:
