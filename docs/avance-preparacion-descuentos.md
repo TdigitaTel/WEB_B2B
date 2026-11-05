@@ -1,0 +1,7 @@
+# Avance y descuentos de pedidos
+
+Mientras el estado es preparación o pendiente de recogida, la barra muestra materiales preparados y se titula «Avance de preparación». En entregado parcial/total muestra materiales recogidos y se titula «Avance de entrega». No se confunden preparación y recogida física. El denominador sigue excluyendo las líneas eliminadas de EXIT. El detalle avanzado conserva ambos porcentajes. El componente es común a cliente, operador, calendario y seguimiento compartido.
+
+El descuento vigente procede de PedidoVentaLineas.[%Descuento], que ya tiene prioridad en el lector SQL. La reconciliación antes solo actualizaba cantidades servidas y no refrescaba importes de líneas WEB. Ahora guarda un JSON independiente `order_items.exit_commercial_snapshot` con precio, descuento, IVA, importe neto y total leídos de EXIT. Se utilizan esos valores para presentar el detalle, manteniendo los datos originales WEB, identificadores, origen y líneas eliminadas. No se deduce el descuento a partir del total de cabecera. Se respetan ImporteNeto y el total de EXIT, incluidos cero y redondeos; solo se calculan si no vienen informados.
+
+Bootstrap añade la columna de forma idempotente en PostgreSQL. Los pedidos existentes se actualizan al volver a sincronizar su detalle completo desde EXIT. Si no se ha leído correctamente, se conservan los últimos importes guardados; no se inventan descuentos. Los permisos para ocultar precios siguen aplicándose a todos los importes.
