@@ -77,6 +77,14 @@ def test_window_is_persisted_and_calendar_uses_collection_day_not_creation(picku
     assert customer.get('/api/v1/store/order-calendar',params=query).status_code==403
     assert oid not in [row['id'] for row in operator.get('/api/v1/store/order-calendar',params={**query,'delegation':'99'}).json()['orders']]
     assert oid not in [row['id'] for row in operator.get('/api/v1/store/order-calendar',params={**query,'day':(day+timedelta(days=1)).isoformat()}).json()['orders']]
+    week=operator.get('/api/v1/store/order-calendar',params={'date_from':day.isoformat(),'date_to':(day+timedelta(days=6)).isoformat()})
+    assert week.status_code==200,week.text
+    assert oid in [row['id'] for row in week.json()['orders']]
+    for params in ({'date_from':day.isoformat(),'date_to':(day+timedelta(days=7)).isoformat()}, {'date_from':day.isoformat(),'date_to':(day-timedelta(days=1)).isoformat()}, {'date_from':day.isoformat()}, {**query,'date_from':day.isoformat(),'date_to':day.isoformat()}):
+        assert operator.get('/api/v1/store/order-calendar',params=params).status_code==422
+    current=operator.get('/api/v1/store/order-calendar').json()
+    today=datetime.now(MADRID).date();monday=today-timedelta(days=today.weekday())
+    assert current['date_from']==monday.isoformat() and current['date_to']==(monday+timedelta(days=6)).isoformat()
     newslot=preview['pickup_slots'][0]
     revised=operator.patch(f'/api/v1/store/orders/{oid}/pickup',json={'pickup_date':day.isoformat(),'pickup_slot_start':newslot['start'],'pickup_slot_end':newslot['end']})
     assert revised.status_code==200,revised.text

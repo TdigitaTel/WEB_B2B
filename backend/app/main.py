@@ -1615,16 +1615,27 @@ def operator_web_order(db: Session, order_id: str, user: User) -> Order:
 
 
 @app.get("/api/v1/store/order-calendar")
-def operator_order_calendar(day: date, delegation: str = "TODAS",
+def operator_order_calendar(day: date | None = None, delegation: str = "TODAS",
+        date_from: date | None = None, date_to: date | None = None,
         user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
     if not permissions_for(user, db).get("orders"):
         raise HTTPException(403, "No tienes permiso para consultar pedidos")
     from datetime import time
-    start = datetime.combine(day, time.min, ZoneInfo("Europe/Madrid")).astimezone(timezone.utc)
-    end = datetime.combine(day+timedelta(days=1), time.min, ZoneInfo("Europe/Madrid")).astimezone(timezone.utc)
+    if day is not None:
+        if date_from is not None or date_to is not None:
+            raise HTTPException(422, "Indica un día o un rango de fechas, no ambos")
+        date_from = date_to = day
+    elif date_from is None and date_to is None:
+        today = datetime.now(ZoneInfo("Europe/Madrid")).date()
+        date_from = today - timedelta(days=today.weekday())
+        date_to = date_from + timedelta(days=6)
+    if date_from is None or date_to is None or not 0 <= (date_to-date_from).days <= 6:
+        raise HTTPException(422, "El calendario admite un rango de uno a siete días, con inicio anterior o igual al fin")
+    start = datetime.combine(date_from, time.min, ZoneInfo("Europe/Madrid")).astimezone(timezone.utc)
+    end = datetime.combine(date_to+timedelta(days=1), time.min, ZoneInfo("Europe/Madrid")).astimezone(timezone.utc)
     query = select(Order).where(Order.origen_pedido == "B2B", Order.reconciliation_hidden_at.is_(None),
         Order.estado_registro_exit.notin_(["BORRADOR", "ELIMINADO"]),
-        or_(Order.pickup_date == day, (Order.pickup_date.is_(None)) & (Order.attention_deadline_at >= start) & (Order.attention_deadline_at < end)))
+        or_(Order.pickup_date.between(date_from, date_to), (Order.pickup_date.is_(None)) & (Order.attention_deadline_at >= start) & (Order.attention_deadline_at < end)))
     rows = db.scalars(query.order_by(Order.attention_deadline_at, Order.id)).all()
     result = []
     for order in rows:
@@ -1635,7 +1646,7 @@ def operator_order_calendar(day: date, delegation: str = "TODAS",
         payload = order_payload(order, db, True, True)
         payload['calendar_kind'] = 'SCHEDULED' if order.pickup_date else 'IMMEDIATE'
         result.append(payload)
-    return {"day":day, "timezone":"Europe/Madrid", "orders":result}
+    return {"day":day, "date_from":date_from, "date_to":date_to, "timezone":"Europe/Madrid", "orders":result}
 
 
 @app.get("/api/v1/store/orders/{order_id}/delivery-note")

@@ -9,3 +9,8 @@ La preparación probable es el máximo entre inicio de franja y apertura del tur
 El operador puede modificar fecha y franja desde Cambiar recogida. Se valida también en servidor y se deja historial. Una franja que deje de ser válida no se acepta al confirmar. Los pedidos anteriores sin franja mantienen su compromiso hasta edición.
 
 Pedidos WEB → Calendario diario consulta por fecha de recogida o, en inmediatos, por fecha local de preparación prevista; no por creación del pedido. Respeta permisos de Pedidos y delegaciones. Agrupa por rango, separa inmediatos y programados sin franja. Se conservan las acciones y el detalle del gestor. La consulta no modifica pedidos ni sincroniza su estado desde EXIT. La actualización periódica sigue la configuración de actualización de pantallas.
+
+
+## Vista semanal
+
+El calendario se abre por defecto en Pedidos WEB y muestra de lunes a domingo de la semana actual en Europe/Madrid. Todos los días aparecen aunque estén vacíos, con franjas y número de pedidos. Al seleccionar un día se conservan las acciones del gestor debajo. Desde/Hasta admite entre uno y siete días inclusive; el servidor también rechaza rangos mayores, invertidos o incompletos. Semana actual restablece la semana en curso. Los filtros del listado se ocultan en calendario para no confundir fechas de creación con previsiones. La delegación sigue aplicándose. La consulta antigua por `day` sigue disponible para compatibilidad.
