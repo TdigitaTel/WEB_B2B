@@ -21,9 +21,10 @@
     "test:order-pickups": "node scripts/test-order-pickups.cjs",
     "test:order-fulfillment": "node scripts/test-order-fulfillment.cjs",
     "test:pickup-summary": "node scripts/test-pickup-summary.cjs",
+    "test:operator-order-images": "node scripts/test-operator-order-images.cjs",
+    "test:settings-menu": "node scripts/test-settings-menu.cjs",
     "test:operation-filter": "node scripts/test-operation-filter.cjs",
-    "test:order-email": "node scripts/test-order-email.cjs",
-    "test:settings-menu": "node scripts/test-settings-menu.cjs"
+    "test:order-email": "node scripts/test-order-email.cjs"
   },
   "dependencies": {
     "jsqr": "^1.4.0",

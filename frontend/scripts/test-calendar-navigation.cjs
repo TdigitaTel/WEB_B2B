@@ -22,9 +22,15 @@ function respond(body,status=200){return new Response(JSON.stringify(body),{stat
  global.fetch=async url=>String(url).includes('order-calendar')?respond({detail:{message:'No disponible temporalmente'}},503):respond([]);
  await React.act(async()=>root.render(React.createElement(Calendar,{delegation:'0:00',onOpenOrder:()=>{}})));
  assert.match(document.querySelector('[role=alert]').textContent,/No disponible temporalmente/);assert.equal(document.querySelectorAll('.calendar-day').length,7);assert.doesNotMatch(document.querySelector('.calendar-week-grid').textContent,/0 pedidos/);
- global.fetch=async url=>respond(String(url).includes('/order-calendar')?{orders:[order]}:String(url).includes('/delegations')?[]:{lines:[],version:0});
+ let calendarReads=0;global.fetch=async url=>{if(String(url).includes('/order-calendar'))calendarReads++;return respond(String(url).includes('/order-calendar')?{orders:[order]}:String(url).includes('/delegations')?[]:{lines:[],version:0})};
  await React.act(async()=>root.render(React.createElement(m.exports.Operations,{orders:[],onRefresh:async()=>{}})));
  assert.equal(document.querySelectorAll('.calendar-timetable thead th').length,8,'Seven day columns plus time axis');
+ assert.equal(document.querySelectorAll('.ops-refresh').length,1);assert.equal(document.querySelector('.ops-heading'),null);
+ assert.equal(document.querySelector('.order-daily-calendar header .order-calendar-switch')!==null,true,'View controls share the calendar date toolbar');
+ const selectedFrom=document.querySelector('[aria-label="Desde del calendario"]').value;
+ await React.act(async()=>document.querySelector('.ops-refresh').click());
+ assert.equal(calendarReads,2,'The single compact refresh also reloads calendar appointments');
+ assert.equal(document.querySelector('[aria-label="Desde del calendario"]').value,selectedFrom);
  assert.ok(document.querySelector(`td[data-day="${today}"][data-hour="12"] .calendar-event`),'Order appears in its actual day/hour cell');
  assert.equal(document.querySelector('.order-daily-calendar .operator-web-order'),null,'No large order cards before selecting an event');
  assert.equal(document.querySelector('.calendar-order-links'),null);
