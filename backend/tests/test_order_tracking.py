@@ -130,3 +130,18 @@ def test_live_status_matches_all_four_keys_and_outage_retains_snapshot(monkeypat
     def unavailable(*a,**k):raise RuntimeError("SQL no disponible")
     monkeypatch.setattr(module,"fetch_customer_exit_orders",unavailable)
     data=read(token).json();assert data["state"]=="REGISTRADO" and data["warning"] and len(data["items"])==1
+
+
+def test_public_timeline_has_only_safe_states_dates_and_no_exit_delivery_claim():
+    from app.models import OrderStatusHistory
+    order_id=setup_order();token=create(operator(),order_id)
+    with SessionLocal() as db:
+        order=db.scalar(select(Order).where(Order.public_id==order_id))
+        for state,source in [('PENDIENTE','WEB'),('REGISTRADO','EXIT'),('ENTREGADO','EXIT'),('ENTREGADO_PARCIAL','WEB')]:
+            db.add(OrderStatusHistory(order_id=order.id,estado_registro_exit=state,source=source,note='PRIVATE_TIMELINE_NOTE',created_at=datetime(2026,11,3,12,tzinfo=timezone.utc)))
+        db.commit()
+    response=read(token);assert response.status_code==200
+    timeline=response.json()['workflow']
+    assert [row['etapa'] for row in timeline]==['PENDIENTE','REGISTRADO','ENTREGADO_PARCIAL']
+    assert all(set(row)=={'etapa','completed_at','date_only'} for row in timeline)
+    assert 'PRIVATE_TIMELINE_NOTE' not in response.text
