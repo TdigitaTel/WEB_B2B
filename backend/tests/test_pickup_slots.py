@@ -92,3 +92,31 @@ def test_window_is_persisted_and_calendar_uses_collection_day_not_creation(picku
     rejected=operator.patch(f'/api/v1/store/orders/{oid}/pickup',json={'pickup_date':day.isoformat(),'pickup_slot_start':'23:00','pickup_slot_end':'23:59'})
     assert rejected.status_code==422
     assert customer.get(f'/api/v1/orders/{oid}').json()['pickup_slot_start']==newslot['start']
+    assert operator.get(f'/api/v1/store/orders/{oid}/detail').json()['id']==oid
+    assert customer.get(f'/api/v1/store/orders/{oid}/detail').status_code==403
+    with SessionLocal() as db:
+        changed=db.scalar(select(Order).where(Order.public_id==oid))
+        changed.attention_deadline_at=datetime.combine(day+timedelta(days=2),datetime.min.time(),MADRID)+timedelta(hours=12)
+        db.commit()
+    assert oid not in [row['id'] for row in operator.get('/api/v1/store/order-calendar',params=query).json()['orders']]
+    moved=operator.get('/api/v1/store/order-calendar',params={**query,'day':(day+timedelta(days=2)).isoformat()}).json()['orders']
+    shifted=next(row for row in moved if row['id']==oid)
+    assert shifted['calendar_date']==(day+timedelta(days=2)).isoformat()
+    assert shifted['calendar_time_source']=='EXPECTED' and shifted['calendar_slot_start'] is None
+
+
+
+def test_calendar_appointment_uses_current_forecast_and_labels_only_valid_window():
+    from app.order_calendar import appointment
+    order=SimpleNamespace(pickup_date=date(2026,11,6),pickup_slot_start='12:00',pickup_slot_end='13:00',attention_deadline_at=datetime(2026,11,6,12,tzinfo=MADRID))
+    assert appointment(order)['calendar_time_source']=='PICKUP_WINDOW'
+    order.attention_deadline_at=datetime(2026,11,7,0,30,tzinfo=MADRID)
+    result=appointment(order)
+    assert result['calendar_date']==date(2026,11,7) and result['calendar_time_source']=='EXPECTED'
+    assert result['calendar_slot_start'] is None
+    order.attention_deadline_at=datetime(2026,11,6,14,tzinfo=MADRID)
+    assert appointment(order)['calendar_time_source']=='EXPECTED'
+    order.attention_deadline_at=None
+    assert appointment(order)['calendar_date']==date(2026,11,6)
+    order.pickup_slot_start=order.pickup_slot_end=None
+    assert appointment(order)['calendar_time_source']=='DATE_ONLY'
