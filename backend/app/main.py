@@ -1,4 +1,4 @@
-from .operator_permissions import can_operate_delegation, delegation_scope
+from .operator_permissions import can_operate_delegation, delegation_scope, permissions_for
 from datetime import date, datetime, timezone, timedelta
 from decimal import Decimal
 from functools import lru_cache
@@ -596,16 +596,24 @@ def update_pickup_settings(data: PickupSettingsIn, user: User = Depends(require_
     return pickup_settings(user, db)
 
 
+def authorize_material_visual(user: User, db: Session):
+    if user.role in {"OPERADOR_TIENDA", "ADMIN"}:
+        if not permissions_for(user, db).get("orders"):
+            raise HTTPException(403, "No tienes permiso para consultar imágenes de pedidos")
+        return
+    customer_for(user, db)
+
+
 @app.get("/api/v1/products/by-sku/{sku}/visual")
 def product_visual_by_sku(sku: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    customer_for(user, db)
+    authorize_material_visual(user, db)
     product = db.scalar(select(Product).where(Product.sku == sku))
     return {"family": (product.family if product else None) or "Sin clasificar"}
 
 
 @app.get("/api/v1/products/by-sku/{sku}/image")
 def product_image_by_sku(sku: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    customer_for(user, db)
+    authorize_material_visual(user, db)
     product = db.scalar(select(Product).where(Product.sku == sku))
     if not product:
         raise HTTPException(404, "Imagen no disponible")
@@ -614,7 +622,7 @@ def product_image_by_sku(sku: str, user: User = Depends(current_user), db: Sessi
 
 @app.get("/api/v1/products/{product_id}/image")
 def product_image(product_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    customer_for(user, db)
+    authorize_material_visual(user, db)
     product = db.scalar(select(Product).where(Product.public_id == product_id))
     if not product:
         raise HTTPException(404, "Producto no encontrado")
