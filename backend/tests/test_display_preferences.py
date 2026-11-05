@@ -42,3 +42,53 @@ def test_thumbnail_uses_existing_product_image(monkeypatch):
     assert client.get(f'/api/v1/products/by-sku/{sku}/image').status_code==200
     assert seen==[pid]
     assert client.get('/api/v1/products/by-sku/UNKNOWN-IMAGE-TEST/image').status_code==404
+
+
+def test_operator_order_photos_persist_without_changing_customer_preferences():
+    client=TestClient(app)
+    logged=client.post('/api/v1/auth/login',json={'email':'operador@bermudez.test','password':'123456'})
+    original=logged.json()['user']
+    previous={key:original[key] for key in ['show_order_images','show_delivery_note_images']}
+    with SessionLocal() as db:
+        customer=db.scalar(select(User).where(User.email=='compras001@cliente.test'))
+        customer_before=(customer.show_order_images,customer.show_delivery_note_images)
+    try:
+        body={**previous,'show_order_images':True}
+        assert client.patch('/api/v1/account/preferences',json=body).status_code==200
+        again=client.post('/api/v1/auth/login',json={'email':'operador@bermudez.test','password':'123456'}).json()['user']
+        assert again['show_order_images'] is True
+        assert again['show_delivery_note_images']==previous['show_delivery_note_images']
+        with SessionLocal() as db:
+            customer=db.scalar(select(User).where(User.email=='compras001@cliente.test'))
+            assert (customer.show_order_images,customer.show_delivery_note_images)==customer_before
+    finally:
+        client.patch('/api/v1/account/preferences',json=previous)
+
+
+def test_operator_can_read_order_photos_only_with_orders_permission(monkeypatch):
+    from app.models import OperatorAccess
+    from app.config import settings
+    client=TestClient(app);client.post('/api/v1/auth/login',json={'email':'operador@bermudez.test','password':'123456'})
+    monkeypatch.setattr(settings,'product_image_source','postgres')
+    with SessionLocal() as db:
+        product=db.scalar(select(Product));pid=product.public_id;sku=product.sku
+        old_data=product.image_data;old_type=product.image_media_type
+        product.image_data=b'order-photo';product.image_media_type='image/png'
+        actor=db.scalar(select(User).where(User.email=='operador@bermudez.test'))
+        access=db.get(OperatorAccess,actor.id);created=access is None
+        previous=dict(access.permissions) if access else None
+        if created:access=OperatorAccess(user_id=actor.id,exit_code='photo-permission-test',permissions={'orders':True});db.add(access)
+        else:access.permissions={**previous,'orders':True}
+        db.commit()
+        try:
+            paths=[f'/api/v1/products/by-sku/{sku}/image',f'/api/v1/products/{pid}/image',f'/api/v1/products/by-sku/{sku}/visual']
+            for path in paths:
+                assert client.get(path).status_code==200
+                assert TestClient(app).get(path).status_code==401
+            access.permissions={**access.permissions,'orders':False};db.commit()
+            for path in paths:assert client.get(path).status_code==403
+        finally:
+            product.image_data=old_data;product.image_media_type=old_type
+            if created:db.delete(access)
+            else:access.permissions=previous
+            db.commit()

@@ -5,7 +5,6 @@
 .order-line-marks input[type=checkbox]{appearance:none;position:relative;flex:none;width:14px;height:14px;min-height:0;margin:0;border:1px solid #7b929f;border-radius:2px;background:#fff;opacity:1}
 .order-line-marks input:checked{background:#1d6590;border-color:#1d6590}
 .order-line-marks input:checked::after{content:'✓';position:absolute;inset:0;color:white;text-align:center;font-size:11px;line-height:12px;font-weight:900}
-.order-line-marks input[aria-checked=mixed]::after{content:'−';position:absolute;inset:0;text-align:center;color:#36556b;line-height:12px}
 .order-line-is-removed{background:#fff6f4;border-left:3px solid #ae5145}
 .order-line-is-removed .order-line-description{text-decoration:line-through;text-decoration-color:#9c4b41;text-decoration-thickness:1px;color:#657580}
 .order-line-removed-label{display:block;margin-top:6px;color:#8e352d!important;font-weight:700;font-size:11px;line-height:1.4;text-decoration:none}

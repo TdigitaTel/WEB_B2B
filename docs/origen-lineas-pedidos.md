@@ -2,8 +2,9 @@
 
 La columna única WEB/Tienda muestra exclusivamente `OrderItem.created_in_web`:
 marcado y texto WEB cuando es verdadero; sin marcar y texto Tienda cuando es falso.
-Un valor histórico nulo se identifica como Sin confirmar (indicador intermedio),
-sin inventar un origen. `entered_in_exit` no interviene en esta presentación:
+Por criterio del usuario, los registros históricos sin marca WEB (nulos o sin
+campo) se muestran como Tienda, con el check sin marcar. No existe un tercer
+estado visual «Sin confirmar». `entered_in_exit` no interviene en esta presentación:
 sincronizar una línea nunca cambia su origen.
 
 Las líneas eliminadas se mantienen íntegramente: fondo suave, borde lateral,
