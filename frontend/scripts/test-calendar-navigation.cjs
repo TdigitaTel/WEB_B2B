@@ -5,7 +5,7 @@ global.IS_REACT_ACT_ENVIRONMENT=true;window.setInterval=()=>1;window.clearInterv
 const options={target:ts.ScriptTarget.ES2020,jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS,esModuleInterop:true};
 for(const ext of ['.ts','.tsx'])require.extensions[ext]=(m,f)=>m._compile(ts.transpileModule(fs.readFileSync(f,'utf8'),{compilerOptions:options}).outputText,f);
 require.extensions['.css']=m=>m.exports={};
-const React=require('react'),{createRoot}=require('react-dom/client'),{default:Calendar,calendarDate,calendarError,orderDay,calendarGroups}=require('../app/OrderDailyCalendar.tsx'),Choice=require('../app/PickupTimingChoice.tsx').default;
+const React=require('react'),{createRoot}=require('react-dom/client'),{default:Calendar,calendarDate,calendarError,orderDay,calendarGroups,calendarTimeRows}=require('../app/OrderDailyCalendar.tsx'),Choice=require('../app/PickupTimingChoice.tsx').default;
 const root=createRoot(document.getElementById('root'));
 const today=calendarDate(new Date()),order={id:'calendar-order',number:'WEB-2026-000340',exit_order_number:'6008917',nro_pedido_exit:'2026/AL/6008917',origen_pedido:'B2B',customer:'Cliente calendario',store:'Almeiras',company_code:0,delegation_code:'00',created_at:'2020-01-01T10:00:00Z',pickup_date:today,pickup_slot_start:'12:00',pickup_slot_end:'13:00',attention_deadline_at:today+'T11:00:00Z',estado_registro_exit:'REGISTRADO',items:[]};
 const filename=path.resolve(__dirname,'../app/page.tsx'),m=new Module(filename,module);m.filename=filename;m.paths=Module._nodeModulePaths(path.dirname(filename));m._compile(ts.transpileModule(fs.readFileSync(filename,'utf8')+'\nexport {Operations};',{compilerOptions:options}).outputText,filename);
@@ -24,6 +24,12 @@ function respond(body,status=200){return new Response(JSON.stringify(body),{stat
  assert.match(document.querySelector('[role=alert]').textContent,/No disponible temporalmente/);assert.equal(document.querySelectorAll('.calendar-day').length,7);assert.doesNotMatch(document.querySelector('.calendar-week-grid').textContent,/0 pedidos/);
  global.fetch=async url=>respond(String(url).includes('/order-calendar')?{orders:[order]}:String(url).includes('/delegations')?[]:{lines:[],version:0});
  await React.act(async()=>root.render(React.createElement(m.exports.Operations,{orders:[],onRefresh:async()=>{}})));
+ assert.equal(document.querySelectorAll('.calendar-timetable thead th').length,8,'Seven day columns plus time axis');
+ assert.ok(document.querySelector(`td[data-day="${today}"][data-hour="12"] .calendar-event`),'Order appears in its actual day/hour cell');
+ assert.equal(document.querySelector('.order-daily-calendar .operator-web-order'),null,'No large order cards before selecting an event');
+ assert.equal(document.querySelector('.calendar-order-links'),null);
+ assert.ok(calendarTimeRows([{id:'without-time'}]).some(row=>row.key==='none'));
+ assert.ok(calendarTimeRows([{id:'late',attention_deadline_at:'2026-11-05T22:15:00Z'}]).some(row=>row.key==='23'),'Late events are not hidden outside default hours');
  const button=document.querySelector('.calendar-order-shortcut');assert.ok(button);assert.match(button.textContent,/6008917/);assert.match(button.textContent,/12:00 – 13:00/);
  await React.act(async()=>button.click());
  const detail=document.querySelector('details[data-order-id="calendar-order"]');assert.ok(detail,'The calendar order appears even when absent from the creation-date list');assert.equal(detail.open,true);assert.equal(document.querySelector('.calendar-week-grid'),null);assert.match(document.querySelector('.calendar-selected-order').textContent,/seleccionado desde el calendario/);
