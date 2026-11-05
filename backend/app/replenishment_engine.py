@@ -18,6 +18,7 @@ class Parameters(BaseModel):
     simple_formula: bool = False
     review_days: int = Field(7,ge=1,le=90)
     lead_days: int = Field(1,ge=0,le=180)
+    use_safety_stock: bool = True
     service_level: float = Field(95,ge=50,le=99.9)
     history_days: int | None = Field(None,ge=1,le=1095)
     max_coverage_days: int | None = Field(None,ge=1,le=1095)
@@ -134,7 +135,7 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
     stats=demand_statistics(article,delegation,context['source'],parameters,context['sales_index'],include_daily) if override or include_daily else context['stats'][key]
     avg,std=stats['daily_mean'],stats['daily_std'];horizon=parameters['review_days']+parameters['lead_days']
     z=NormalDist().inv_cdf(parameters['service_level']/100)
-    safety=z*std*sqrt(parameters['lead_days']);minimum=avg*parameters['lead_days']+safety;maximum=avg*horizon+safety
+    safety=z*std*sqrt(parameters['lead_days']) if parameters['use_safety_stock'] else 0;minimum=avg*parameters['lead_days']+safety;maximum=avg*horizon+safety
     method='REVISION_PERIODICA';confidence='ALTA' if stats['sales_days']>=30 and not stats['irregular'] else 'MEDIA'
     recs=[];comparable=None
     sparse=stats['sales_days']<5 or stats['new_article']
@@ -150,7 +151,7 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
                     method='MINIMO_ORIENTATIVO_COMPARABLES';break
         recs.append(recommendation('HISTORICO_INSUFICIENTE','Histórico insuficiente: revisar la propuesta orientativa; no representa ventas reales del artículo.',
             {'days':stats['days'],'sales_days':stats['sales_days'],'comparables':comparable},'new_policy' if stats['new_article'] else 'no_sales_policy',policy))
-    elif stats['irregular'] and not parameters['simple_formula']:
+    elif stats['irregular'] and not parameters['simple_formula'] and parameters['use_safety_stock']:
         # Percentil empírico de demanda en ventanas completas del horizonte.
         values=stats['demand_values'];sums=[]
         if len(values)>=horizon:
@@ -214,7 +215,7 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
         recs.append(recommendation('STOCK_INSUFICIENTE','El disponible previsto está por debajo del objetivo de reposición elegido.',
             {'position':position,'target':target,'minimum':minimum,'expected_cycle_consumption':expected_consumption},'review_days',parameters['review_days'],confidence=confidence))
     if stats['irregular']:
-        recs.append(recommendation('DEMANDA_IRREGULAR','Ventas irregulares: revisa la seguridad calculada con la desviación observada.' if parameters['simple_formula'] else 'Ventas intermitentes: se utiliza un percentil empírico o se requiere revisión, no el modelo normal de forma ciega.',
+        recs.append(recommendation('DEMANDA_IRREGULAR','Ventas irregulares: el cálculo no incluye stock de seguridad por la opción seleccionada.' if not parameters['use_safety_stock'] else 'Ventas irregulares: revisa la seguridad calculada con la desviación observada.' if parameters['simple_formula'] else 'Ventas intermitentes: se utiliza un percentil empírico o se requiere revisión, no el modelo normal de forma ciega.',
             {'sales_days':stats['sales_days'],'observed_days':stats['days'],'method':method}))
     if stats['gross_sales']==0:
         recs.append(recommendation('SIN_MOVIMIENTO',f"No registra ventas en los {stats['days']} días observados; revisar mínimo de exposición.",
@@ -244,8 +245,8 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
         'confidence':confidence,'method':method,'comparables':comparable,'parameters':parameters,'applied_rules':rules,
         'parameter_origins':origins,'recommendations':recs,'manual_parameters':{},'effective_multiple':dispatch_multiple,'quantity_before_rounding':before_rounding,
         'calculation':{'horizon':horizon,'z':z,'formula':('Stock máximo = stock mínimo + consumo diario × días de cobertura máxima' if parameters['target_mode']=='MAXIMUM' else 'Punto de reposición = stock mínimo + consumo diario × días hasta próxima reposición') + '; cantidad = max(0, objetivo − disponible previsto).',
-            'safety_formula':'Z × desviación diaria × sqrt(plazo de llegada)' if method=='REVISION_PERIODICA' else 'Modelo alternativo explicado en método y recomendaciones',
-            'maximum_formula':'stock mínimo + consumo diario × días de cobertura máxima', 'minimum_formula':'consumo diario × plazo de llegada + stock de seguridad', 'dispatch_days':parameters['review_days'],'lead_days':parameters['lead_days'],'raw_maximum':raw_maximum,'window_start':stats['start'],'window_end':stats['end']}}
+            'safety_formula':'Sin stock de seguridad (opción seleccionada)' if not parameters['use_safety_stock'] else 'Z × desviación diaria × sqrt(plazo de llegada)' if method=='REVISION_PERIODICA' else 'Modelo alternativo explicado en método y recomendaciones',
+            'maximum_formula':'stock mínimo + consumo diario × días de cobertura máxima', 'minimum_formula':'consumo diario × plazo de llegada + stock de seguridad' if parameters['use_safety_stock'] else 'consumo diario × plazo de llegada', 'dispatch_days':parameters['review_days'],'lead_days':parameters['lead_days'],'raw_maximum':raw_maximum,'window_start':stats['start'],'window_end':stats['end']}}
     if include_daily:result['daily_sales']=stats['daily']
     return result
 
@@ -269,7 +270,7 @@ def annotate_central(results,source):
                 stats_cache[history]=demand_statistics(articles[sku],'00',source,params,sales_index)
             stats=stats_cache[history];avg=stats['daily_mean'];std=stats['daily_std']
             risk=params['lead_days']+params['central_reserve_days']
-            safety=NormalDist().inv_cdf(params['service_level']/100)*std*sqrt(params['lead_days'])
+            safety=NormalDist().inv_cdf(params['service_level']/100)*std*sqrt(params['lead_days']) if params['use_safety_stock'] else 0
             required=avg*(params['lead_days']+params['central_reserve_days'])+safety
             reserve=max(reserve,required);central_avg=max(central_avg,avg);central_std=max(central_std,std)
             reserve_days=max(reserve_days,params['central_reserve_days'])
