@@ -1,0 +1,33 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),ts=require('typescript');
+const {JSDOM}=require('jsdom'),dom=new JSDOM('<div id="root"></div>',{url:'https://example.test',pretendToBeVisual:true});
+for(const key of ['window','document','HTMLElement','Event','CustomEvent'])global[key]=dom.window[key];
+global.IS_REACT_ACT_ENVIRONMENT=true;
+for(const ext of ['.ts','.tsx'])require.extensions[ext]=(m,f)=>m._compile(ts.transpileModule(fs.readFileSync(f,'utf8'),{compilerOptions:{jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS,esModuleInterop:true}}).outputText,f);
+require.extensions['.css']=m=>m.exports={};
+const React=require('react'),{createRoot}=require('react-dom/client'),View=require('../app/Replenishment.tsx').default;
+let posted=null;
+global.fetch=async(url,options={})=>{let body;
+ if(url.endsWith('/options'))body={article_limit:1000,maximum_article_limit:10000,server_date:'2026-11-05',delegations:[],areas:[],families:[],subfamilies:[],types:[]};
+ else if(url.endsWith('/jobs/current'))body={job:null,latest_result:null};
+ else if(url.endsWith('/jobs')&&options.method==='POST'){posted=JSON.parse(options.body);body={id:'job',status:'FAILED',phase:'',error:'Simulación de prueba',filters:posted.filters,temporary_parameters:posted.temporary_parameters};}
+ else throw Error('Unexpected '+url);
+ return {ok:true,status:200,text:async()=>JSON.stringify(body)};
+};
+const root=createRoot(document.getElementById('root'));
+(async()=>{
+ await React.act(async()=>root.render(React.createElement(View)));
+ const select=()=>[...document.querySelectorAll('select')].find(s=>[...s.options].some(o=>o.textContent==='Sin stock de seguridad'));
+ assert.equal(select().value,'ON');
+ assert.ok(document.body.textContent.includes('Nivel de servicio (%)'));
+ await React.act(async()=>{select().value='OFF';select().dispatchEvent(new Event('change',{bubbles:true}));});
+ assert.ok(!document.body.textContent.includes('Nivel de servicio (%)'));
+ assert.match(document.body.textContent,/Seguridad desactivada/);
+ assert.match(document.body.textContent,/Stock mínimo = consumo diario × plazo de llegada\./);
+ const run=[...document.querySelectorAll('button')].find(b=>/Calcular/.test(b.textContent));
+ assert.ok(run,'Calculate action exists');
+ await React.act(async()=>run.click());
+ assert.equal(posted.temporary_parameters.use_safety_stock,false);
+ await React.act(async()=>{select().value='ON';select().dispatchEvent(new Event('change',{bubbles:true}));});
+ assert.match(document.body.textContent,/Stock mínimo = consumo diario × plazo de llegada \+ stock de seguridad/);
+ await React.act(async()=>root.unmount());dom.window.close();console.log('Safety selection: formulas, service visibility and submitted option passed');
+})().catch(e=>{console.error(e);process.exitCode=1;dom.window.close();});

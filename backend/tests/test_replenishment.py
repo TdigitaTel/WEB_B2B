@@ -520,3 +520,56 @@ def test_unit_expression_handles_missing_measurement_columns():
         def fetchall(self):return []
     value,origin=unit_expression(Cursor())
     assert value==origin=="'Sin unidad'"
+
+
+@pytest.mark.parametrize('target_mode',['POINT','MAXIMUM'])
+def test_optional_safety_flows_into_minimum_targets_and_central(target_mode):
+    raw=source_for(values=[0,1,5]*10,stock=0)
+    raw['sales'] += [{**sale,'delegation':'00'} for sale in list(raw['sales'])]
+    params={'simple_formula':True,'multiple_mode':'NONE','maximum_days':30,'lead_days':4,'target_mode':target_mode}
+    enabled=calculate(raw,params)
+    disabled=calculate(raw,{**params,'use_safety_stock':False})
+    assert enabled['parameters']['use_safety_stock'] is True
+    assert enabled['safety_stock']>0
+    assert disabled['safety_stock']==0
+    assert disabled['minimum_stock']==pytest.approx(disabled['daily_mean']*4)
+    for field in ('minimum_stock','replenishment_point','maximum_stock','target_stock'):
+        assert enabled[field]-disabled[field]==pytest.approx(enabled['safety_stock'])
+    assert disabled['final_quantity']==ceil(disabled['target_stock'])
+    assert disabled['daily_std']==enabled['daily_std'] and disabled['total_demand']==enabled['total_demand']
+    assert disabled['calculation']['minimum_formula']=='consumo diario × plazo de llegada'
+    annotate_central([enabled],raw);annotate_central([disabled],raw)
+    assert disabled['central_reserve']==pytest.approx(disabled['central_daily_mean']*11)
+    assert enabled['central_reserve']-disabled['central_reserve']==pytest.approx(enabled['safety_stock'])
+
+
+def test_disabled_safety_does_not_add_an_empirical_buffer_and_respects_manual_minimum():
+    raw=source_for(values=[0,1,5]*10)
+    row=calculate(raw,{'use_safety_stock':False})
+    assert row['safety_stock']==0
+    assert row['minimum_stock']==pytest.approx(row['daily_mean'])
+    assert row['method']!='PERCENTIL_EMPIRICO_INTERMITENTE'
+    manual=calculate(raw,{'use_safety_stock':False,'manual_min':12})
+    assert manual['minimum_stock']==12 and manual['safety_stock']==0
+    _,_,origins=resolve_parameters(raw['articles'][0],'02',[{'scope':'GLOBAL','scope_key':'*','parameters':{'use_safety_stock':False}}])
+    assert origins['use_safety_stock']=='GLOBAL:*'
+
+
+def test_safety_selection_is_stored_and_previous_result_remains_unchanged(monkeypatch):
+    import app.replenishment as module
+    raw=source_for(values=[0,1,5]*10)
+    monkeypatch.setattr(module,'read_replenishment_source',lambda *args:raw)
+    client=login();prefix='/api/v1/store/replenishment'
+    filters={'date_from':raw['start'],'date_to':raw['end'],'delegations':['02']}
+    params={'simple_formula':True,'use_safety_stock':False,'maximum_days':30}
+    result=client.post(prefix+'/simulations',json={'filters':filters,'temporary_parameters':params})
+    assert result.status_code==201,result.text
+    sid=result.json()['id']
+    row=client.get(f'{prefix}/simulations/{sid}/results').json()['items'][0]
+    assert row['parameters']['use_safety_stock'] is False and row['safety_stock']==0
+    detail=f"{prefix}/simulations/{sid}/results/{row['id']}"
+    enabled=client.post(detail+'/recalculate',json={'parameters':{'use_safety_stock':True}})
+    assert enabled.status_code==200,enabled.text
+    assert enabled.json()['safety_stock']>0
+    saved=client.get(detail).json()
+    assert saved['parameters']['use_safety_stock'] is False and saved['safety_stock']==0
