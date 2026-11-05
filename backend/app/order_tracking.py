@@ -175,5 +175,5 @@ def read_tracking(body: TrackingRead, response: Response, db: Session = Depends(
                          'date_only':event.estado_registro_exit == 'FACTURADO'})
     # Explicit allowlist: no prices, customer/contact data, notes, documents or mutation URLs.
     return {"web_number": order.order_number, "exit_number": str(identity[3]) if identity else order.nro_pedido_exit,
-            "state": state, "expected_at": order.attention_deadline_at, "delivered_at": order.delivered_at,
+            "pickup_date": order.pickup_date, "pickup_slot_start": order.pickup_slot_start, "pickup_slot_end": order.pickup_slot_end, "state": state, "expected_at": order.attention_deadline_at, "delivered_at": order.delivered_at,
             "pickup_summary": pickup_summary, "workflow":timeline, "registered_at":order.fecha_registro_exit, "items": items, "checked_at": now, "warning": warning, "expires_at": link.expires_at}

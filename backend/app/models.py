@@ -306,6 +306,8 @@ class Order(Base, TimestampMixin):
     fulfillment_method: Mapped[str] = mapped_column(String(20), default="PICKUP", server_default="PICKUP", nullable=False)
     delivery_address: Mapped[str | None] = mapped_column(String(500))
     pickup_date: Mapped[date | None] = mapped_column(Date)
+    pickup_slot_start: Mapped[str | None] = mapped_column(String(5))
+    pickup_slot_end: Mapped[str | None] = mapped_column(String(5))
     attention_deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     preparation_minutes_snapshot: Mapped[int | None] = mapped_column(Integer)
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

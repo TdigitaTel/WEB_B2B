@@ -68,7 +68,20 @@ class PickupSettingsIn(BaseModel):
     preparation_minutes: int = Field(ge=1, le=10080)
 
 
-class OrderCreate(BaseModel):
+class PickupWindow(BaseModel):
+    pickup_slot_start: str | None = Field(default=None, pattern=r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
+    pickup_slot_end: str | None = Field(default=None, pattern=r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
+
+    @model_validator(mode="after")
+    def valid_pickup_window(self):
+        if bool(self.pickup_slot_start) != bool(self.pickup_slot_end):
+            raise ValueError("Indica inicio y fin de la franja horaria")
+        if self.pickup_slot_start and (not self.pickup_date or self.pickup_slot_start >= self.pickup_slot_end):
+            raise ValueError("La franja requiere fecha programada y una hora final posterior al inicio")
+        return self
+
+
+class OrderCreate(PickupWindow):
     fulfillment_method: str = Field(default="PICKUP", pattern="^(PICKUP|DELIVERY)$")
     delivery_address: str | None = Field(default=None, max_length=500)
     pickup_date: date | None = None
@@ -88,7 +101,7 @@ class OrderPlanningChange(BaseModel):
     previous_observations: str | None
 
 
-class PickupChange(BaseModel):
+class PickupChange(PickupWindow):
     pickup_date: date | None
 
 
