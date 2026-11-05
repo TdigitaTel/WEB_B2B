@@ -506,3 +506,6 @@ body{background:linear-gradient(180deg,#f6f9fb 0,#f1f5f7 420px,#f5f6f7 100%)}.se
 .exit-line-removed{color:#8a4200;font-weight:700}
 
 .order-card>summary>.order-total-amount{display:flex;flex-direction:column;gap:4px}.order-total-amount>small{font-size:10px;color:var(--muted);font-weight:600}.order-total-amount>strong{white-space:nowrap}
+
+.ops-image-toggle{display:inline-flex;align-items:center;gap:8px;color:var(--navy);font-size:12px;font-weight:650;min-height:44px;cursor:pointer}.ops-image-toggle input{width:18px;height:18px;accent-color:var(--blue)}.ops-image-toggle small{font-weight:400}.web-order-line>.material-with-thumbnail>.catalog-thumbnail{width:64px;height:64px;flex-basis:64px}.web-order-line>.material-with-thumbnail{align-items:center}.web-order-line>.material-with-thumbnail>span:not(.material-thumbnail){flex:1;min-width:0}@media(max-width:480px){.ops-image-toggle{width:100%}.web-order-line>.material-with-thumbnail>.catalog-thumbnail{width:52px;height:52px;flex-basis:52px}}
+.with-line-planning .web-order-line>.material-with-thumbnail{display:flex!important;flex-direction:row!important;align-items:center;gap:10px}

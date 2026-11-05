@@ -56,7 +56,12 @@ for(const entered_in_exit of [true,false]){
  const web=new JSDOM(renderToStaticMarkup(React.createElement(OrderLineMarks,{line:{created_in_web:true,entered_in_exit}}))).window.document;
  assert.equal(web.querySelector('input').checked,true);assert.equal(web.body.textContent,'WEB');
 }
-assert.match(renderToStaticMarkup(React.createElement(OrderLineMarks,{line:{created_in_web:null}})),/aria-checked="mixed"/);
-assert.match(renderToStaticMarkup(React.createElement(OrderLineMarks,{line:{created_in_web:null}})),/Sin confirmar/);
+for(const created_in_web of [null,undefined,false]){
+ const markup=renderToStaticMarkup(React.createElement(OrderLineMarks,{line:{created_in_web}}));
+ const doc=new JSDOM(markup).window.document;
+ assert.equal(doc.body.textContent,'Tienda');assert.equal(doc.querySelector('input').checked,false);
+ assert.equal(doc.querySelector('input').getAttribute('aria-checked'),'false');
+ assert.doesNotMatch(markup,/Sin confirmar|mixed/);
+}
 assert.doesNotMatch(customer,/Ingresado en EXIT|Generado en WEB|Eliminado en EXIT|Eliminada en EXIT|sin registro/);
 console.log('Single WEB/Tienda origin independent of synchronization; removed rows retain data, strike-through class and explicit notice, without deletion checks');
