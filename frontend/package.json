@@ -21,6 +21,7 @@
     "test:order-pickups": "node scripts/test-order-pickups.cjs",
     "test:order-fulfillment": "node scripts/test-order-fulfillment.cjs",
     "test:pickup-summary": "node scripts/test-pickup-summary.cjs",
+    "test:customer-order-emails": "node scripts/test-customer-order-emails.cjs",
     "test:order-email": "node scripts/test-order-email.cjs",
     "test:settings-menu": "node scripts/test-settings-menu.cjs"
   },

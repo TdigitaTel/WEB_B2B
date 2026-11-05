@@ -1,0 +1,32 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),ts=require('typescript');
+const {JSDOM}=require('jsdom'),dom=new JSDOM('<div id="root"></div>',{url:'https://example.test',pretendToBeVisual:true});
+for(const key of ['window','document','HTMLElement','Event','CustomEvent'])global[key]=dom.window[key];global.IS_REACT_ACT_ENVIRONMENT=true;
+for(const ext of ['.ts','.tsx'])require.extensions[ext]=(m,f)=>m._compile(ts.transpileModule(fs.readFileSync(f,'utf8'),{compilerOptions:{jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS,esModuleInterop:true,target:ts.ScriptTarget.ES2020}}).outputText,f);
+require.extensions['.css']=m=>m.exports={};
+const React=require('react'),{createRoot}=require('react-dom/client'),Component=require('../app/CustomerOrderEmails.tsx').default;
+const root=createRoot(document.getElementById('root'));
+let customer={erp_id:'00004',email1:'first@example.test',email2:'second@example.test',email:'first@example.test',web:'https://reference.example.test',order_email_recipients:{email1_enabled:false,email2_enabled:false}},calls=[];
+global.fetch=async(url,options={})=>{calls.push({url,options});if(options.method==='PATCH')customer={...customer,order_email_recipients:JSON.parse(options.body)};return new Response(JSON.stringify(String(url).endsWith('/account')?{customer}:customer))};
+const checks=()=>[...document.querySelectorAll('input[type=checkbox]')];
+const button=text=>[...document.querySelectorAll('button')].find(el=>el.textContent===text);
+(async()=>{
+ await React.act(async()=>root.render(React.createElement(Component,{customer,canEdit:true})));
+ assert.equal(checks().length,2,'Web must not have a recipient checkbox');
+ assert.match(document.body.textContent,/Web \(referencia\)/);
+ await React.act(async()=>checks()[0].click());
+ await React.act(async()=>button('Guardar destinatarios').click());
+ assert.equal(checks()[0].checked,true,'Saving must not restore the old props');
+ assert.deepEqual(JSON.parse(calls[0].options.body),{email1_enabled:true,email2_enabled:false});
+ customer={...customer,email1:'updated@example.test'};
+ await React.act(async()=>root.render(React.createElement(Component,{customer,canEdit:true})));
+ assert.match(document.body.textContent,/updated@example.test/);
+ assert.equal(checks()[0].checked,true);
+ // Automatic contact refresh cannot erase a choice being edited.
+ await React.act(async()=>checks()[1].click());
+ customer={...customer,email1:'newest@example.test'};
+ await React.act(async()=>root.render(React.createElement(Component,{customer,canEdit:true})));
+ assert.equal(checks()[1].checked,true);
+ await React.act(async()=>root.render(React.createElement(Component,{customer,canEdit:false})));
+ assert.ok(checks().every(el=>el.disabled));assert.equal(button('Guardar destinatarios'),undefined);
+ await React.act(async()=>root.unmount());dom.window.close();console.log('Customer recipients: two email slots, reference-only Web, persistence, ERP refresh and principal-only editing passed');
+})().catch(e=>{console.error(e);process.exitCode=1;dom.window.close()});

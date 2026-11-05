@@ -26,6 +26,8 @@ CUSTOMER = {
         "trade_name": ("NombreComercial", "RazonSocial", "NombreCliente", "Nombre"),
         "tax_id": ("CifDni", "CIFDNI", "Cif", "Nif", "CifNif"),
         "email": ("Email1", "Email", "CorreoElectronico", "Correo"),
+        "email2": ("Email2",),
+        "web": ("Web",),
         "phone": ("Telefono", "Telefono1", "Movil"),
         "billing_address": ("Domicilio", "Direccion", "Domicilio1"),
         "price_list": ("TarifaPrecio", "CodigoTarifa", "Tarifa", "TipoPrecio"),
