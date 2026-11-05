@@ -75,6 +75,8 @@ def main():
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ",
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS pickup_managed_at TIMESTAMPTZ",
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS pickup_date DATE",
+                "ALTER TABLE orders ADD COLUMN IF NOT EXISTS pickup_slot_start VARCHAR(5)",
+                "ALTER TABLE orders ADD COLUMN IF NOT EXISTS pickup_slot_end VARCHAR(5)",
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS fulfillment_method VARCHAR(20) NOT NULL DEFAULT 'PICKUP'",
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivery_address VARCHAR(500)",
                 "ALTER TABLE orders ADD COLUMN IF NOT EXISTS attention_deadline_at TIMESTAMPTZ",

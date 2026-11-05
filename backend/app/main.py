@@ -21,7 +21,7 @@ from .auth import audit, create_access_token, current_user, hash_password, requi
 from .category_import import router as category_import_router
 from .category_visibility import router as category_visibility_router, image_router as category_image_router, image_urls, hidden_areas, hidden_codes, visible_catalog_codes, unclassified_area_ids, UNCLASSIFIED_CODE
 from .config import settings
-from .pickup import immediate_ready_at, immediate_available, next_open_date, scheduled_date_open, scheduled_ready_at, assign_attention_deadline
+from .pickup import immediate_ready_at, immediate_available, next_open_date, scheduled_date_open, scheduled_ready_at, assign_attention_deadline, pickup_slots, pickup_slot_ready_at
 from .db import get_db
 from .schemas import OrderPlanningChange, PickupChange, PickupSettingsIn, DeliveryConfirmation, WebOrderRegistrationChange, UserDisplayPreferences
 from .exit_orders import upsert_exit_order, reconcile_exit_lines
@@ -223,7 +223,7 @@ def order_payload(order: Order, db: Session, include_items: bool = False, histor
     creator = db.get(User, order.user_id) if order.user_id else None
     result = {**key_payload(order), "id": order.public_id, "number": order.order_number, "server_now": datetime.now(timezone.utc),
               "store": store.name if store else order.store_id, "store_code": store.code if store else order.delegation_code, "company_code": order.company_code, "delegation_code": order.delegation_code, "customer_code": order.customer_code, "customer_reference": order.customer_reference,
-              "fulfillment_method": order.fulfillment_method, "delivery_address": order.delivery_address, "pickup_date": order.pickup_date, "attention_deadline_at": order.attention_deadline_at, "preparation_minutes_snapshot": order.preparation_minutes_snapshot, "job_name": order.job_name, "notes": order.notes, "subtotal": float(order.subtotal),
+              "fulfillment_method": order.fulfillment_method, "delivery_address": order.delivery_address, "pickup_date": order.pickup_date, "pickup_slot_start": order.pickup_slot_start, "pickup_slot_end": order.pickup_slot_end, "attention_deadline_at": order.attention_deadline_at, "preparation_minutes_snapshot": order.preparation_minutes_snapshot, "job_name": order.job_name, "notes": order.notes, "subtotal": float(order.subtotal),
               "tax_total": float(order.tax_total), "total": float(order.total), "created_at": order.created_at,
               "customer": customer_name, "created_by": order.creator_user_name or (creator.full_name if creator else "Integración EXIT"),
               "principal_user_name": order.principal_user_name or (principal_for(creator, db).full_name if creator and not creator.parent_user_id else None),
@@ -576,7 +576,7 @@ def pickup_availability(company: int, delegation: str, scheduled_date: date | No
     following = next_open_date(db, company, delegation)
     ready = immediate_ready_at(db, company, delegation)
     scheduled = scheduled_ready_at(db, company, delegation, scheduled_date) if scheduled_date else None
-    return {"scheduled_ready_at": scheduled.isoformat() if scheduled else None, **config, "immediate_available": ready is not None, "immediate_ready_at": ready.isoformat() if ready else None, "minimum_date": following.isoformat() if following else None}
+    return {"pickup_slots": pickup_slots(db, company, delegation, scheduled_date) if scheduled_date else [], "scheduled_ready_at": scheduled.isoformat() if scheduled else None, **config, "immediate_available": ready is not None, "immediate_ready_at": ready.isoformat() if ready else None, "minimum_date": following.isoformat() if following else None}
 
 
 @app.patch("/api/v1/pickup-settings")
@@ -700,6 +700,8 @@ def create_order(data: OrderCreate, user: User = Depends(current_user), db: Sess
         raise HTTPException(409, "La sede está cerrada en la fecha seleccionada")
     if not data.draft and not data.pickup_date and not immediate_available(db, store.company, store.code):
         raise HTTPException(409, "Recogida inmediata no disponible: selecciona una fecha programada")
+    if data.pickup_slot_start:
+        pickup_slot_ready_at(db, store.company, store.code, data.pickup_date, data.pickup_slot_start, data.pickup_slot_end)
     rows = db.execute(select(CartItem, Product).join(Product, Product.id == CartItem.product_id).where(CartItem.cart_id == cart.id)).all()
     if not rows: raise HTTPException(400, "El pedido está vacío")
     articles = _erp_articles([product for _, product in rows])
@@ -725,7 +727,7 @@ def create_order(data: OrderCreate, user: User = Depends(current_user), db: Sess
     principal = principal_for(user, db)
     order = Order(principal_user_id=principal.id, principal_user_name=principal.full_name, creator_user_name=user.full_name, order_number=f"TMP-{cart.public_id[:20]}", customer_id=legacy_customer_id(user), customer_code=customer_code, user_id=user.id, company_code=store.company, delegation_code=store.code,
                   origen_pedido="B2B", estado_registro_exit=initial_status,
-                  fulfillment_method=data.fulfillment_method, delivery_address=delivery_address, pickup_date=data.pickup_date, customer_reference=data.customer_reference, job_name=data.job_name, notes=data.notes,
+                  fulfillment_method=data.fulfillment_method, delivery_address=delivery_address, pickup_date=data.pickup_date, pickup_slot_start=data.pickup_slot_start, pickup_slot_end=data.pickup_slot_end, customer_reference=data.customer_reference, job_name=data.job_name, notes=data.notes,
                   subtotal=0, tax_total=0, total=0, sync_status=SyncStatus.pending)
     if not data.draft:
         assign_attention_deadline(order, db)
@@ -1612,6 +1614,30 @@ def operator_web_order(db: Session, order_id: str, user: User) -> Order:
     return order
 
 
+@app.get("/api/v1/store/order-calendar")
+def operator_order_calendar(day: date, delegation: str = "TODAS",
+        user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
+    if not permissions_for(user, db).get("orders"):
+        raise HTTPException(403, "No tienes permiso para consultar pedidos")
+    from datetime import time
+    start = datetime.combine(day, time.min, ZoneInfo("Europe/Madrid")).astimezone(timezone.utc)
+    end = datetime.combine(day+timedelta(days=1), time.min, ZoneInfo("Europe/Madrid")).astimezone(timezone.utc)
+    query = select(Order).where(Order.origen_pedido == "B2B", Order.reconciliation_hidden_at.is_(None),
+        Order.estado_registro_exit.notin_(["BORRADOR", "ELIMINADO"]),
+        or_(Order.pickup_date == day, (Order.pickup_date.is_(None)) & (Order.attention_deadline_at >= start) & (Order.attention_deadline_at < end)))
+    rows = db.scalars(query.order_by(Order.attention_deadline_at, Order.id)).all()
+    result = []
+    for order in rows:
+        if not can_operate_delegation(user, db, order.company_code, order.delegation_code):
+            continue
+        if delegation != "TODAS" and delegation not in {order.delegation_code, f"{order.company_code}:{order.delegation_code}"}:
+            continue
+        payload = order_payload(order, db, True, True)
+        payload['calendar_kind'] = 'SCHEDULED' if order.pickup_date else 'IMMEDIATE'
+        result.append(payload)
+    return {"day":day, "timezone":"Europe/Madrid", "orders":result}
+
+
 @app.get("/api/v1/store/orders/{order_id}/delivery-note")
 def operator_order_delivery_note(order_id: str, number: str = Query(min_length=1, max_length=100),
         user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN")), db: Session = Depends(get_db)):
@@ -1672,14 +1698,17 @@ def change_web_pickup(order_id: str, data: PickupChange,
         raise HTTPException(422, "La sede está cerrada en esa fecha")
     before = order.pickup_date.isoformat() if order.pickup_date else "Inmediata"
     after = data.pickup_date.isoformat() if data.pickup_date else "Inmediata"
-    if before != after or order.attention_deadline_at is None:
+    old_slot = (order.pickup_slot_start, order.pickup_slot_end)
+    new_slot = (data.pickup_slot_start, data.pickup_slot_end)
+    if before != after or old_slot != new_slot or order.attention_deadline_at is None:
         previous_deadline = order.attention_deadline_at.isoformat() if order.attention_deadline_at else None
         order.pickup_date = data.pickup_date
+        order.pickup_slot_start, order.pickup_slot_end = new_slot
         assign_attention_deadline(order, db, operator_override=data.pickup_date is None)
         local_deadline = order.attention_deadline_at.astimezone(ZoneInfo("Europe/Madrid")).strftime("%d/%m/%Y %H:%M")
-        note = f"Recogida cambiada por operador: {before} → {after}. Límite de atención: {local_deadline}"
+        note = f"Recogida cambiada por operador: {before} {old_slot} → {after} {new_slot}. Límite de atención: {local_deadline}"
         db.add(OrderStatusHistory(order_id=order.id, estado_registro_exit=order.estado_registro_exit, changed_by_user_id=user.id, source="WEB", note=note))
-        audit(db, user, "ORDER_PICKUP_CHANGED", "ORDER", order.public_id, {"previous": before, "pickup": after, "previous_attention_deadline_at": previous_deadline, "attention_deadline_at": order.attention_deadline_at.isoformat(), "preparation_minutes": order.preparation_minutes_snapshot})
+        audit(db, user, "ORDER_PICKUP_CHANGED", "ORDER", order.public_id, {"previous": before, "pickup": after, "previous_slot": old_slot, "pickup_slot": new_slot, "previous_attention_deadline_at": previous_deadline, "attention_deadline_at": order.attention_deadline_at.isoformat(), "preparation_minutes": order.preparation_minutes_snapshot})
         db.commit()
     return order_payload(order, db, True)
 
