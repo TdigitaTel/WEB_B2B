@@ -1,0 +1,37 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),Module=require('node:module'),ts=require('typescript');
+const {JSDOM}=require('jsdom'),dom=new JSDOM('<div id="root"></div>',{url:'https://example.test',pretendToBeVisual:true});
+for(const key of ['window','document','HTMLElement','Event','CustomEvent'])global[key]=dom.window[key];
+global.IS_REACT_ACT_ENVIRONMENT=true;window.setInterval=()=>1;window.clearInterval=()=>{};
+const options={target:ts.ScriptTarget.ES2020,jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS,esModuleInterop:true};
+for(const ext of ['.ts','.tsx'])require.extensions[ext]=(m,f)=>m._compile(ts.transpileModule(fs.readFileSync(f,'utf8'),{compilerOptions:options}).outputText,f);
+require.extensions['.css']=m=>m.exports={};
+const React=require('react'),{createRoot}=require('react-dom/client'),{default:Calendar,calendarDate,calendarError,orderDay,calendarGroups}=require('../app/OrderDailyCalendar.tsx'),Choice=require('../app/PickupTimingChoice.tsx').default;
+const root=createRoot(document.getElementById('root'));
+const today=calendarDate(new Date()),order={id:'calendar-order',number:'WEB-2026-000340',exit_order_number:'6008917',nro_pedido_exit:'2026/AL/6008917',origen_pedido:'B2B',customer:'Cliente calendario',store:'Almeiras',company_code:0,delegation_code:'00',created_at:'2020-01-01T10:00:00Z',pickup_date:today,pickup_slot_start:'12:00',pickup_slot_end:'13:00',attention_deadline_at:today+'T11:00:00Z',estado_registro_exit:'REGISTRADO',items:[]};
+const filename=path.resolve(__dirname,'../app/page.tsx'),m=new Module(filename,module);m.filename=filename;m.paths=Module._nodeModulePaths(path.dirname(filename));m._compile(ts.transpileModule(fs.readFileSync(filename,'utf8')+'\nexport {Operations};',{compilerOptions:options}).outputText,filename);
+let calls=[];
+function respond(body,status=200){return new Response(JSON.stringify(body),{status})}
+(async()=>{
+ assert.doesNotMatch(calendarError([{loc:['query','day'],type:'missing'}],422),/object Object/);
+ assert.equal(calendarError({message:'Prueba legible'},422),'Prueba legible');
+ assert.equal(orderDay({...order,pickup_date:'2026-11-06',attention_deadline_at:'2026-11-07T11:00:00Z'}),'2026-11-07');
+ assert.doesNotMatch(calendarGroups([{...order,pickup_date:'2026-11-06',attention_deadline_at:'2026-11-07T11:00:00Z'}])[0].label,/reservada/);
+ global.fetch=async(url)=>{calls.push(String(url));const params=new URL(String(url),'https://example.test').searchParams;if(params.has('date_from'))return respond({detail:[{loc:['query','day'],type:'missing',msg:'Field required'}]},422);return respond({orders:params.get('day')===today?[order]:[]})};
+ await React.act(async()=>root.render(React.createElement(Calendar,{delegation:'TODAS',onOpenOrder:()=>{}})));
+ assert.equal(calls.length,8,'An old daily API is queried once per day after range validation fails');assert.match(document.body.textContent,/versión diaria anterior/);assert.match(document.body.textContent,/6008917/);assert.doesNotMatch(document.body.textContent,/object Object/);
+ global.fetch=async url=>String(url).includes('order-calendar')?respond({detail:{message:'No disponible temporalmente'}},503):respond([]);
+ await React.act(async()=>root.render(React.createElement(Calendar,{delegation:'0:00',onOpenOrder:()=>{}})));
+ assert.match(document.querySelector('[role=alert]').textContent,/No disponible temporalmente/);assert.equal(document.querySelectorAll('.calendar-day').length,7);assert.doesNotMatch(document.querySelector('.calendar-week-grid').textContent,/0 pedidos/);
+ global.fetch=async url=>respond(String(url).includes('/order-calendar')?{orders:[order]}:String(url).includes('/delegations')?[]:{lines:[],version:0});
+ await React.act(async()=>root.render(React.createElement(m.exports.Operations,{orders:[],onRefresh:async()=>{}})));
+ const button=document.querySelector('.calendar-order-shortcut');assert.ok(button);assert.match(button.textContent,/6008917/);assert.match(button.textContent,/12:00 – 13:00/);
+ await React.act(async()=>button.click());
+ const detail=document.querySelector('details[data-order-id="calendar-order"]');assert.ok(detail,'The calendar order appears even when absent from the creation-date list');assert.equal(detail.open,true);assert.equal(document.querySelector('.calendar-week-grid'),null);assert.match(document.querySelector('.calendar-selected-order').textContent,/seleccionado desde el calendario/);
+ function RadioScreen(){const [scheduled,setScheduled]=React.useState(false);return React.createElement(Choice,{scheduled,onChange:setScheduled})}
+ await React.act(async()=>root.render(React.createElement(RadioScreen)));
+ assert.equal(document.querySelectorAll('input[type=radio]').length,2);assert.equal(document.querySelector('input[value=immediate]').checked,true);
+ await React.act(async()=>document.querySelector('input[value=scheduled]').click());assert.equal(document.querySelector('input[value=scheduled]').checked,true);assert.equal(document.querySelector('input[value=immediate]').checked,false);
+ await React.act(async()=>root.render(React.createElement(Choice,{scheduled:true,onChange:()=>{},immediateAvailable:false})));
+ assert.equal(document.querySelectorAll('input[type=radio]').length,2);assert.equal(document.querySelector('input[value=immediate]').disabled,true);
+ await React.act(async()=>root.unmount());dom.window.close();console.log('Calendar: structured errors, daily API compatibility, forecast dates, reservation labels, detail navigation and timing radios passed');
+})().catch(e=>{console.error(e);process.exitCode=1;dom.window.close()});

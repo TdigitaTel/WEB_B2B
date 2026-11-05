@@ -29,7 +29,7 @@ function App({day}){const [value,setValue]=React.useState(null);return React.cre
  const week=calendarWeek();assert.equal(document.querySelector('[aria-label="Desde del calendario"]').value,week.from);assert.equal(document.querySelector('[aria-label="Hasta del calendario"]').value,week.to);
  assert.equal(document.querySelector('[aria-label="Hasta del calendario"]').max,shiftCalendarDate(week.from,6));
  assert.equal(document.querySelectorAll('.calendar-day').length,7,'Empty days remain visible');assert.match(requests[0],/date_from=/);assert.match(requests[0],/date_to=/);
- const count=requests.length;await React.act(async()=>document.querySelector('.calendar-day').click());assert.equal(requests.length,count,'Switching day uses the loaded week');
+ const count=requests.length;await React.act(async()=>document.querySelector('.calendar-day-select').click());assert.equal(requests.length,count,'Switching day uses the loaded week');
  assert.match(document.querySelector('.calendar-selected-day').textContent,/lunes/);
  await React.act(async()=>root.unmount());dom.window.close();console.log('Pickup slots: weekday request, selection, preview, closed day, calendar ordering and Madrid timezone passed');
 })().catch(e=>{console.error(e);process.exitCode=1;dom.window.close()});
