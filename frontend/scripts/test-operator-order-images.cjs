@@ -10,7 +10,7 @@ require.extensions['.css']=m=>m.exports={};
 const filename=path.resolve(__dirname,'../app/page.tsx'),m=new Module(filename,module);m.filename=filename;m.paths=Module._nodeModulePaths(path.dirname(filename));m._compile(ts.transpileModule(fs.readFileSync(filename,'utf8')+'\nexport {Operations};',{compilerOptions:{jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS,esModuleInterop:true}}).outputText,filename);
 const React=require('react'),{createRoot}=require('react-dom/client'),{Operations}=m.exports;
 const order={id:'order1',number:'WEB-EXAMPLE',customer:'Cliente',store:'Almeiras',created_at:'2026-11-05T08:00:00Z',origen_pedido:'B2B',estado_registro_exit:'REGISTRADO',items:[{sku:'23568',description:'Soporte',quantity:2,unit:'UD',unit_price:8,line_total:16,created_in_web:true,fulfillment_zone:'KARDEX'},{sku:'24266',description:'Colector',quantity:1,unit:'UD',unit_price:10,line_total:10,created_in_web:null,fulfillment_zone:'KARDEX'}]};
-global.fetch=async url=>new Response(JSON.stringify(String(url).includes('/delegations')?[]:String(url).endsWith('/visual')?{family:'Accesorios'}:{lines:[],version:0}));
+global.fetch=async url=>new Response(JSON.stringify(String(url).includes('/delegations')?[]:String(url).includes('/order-calendar')?{orders:[]}:String(url).endsWith('/visual')?{family:'Accesorios'}:{lines:[],version:0}));
 let fail=false;const saved=[];
 function Screen(){const[images,setImages]=React.useState(false);return React.createElement(Operations,{orders:[order],onRefresh:async()=>{},showImages:images,onImagesChange:async value=>{saved.push(value);if(fail)throw Error('No se pudo guardar');setImages(value)}})}
 const root=createRoot(document.getElementById('root'));
@@ -18,6 +18,8 @@ const toggle=()=>document.querySelector('.ops-image-toggle input');
 async function view(name){await React.act(async()=>[...document.querySelectorAll('nav[aria-label="Tipo de pedidos"] button')].find(b=>b.textContent.startsWith(name)).click())}
 (async()=>{
  await React.act(async()=>root.render(React.createElement(Screen)));
+ assert.ok(document.querySelector('.calendar-week-grid'),'Calendar is the default WEB view');
+ await React.act(async()=>[...document.querySelectorAll('button')].find(b=>b.textContent==='Listado').click());
  const detail=document.querySelector('.operator-web-order');detail.open=true;
  assert.ok(toggle());assert.equal(toggle().checked,false);assert.equal(detail.querySelectorAll('img').length,0);
  await React.act(async()=>toggle().click());assert.deepEqual(saved,[true]);assert.equal(toggle().checked,true);
