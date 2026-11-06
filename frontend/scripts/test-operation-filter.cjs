@@ -5,7 +5,7 @@ global.IS_REACT_ACT_ENVIRONMENT=true;window.setInterval=()=>1;window.clearInterv
 for(const ext of ['.ts','.tsx'])require.extensions[ext]=(m,f)=>m._compile(ts.transpileModule(fs.readFileSync(f,'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2020,jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS,esModuleInterop:true}}).outputText,f);
 require.extensions['.css']=m=>m.exports={};
 const React=require('react'),{createRoot}=require('react-dom/client');
-const {operationGroup}=require('../app/OrderOperationFilter.tsx'),{default:Calendar,calendarDate}=require('../app/OrderDailyCalendar.tsx');
+const {operationGroup}=require('../app/OrderOperationFilter.tsx'),{default:Calendar,calendarDate,compareOrderAppointments}=require('../app/OrderDailyCalendar.tsx');
 const today=calendarDate(new Date()),orders=[
  {id:'pending',estado_registro_exit:'PENDIENTE'},
  {id:'registered',estado_registro_exit:'REGISTRADO'},
@@ -16,9 +16,17 @@ const today=calendarDate(new Date()),orders=[
  {id:'partial-delivered',estado_registro_exit:'ATENDIDO',pickup_summary:{prepared_complete:false,state:'ENTREGADO_PARCIAL'}},
  {id:'invoiced',estado_registro_exit:'FACTURADO',pickup_summary:{prepared_complete:false,state:'PENDIENTE_RECOGIDA_PARCIAL'}}
 ].map(row=>({...row,number:row.id,calendar_date:today,attention_deadline_at:today+'T10:00:00Z',customer:'Cliente de prueba'}));
-for(const row of orders)assert.equal(operationGroup(row),['pending','registered','processing','partial-prepared'].includes(row.id)?'POR_ATENDER':'ATENDIDO',row.id);
+for(const row of orders)assert.equal(operationGroup(row),['pending','registered','processing','partial-prepared','partial-delivered'].includes(row.id)?'POR_ATENDER':'ATENDIDO',row.id);
 for(const state of ['BORRADOR','BLOQUEADO','EN_PROCESO','EN_PROCESAMIENTO'])assert.equal(operationGroup({estado_registro_exit:state}),'POR_ATENDER');
 for(const state of ['ATENDIDO','PREPARADO','PENDIENTE_RECOGIDA_TOTAL','ENTREGADO_TOTAL','FACTURADO'])assert.equal(operationGroup({estado_registro_exit:state}),'ATENDIDO');
+assert.equal(operationGroup({estado_registro_exit:'ENTREGADO_PARCIAL'}),'POR_ATENDER');
+assert.equal(operationGroup({estado_registro_exit:'FACTURADO',pickup_summary:{state:'ENTREGADO_PARCIAL',prepared_complete:true}}),'POR_ATENDER');
+const reservation={id:'reserved',pickup_date:'2026-11-07',pickup_slot_start:'08:00',pickup_slot_end:'09:00',attention_deadline_at:'2026-11-07T08:00:00Z'};
+const estimate={id:'estimated',attention_deadline_at:'2026-11-07T08:15:00Z'};
+assert.ok(compareOrderAppointments(reservation,estimate)<0,'Reserved window starts before the estimated 09:15 attention time');
+assert.ok(compareOrderAppointments(estimate,{id:'tomorrow',pickup_date:'2026-11-08'})<0);
+assert.ok(compareOrderAppointments(estimate,{id:'undated'})<0);
+assert.ok(compareOrderAppointments({...reservation,attention_deadline_at:'2026-11-08T10:00:00Z'},estimate)>0,'A rescheduled forecast must not use the previous reserved window');
 let opened=null,requests=0;
 global.fetch=async()=>{requests++;return new Response(JSON.stringify({orders}))};
 const root=createRoot(document.getElementById('root'));
@@ -27,9 +35,9 @@ const root=createRoot(document.getElementById('root'));
  const select=document.querySelector('[aria-label="Estado de la operación"]');assert.ok(select);
  assert.deepEqual([...select.options].map(option=>option.textContent),['Por atender','Atendido']);assert.equal(select.value,'POR_ATENDER');
  const visible=()=>[...document.querySelectorAll('.calendar-event b')].map(el=>el.textContent).sort();
- assert.deepEqual(visible(),['partial-prepared','pending','processing','registered']);
+ assert.deepEqual(visible(),['partial-delivered','partial-prepared','pending','processing','registered']);
  await React.act(async()=>{select.value='ATENDIDO';select.dispatchEvent(new Event('change',{bubbles:true}))});
- assert.deepEqual(visible(),['delivered','invoiced','partial-delivered','prepared']);assert.equal(requests,1,'Changing the operation filter is immediate and does not reuse a different API state');
- await React.act(async()=>document.querySelector('.calendar-event').click());assert.ok(['delivered','invoiced','partial-delivered','prepared'].includes(opened.id));
+ assert.deepEqual(visible(),['delivered','invoiced','prepared']);assert.equal(requests,1,'Changing the operation filter is immediate and does not reuse a different API state');
+ await React.act(async()=>document.querySelector('.calendar-event').click());assert.ok(['delivered','invoiced','prepared'].includes(opened.id));
  await React.act(async()=>root.unmount());dom.window.close();console.log('Operation filter: exactly two choices, pending preparation, prepared/delivered/invoiced groups and detail navigation passed');
 })().catch(e=>{console.error(e);process.exitCode=1;dom.window.close()});
