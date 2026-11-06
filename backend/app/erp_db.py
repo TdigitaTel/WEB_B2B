@@ -184,8 +184,8 @@ def fetch_all_catalog_articles_for_export() -> list[dict]:
 
 def fetch_catalog_articles(query: str = "", page: int = 1, page_size: int = 24,
                            article_codes: list[str] | None = None, excluded_codes: list[str] | None = None,
-                           search_config: dict | None = None) -> tuple[list[dict], int]:
-    """Pagina la maestra activa de EXIT; PostgreSQL solo limita por clasificación."""
+                           search_config: dict | None = None, management: bool = False) -> tuple[list[dict], int]:
+    """Catálogo paginado; management incluye inactivos, marcas ocultas y materiales sin stock."""
     if article_codes is not None and not article_codes:
         return [], 0
     page = max(1, int(page))
@@ -201,19 +201,21 @@ def fetch_catalog_articles(query: str = "", page: int = 1, page_size: int = 24,
         brand_expression = _article_text(columns["brand_name"], length=200)
         eligible_prefix = _prepare_eligible_articles(cursor, article_codes)
         eligible_join = f"{eligible_prefix}{code_expression} " if eligible_prefix else ""
-        conditions = [f"{code_expression} <> ''", _brand_catalog_condition(connection, columns)]
+        conditions = [f"{code_expression} <> ''"]
+        if not management:
+            conditions.append(_brand_catalog_condition(connection, columns))
         if excluded_codes:
             cursor.execute("CREATE TABLE #HiddenArticles (article_code nvarchar(100) PRIMARY KEY)")
             _insert_article_filter_codes(cursor, "#HiddenArticles", excluded_codes)
             conditions.append(f"NOT EXISTS (SELECT 1 FROM #HiddenArticles hidden WHERE hidden.article_code = {code_expression})")
         parameters: list = []
-        if columns["inactive"]:
+        if not management and columns["inactive"]:
             conditions.append(f"COALESCE(a.{_discovered_column(columns['inactive'])}, 0) = 0")
         normalized_query = normalize_query(query, (search_config or {}).get("measure_equivalences"))
         stock_join = ""
         stock_parameters: list = []
         order_expression = code_expression
-        if not normalized_query:
+        if not normalized_query and not management:
             excluded = [code.strip() for code in settings.sqlserver_stock_excluded_warehouses.split(",") if code.strip()]
             exclusion = ""
             if excluded:
