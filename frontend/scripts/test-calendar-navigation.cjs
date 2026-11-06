@@ -45,6 +45,19 @@ function respond(body,status=200){return new Response(JSON.stringify(body),{stat
  await React.act(async()=>{operationSelect.value='ATENDIDO';operationSelect.dispatchEvent(new Event('change',{bubbles:true}))});
  assert.equal(document.querySelector('.calendar-selected-order'),null);
  assert.equal(document.querySelector('[aria-label="Buscar pedido por número"]').value,'','Changing the group clears the calendar detail search');
+ const scheduledOrders=[
+ {...order,id:'later-day',number:'WEB-900',exit_order_number:'900',pickup_date:'2026-11-08',pickup_slot_start:'08:00',pickup_slot_end:'09:00',attention_deadline_at:'2026-11-08T08:00:00Z'},
+ {...order,id:'estimated',number:'WEB-800',exit_order_number:'800',pickup_date:null,pickup_slot_start:null,pickup_slot_end:null,attention_deadline_at:'2026-11-07T08:15:00Z'},
+ {...order,id:'reserved-low',number:'WEB-100',exit_order_number:'100',pickup_date:'2026-11-07',pickup_slot_start:'08:00',pickup_slot_end:'09:00',attention_deadline_at:'2026-11-07T08:00:00Z'},
+ {...order,id:'date-only',number:'WEB-600',exit_order_number:'600',pickup_date:'2026-11-07',pickup_slot_start:null,pickup_slot_end:null,attention_deadline_at:null},
+ {...order,id:'without-date',number:'WEB-999',exit_order_number:'999',pickup_date:null,pickup_slot_start:null,pickup_slot_end:null,attention_deadline_at:null},
+ {...order,id:'rescheduled',number:'WEB-700',exit_order_number:'700',pickup_date:'2026-11-06',pickup_slot_start:'08:00',pickup_slot_end:'09:00',attention_deadline_at:'2026-11-07T11:00:00Z'},
+ {...order,id:'reserved-high',number:'WEB-200',exit_order_number:'200',pickup_date:'2026-11-07',pickup_slot_start:'08:00',pickup_slot_end:'09:00',attention_deadline_at:'2026-11-07T08:00:00Z'},
+ {...order,id:'partial-delivery',number:'WEB-001',exit_order_number:'1',pickup_date:null,pickup_slot_start:null,pickup_slot_end:null,attention_deadline_at:'2026-11-06T15:00:00Z',pickup_summary:{state:'ENTREGADO_PARCIAL',total_materials:2,prepared_materials:2,delivered_materials:1,ready_materials:1,pending_materials:1,prepared_complete:true,prepared_percent:100,delivered_percent:50,legacy_delivery:false,requires_review:false,lines:[]}}
+ ];
+ await React.act(async()=>root.render(React.createElement(m.exports.Operations,{key:'attention-order',orders:scheduledOrders,onRefresh:async()=>{}})));
+ await React.act(async()=>[...document.querySelectorAll('button')].find(button=>button.textContent==='Listado').click());
+ assert.deepEqual([...document.querySelectorAll('details.operator-web-order')].map(row=>row.dataset.orderId),['partial-delivery','reserved-high','reserved-low','estimated','rescheduled','date-only','later-day','without-date'],'WEB list follows attention date/window, includes partial delivery, and leaves missing dates last');
  function RadioScreen(){const [scheduled,setScheduled]=React.useState(false);return React.createElement(Choice,{scheduled,onChange:setScheduled})}
  await React.act(async()=>root.render(React.createElement(RadioScreen)));
  assert.equal(document.querySelectorAll('input[type=radio]').length,2);assert.equal(document.querySelector('input[value=immediate]').checked,true);
