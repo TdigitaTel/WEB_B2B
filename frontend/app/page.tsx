@@ -2,7 +2,7 @@
 import "./pickup-editor.css";
 import PickupTimingChoice from "./PickupTimingChoice";
 import PickupTimeSlots, {type PickupSlot} from "./PickupTimeSlots";
-import OrderDailyCalendar from "./OrderDailyCalendar";
+import OrderDailyCalendar,{compareOrderAppointments} from "./OrderDailyCalendar";
 import OrderDisplayParameters from "./OrderDisplayParameters";
 import "./operator-orders-compact.css";
 import OrderOperationFilter,{operationGroup,type OperationFilter} from "./OrderOperationFilter";
@@ -702,6 +702,7 @@ function Operations({orders,onRefresh,showImages=false}:{showImages?:boolean;ord
   const listedOrders=calendarTarget?[calendarTarget,...orders.filter(order=>order.id!==calendarTarget.id)]:orders;
   const sorted=listedOrders.filter(order=>(!calendarTarget||order.id===calendarTarget.id)&&(boardView!=="web"||(order.origen_pedido==="B2B"&&(!!calendarTarget||operationGroup(order)===webState)))&&matchesOrderOrigin(order,origin)&&(!orderSearch.trim()||displayOrderNumber(order).toLowerCase().includes(orderSearch.trim().toLowerCase())||order.number.toLowerCase().includes(orderSearch.trim().toLowerCase())||(order.nro_pedido_exit||"").toLowerCase().includes(orderSearch.trim().toLowerCase()))).sort((a,b)=>{
     const numberCompare=orderNumberValue(a)-orderNumberValue(b)||a.number.localeCompare(b.number,"es");
+    if(boardView==="web")return compareOrderAppointments(a,b)||-numberCompare;
     if(boardView!=="attended")return -numberCompare;
     if(attendedSort==="number")return attendedAscending?numberCompare:-numberCompare;
     const first=attentionDuration(a),second=attentionDuration(b);

@@ -21,6 +21,15 @@ export function shiftCalendarDate(day:string,offset:number){const date=new Date(
 export function calendarWeek(now=new Date()){const today=calendarDate(now),weekday=new Date(`${today}T12:00:00Z`).getUTCDay();const from=shiftCalendarDate(today,-((weekday+6)%7));return {from,to:shiftCalendarDate(from,6)}}
 export function calendarDays(from:string,to:string){const days:string[]=[];if(!from||!to||to<from||to>shiftCalendarDate(from,6))return days;for(let day=from;day<=to;day=shiftCalendarDate(day,1))days.push(day);return days}
 export const orderDay=(order:CalendarOrder)=>order.calendar_date||(order.attention_deadline_at&&Number.isFinite(Date.parse(order.attention_deadline_at))?calendarDate(new Date(order.attention_deadline_at)):order.pickup_date||'');
+export function compareOrderAppointments(a:CalendarOrder,b:CalendarOrder){
+ const firstDay=orderDay(a),secondDay=orderDay(b);
+ if(!firstDay||!secondDay)return firstDay?-1:secondDay?1:0;
+ const day=firstDay.localeCompare(secondDay);if(day)return day;
+ function time(order:CalendarOrder){const slot=appointmentWindow(order);if(slot)return [slot.start,slot.end];
+  return order.attention_deadline_at&&Number.isFinite(Date.parse(order.attention_deadline_at))?
+   [new Date(order.attention_deadline_at).toLocaleTimeString('en-GB',{timeZone:'Europe/Madrid',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}),'99:99']:['99:99','99:99'];}
+ const first=time(a),second=time(b);return first[0].localeCompare(second[0])||first[1].localeCompare(second[1]);
+}
 function appointmentWindow(order:CalendarOrder){
  if(order.calendar_time_source)return order.calendar_slot_start&&order.calendar_slot_end?{start:order.calendar_slot_start,end:order.calendar_slot_end}:null;
  const time=order.attention_deadline_at&&Number.isFinite(Date.parse(order.attention_deadline_at))?new Date(order.attention_deadline_at).toLocaleTimeString('en-GB',{timeZone:'Europe/Madrid',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}):null;
