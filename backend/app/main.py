@@ -55,6 +55,8 @@ from .services import PostgresCatalogService, ensure_catalog_products, product_v
 
 app = FastAPI(title="Bermúdez B2B API", version="1.0.0", openapi_url="/api/v1/openapi.json", docs_url="/docs")
 app.include_router(category_import_router)
+from .manual_classification import router as manual_classification_router
+app.include_router(manual_classification_router)
 app.include_router(category_visibility_router)
 app.include_router(category_image_router)
 app.include_router(image_admin_router)
