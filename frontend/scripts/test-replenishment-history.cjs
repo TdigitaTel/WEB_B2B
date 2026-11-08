@@ -1,0 +1,28 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),ts=require('typescript');
+const {JSDOM}=require('jsdom'),dom=new JSDOM('<div id="root"></div>',{url:'https://example.test'});
+for(const key of ['window','document','HTMLElement','Event'])global[key]=dom.window[key];
+global.IS_REACT_ACT_ENVIRONMENT=true;
+for(const ext of ['.ts','.tsx'])require.extensions[ext]=(m,f)=>m._compile(ts.transpileModule(fs.readFileSync(f,'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2020,jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS,esModuleInterop:true}}).outputText,f);
+const React=require('react'),{createRoot}=require('react-dom/client'),History=require('../app/ReplenishmentHistory.tsx').default;
+let fail=false,calls=[];
+const data={daily_median:2,daily_modes:[0,4],daily_mode_frequency:3,observed_days:8,calculation:{window_start:'2026-04-01',window_end:'2026-04-08'},weekly_sales:[{week_start:'2026-03-30',from:'2026-04-01',to:'2026-04-05',observed_days:5,sold:20,returned:2,demand:18},{week_start:'2026-04-06',from:'2026-04-06',to:'2026-04-08',observed_days:3,sold:4,returned:0,demand:4}]};
+global.fetch=async(url,options)=>{calls.push([url,options]);return {ok:!fail,status:fail?500:200,json:async()=>fail?{detail:{message:'internal'}}:data}};
+const root=createRoot(document.getElementById('root'));
+(async()=>{
+ await React.act(async()=>root.render(React.createElement(History,{endpoint:'/saved/result/42',unit:'PZ'})));
+ assert.equal(calls[0][0],'/saved/result/42');assert.equal(calls[0][1].credentials,'include');
+ assert.match(document.body.textContent,/01\/04\/2026 — 08\/04\/2026/);
+ assert.match(document.body.textContent,/0 · 4 PZ\/día/);assert.match(document.body.textContent,/3 de 8 días/);
+ assert.match(document.body.textContent,/Pico semanal: 20 PZ/);assert.match(document.body.textContent,/no modifican la reposición/);
+ assert.equal(document.querySelectorAll('svg rect').length,2);
+ assert.equal(document.querySelectorAll('svg rect[fill="#b56a13"]').length,1);
+ assert.match(document.querySelector('svg rect title').textContent,/semana incompleta/);
+ assert.match(document.querySelector('table').textContent,/Devoluciones/);
+ fail=true;await React.act(async()=>root.render(React.createElement(History,{endpoint:'/saved/result/43',unit:'PZ'})));
+ assert.match(document.querySelector('[role=alert]').textContent,/No se pudo cargar/);
+ assert.ok(!document.body.textContent.includes('[object Object]'));
+ fail=false;data.daily_modes=[];data.weekly_sales.forEach(w=>w.sold=0);
+ await React.act(async()=>document.querySelector('button').click());
+ assert.match(document.body.textContent,/Sin moda/);assert.match(document.body.textContent,/Sin ventas en el periodo/);
+ await React.act(async()=>root.unmount());dom.window.close();console.log('Replenishment history: saved period, modes, peaks, partial weeks, retry and empty sales passed');
+})().catch(e=>{console.error(e);process.exitCode=1;dom.window.close()});

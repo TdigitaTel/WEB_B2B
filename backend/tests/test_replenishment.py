@@ -573,3 +573,47 @@ def test_safety_selection_is_stored_and_previous_result_remains_unchanged(monkey
     assert enabled.json()['safety_stock']>0
     saved=client.get(detail).json()
     assert saved['parameters']['use_safety_stock'] is False and saved['safety_stock']==0
+
+
+def test_history_median_modes_weekly_sales_and_returns():
+    source=source_for(values=[0,2,2,8,0,4,4,4,0,0])  # Wednesday through Friday
+    source['sales'].append({'sku':'03009','delegation':'02','day':'2026-04-02','sold':0,'returned':5})
+    source['sales'].append({'sku':'03009','delegation':'01','day':'2026-04-03','sold':999,'returned':0})
+    row=calculate(source)
+    # Daily net is [0,0,2,8,0,4,4,4,0,0], including the return-only excess.
+    assert row['daily_median']==1
+    assert row['daily_modes']==[0] and row['daily_mode_frequency']==5
+    weeks=row['weekly_sales']
+    assert [(w['from'],w['to'],w['observed_days']) for w in weeks]==[
+        ('2026-04-01','2026-04-05',5),('2026-04-06','2026-04-10',5)]
+    assert [w['week_start'] for w in weeks]==['2026-03-30','2026-04-06']
+    assert [(w['sold'],w['returned'],w['demand']) for w in weeks]==[(12,5,10),(12,0,12)]
+    assert sum(w['sold'] for w in weeks)==row['gross_sales']
+    assert sum(w['demand'] for w in weeks)==row['total_demand']
+    context=prepare_context(source,['02'],[])
+    basic=calculate_article(source['articles'][0],'02',context)
+    assert 'weekly_sales' not in basic  # Loaded per opened line; not duplicated in result pages.
+    for key in ('safety_stock','minimum_stock','final_quantity'):assert basic[key]==row[key]
+
+
+def test_history_tied_modes_unique_values_and_zero_weeks():
+    tied=calculate(source_for(values=[1,1,3,3]))
+    assert tied['daily_median']==2 and tied['daily_modes']==[1,3]
+    assert tied['daily_mode_frequency']==2
+    unique=calculate(source_for(values=[1,2,3]))
+    assert unique['daily_modes']==[] and unique['daily_mode_frequency']==1
+    zero=calculate(source_for(values=[0]*14))
+    assert zero['daily_median']==0 and zero['daily_modes']==[0]
+    assert len(zero['weekly_sales'])==3
+    assert all(w['sold']==0 for w in zero['weekly_sales'])
+
+
+def test_history_uses_effective_window_and_article_creation():
+    source=source_for(values=[100]*7+[2]*7)
+    row=calculate(source,{'history_days':7})
+    assert row['daily_median']==2 and row['daily_mode_frequency']==7
+    assert sum(w['sold'] for w in row['weekly_sales'])==14
+    assert row['weekly_sales'][0]['from']=='2026-04-08'
+    source['articles'][0]['created_at']='2026-04-12'
+    row=calculate(source)
+    assert row['daily_mode_frequency']==3 and row['weekly_sales'][0]['from']=='2026-04-12'
