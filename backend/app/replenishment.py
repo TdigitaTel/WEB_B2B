@@ -272,9 +272,13 @@ def run_simulation(body:RunInput,db:Session=Depends(get_db),user:User=Depends(op
         annotate_central(results,source);scenario.summary=summarize(results)
         db.add_all([Result(scenario_id=scenario.id,sku=row['sku'],delegation=row['delegation'],payload=row) for row in results])
     audit(db,user,'REPLENISHMENT_SIMULATED',scenario.public_id,{'preview_only':body.preview_only,'source_fingerprint':fingerprint})
+    if not body.preview_only:
+        from .replenishment_saved import publish_calculations
+        publish_calculations(db,scenario)
     db.commit();return scenario_payload(scenario)
 
 class ResultFilters(BaseModel):
+    delegation:Literal['01','02','04','05']|None=None
     q:str=Field(default='',max_length=200)
     alerts_only:bool=False
     needed_only:bool=False
@@ -290,6 +294,7 @@ def filtered_results(scenario_id,filters):
     q=filters.q;alerts_only=filters.alerts_only;needed_only=filters.needed_only
     central_only=filters.central_only;overstock_only=filters.overstock_only;consumption=filters.consumption
     query=select(Result).where(Result.scenario_id==scenario_id)
+    if filters.delegation:query=query.where(Result.delegation==filters.delegation)
     if q:
         query=query.where(or_(func.lower(Result.sku).contains(q.lower(),autoescape=True),
             func.lower(Result.payload['description'].as_string()).contains(q.lower(),autoescape=True)))
@@ -465,3 +470,17 @@ def export(scenario_id:str,filters:ResultFilters=Depends(),db:Session=Depends(ge
         if metadata is not None:append(metadata,[key,value])
     buffer=io.BytesIO();book.save(buffer)
     return Response(buffer.getvalue(),media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',headers={'Content-Disposition':'attachment; filename="reposicion.xlsx"'})
+
+
+@router.get('/calculations')
+def saved_calculations(db:Session=Depends(get_db)):
+    from .replenishment_saved import calculation_list
+    data=calculation_list(db);db.commit();return data
+
+
+@router.post('/redistribution')
+def calculate_saved_redistribution(db:Session=Depends(get_db),user:User=Depends(operator)):
+    from .replenishment_saved import calculate_redistribution
+    data=calculate_redistribution(db)
+    audit(db,user,'REPLENISHMENT_REDISTRIBUTION_PROPOSED','CURRENT',{'summary':data['summary'],'calculations':data['calculations']})
+    db.commit();return data
