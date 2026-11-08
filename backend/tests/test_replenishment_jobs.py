@@ -80,6 +80,11 @@ def test_batches_are_committed_and_hidden_until_full_publication(client,monkeypa
     row=response.json()['items'][0]
     detail=client.get(f"{PREFIX}/simulations/{sid}/results/{row['id']}")
     assert detail.status_code==200 and len(detail.json()['daily_sales'])==2
+    evidence=detail.json()
+    assert evidence['daily_median'] is not None
+    assert len(evidence['weekly_sales'])>=1
+    assert sum(w['sold'] for w in evidence['weekly_sales'])==evidence['gross_sales']
+    assert 'daily_modes' in evidence
     assert client.get(f'{PREFIX}/simulations/{sid}/export.xlsx?q=JOB-00000').status_code==200
     # A SKU's complete set of delegations must yield exactly the same quantities/coverage as one-shot calculation.
     raw=source([row['sku']]);params=request()['temporary_parameters'];context=prepare_context(raw,['01','02','04','05'],[],params)

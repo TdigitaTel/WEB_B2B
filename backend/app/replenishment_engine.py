@@ -1,5 +1,5 @@
 """Motor puro de simulación. No conoce conexiones ni modifica políticas."""
-from collections import defaultdict
+from collections import Counter, defaultdict
 from calendar import monthrange
 from decimal import Decimal, ROUND_CEILING, InvalidOperation
 from datetime import date, timedelta
@@ -247,7 +247,21 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
         'calculation':{'horizon':horizon,'z':z,'formula':('Stock máximo = stock mínimo + consumo diario × días de cobertura máxima' if parameters['target_mode']=='MAXIMUM' else 'Punto de reposición = stock mínimo + consumo diario × días hasta próxima reposición') + '; cantidad = max(0, objetivo − disponible previsto).',
             'safety_formula':'Sin stock de seguridad (opción seleccionada)' if not parameters['use_safety_stock'] else 'Z × desviación diaria × sqrt(plazo de llegada)' if method=='REVISION_PERIODICA' else 'Modelo alternativo explicado en método y recomendaciones',
             'maximum_formula':'stock mínimo + consumo diario × días de cobertura máxima', 'minimum_formula':'consumo diario × plazo de llegada + stock de seguridad' if parameters['use_safety_stock'] else 'consumo diario × plazo de llegada', 'dispatch_days':parameters['review_days'],'lead_days':parameters['lead_days'],'raw_maximum':raw_maximum,'window_start':stats['start'],'window_end':stats['end']}}
-    if include_daily:result['daily_sales']=stats['daily']
+    if include_daily:
+        # Informational statistics use the same zero-filled, nonnegative daily demand
+        # as sigma. Weekly evidence is built only for an opened line, not every result.
+        counts=Counter(stats['demand_values'])
+        frequency=max(counts.values(),default=0)
+        weeks={}
+        for item in stats['daily']:
+            day=date.fromisoformat(item['day']);monday=(day-timedelta(days=day.weekday())).isoformat()
+            bucket=weeks.setdefault(monday,{'week_start':monday,'from':item['day'],'to':item['day'],
+                'observed_days':0,'sold':0,'returned':0,'demand':0})
+            bucket['to']=item['day'];bucket['observed_days']+=1
+            for key in ('sold','returned','demand'):bucket[key]+=item[key]
+        result.update(daily_sales=stats['daily'],daily_median=median(stats['demand_values']) if counts else None,
+            daily_modes=sorted(value for value,count in counts.items() if count==frequency) if frequency>1 else [],
+            daily_mode_frequency=frequency,weekly_sales=list(weeks.values()))
     return result
 
 def annotate_central(results,source):
