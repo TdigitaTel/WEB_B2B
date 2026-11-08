@@ -1,4 +1,5 @@
 """Durable mail outbox. One message per current ERP destination, never expose a CC list."""
+from contextlib import contextmanager
 import hashlib
 import json
 import logging
@@ -24,12 +25,12 @@ def now():
     return datetime.now(timezone.utc)
 
 
-def deliver(db, job, contact_reader=None, transport=None):
+def deliver(db, job, contact_reader=None, transport=None, *, manual=False):
     contact_reader = contact_reader or fetch_customer
     transport = transport or send_message
     row, config = configuration(db)
     order = db.get(Order, job.order_id)
-    if (not config.automatic_enabled or job.state not in config.selected_states or not order
+    if ((not config.automatic_enabled and not manual) or job.state not in config.selected_states or not order
             or order.deleted_at or order.estado_registro_exit == 'BORRADOR'):
         job.status = 'CANCELLED'; db.commit(); return
     # Superseded pending messages are not useful. Never announce an obsolete state.
@@ -93,27 +94,31 @@ def deliver(db, job, contact_reader=None, transport=None):
         logger.warning('ORDER_EMAIL_FAILED delivery=%s %s', job.id, json.dumps(diagnostic, ensure_ascii=False))
 
 
-def run_once():
-    # A session-level lock survives commits while sending, and drops on process death.
+@contextmanager
+def delivery_lock():
+    # Session-level lock survives commits while sending and drops on process death.
     with engine.connect() as connection:
-        locked = engine.dialect.name != 'postgresql' or connection.scalar(text('SELECT pg_try_advisory_lock(:key)'), {'key': LOCK})
+        acquired=engine.dialect.name!='postgresql' or connection.scalar(text('SELECT pg_try_advisory_lock(:key)'),{'key':LOCK})
         connection.commit()
-        if not locked:
-            return
         try:
-            with SessionLocal() as db:
-                for job in db.scalars(select(OrderEmailDelivery).where(OrderEmailDelivery.status == 'SENDING')):
-                    job.status = 'UNCERTAIN'
-                db.commit()
-                jobs = list(db.scalars(select(OrderEmailDelivery).where(
-                    OrderEmailDelivery.status.in_(['PENDING', 'RETRY']),
-                    (OrderEmailDelivery.next_attempt_at.is_(None)) | (OrderEmailDelivery.next_attempt_at <= now())
-                ).order_by(OrderEmailDelivery.id).limit(25)))
-                for job in jobs:
-                    deliver(db, job)
+            yield acquired
         finally:
-            if engine.dialect.name == 'postgresql':
-                connection.execute(text('SELECT pg_advisory_unlock(:key)'), {'key': LOCK}); connection.commit()
+            if acquired and engine.dialect.name=='postgresql':
+                connection.execute(text('SELECT pg_advisory_unlock(:key)'),{'key':LOCK});connection.commit()
+
+
+def run_once():
+    with delivery_lock() as acquired:
+        if not acquired:return
+        with SessionLocal() as db:
+            for job in db.scalars(select(OrderEmailDelivery).where(OrderEmailDelivery.status=='SENDING')):
+                job.status='UNCERTAIN'
+            db.commit()
+            jobs=list(db.scalars(select(OrderEmailDelivery).where(
+                OrderEmailDelivery.status.in_(['PENDING','RETRY']),
+                (OrderEmailDelivery.next_attempt_at.is_(None)) | (OrderEmailDelivery.next_attempt_at<=now())
+            ).order_by(OrderEmailDelivery.id).limit(25)))
+            for job in jobs:deliver(db,job)
 
 
 def main():

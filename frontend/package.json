@@ -24,7 +24,9 @@
     "test:operator-order-images": "node scripts/test-operator-order-images.cjs",
     "test:settings-menu": "node scripts/test-settings-menu.cjs",
     "test:operation-filter": "node scripts/test-operation-filter.cjs",
+    "test:replenishment-history": "node scripts/test-replenishment-history.cjs",
     "test:manual-classification": "node scripts/test-manual-classification.cjs",
+    "test:order-email-resend": "node scripts/test-order-email-resend.cjs",
     "test:order-email": "node scripts/test-order-email.cjs",
     "test:customer-order-emails": "node scripts/test-customer-order-emails.cjs"
   },

@@ -37,3 +37,17 @@ docker logs --since 30m web_b2b-order-email-worker-1
 Los registros `ORDER_EMAIL_SENT` confirman aceptación SMTP, no entrega final en la bandeja. `ORDER_EMAIL_FAILED` incluye fase, clase de excepción, código y respuesta sanitizada, sin direcciones ni credenciales. La cola guarda `SENT`, `CANCELLED`, `SUPERSEDED`, `NO_RECIPIENT`, `RETRY`, `FAILED` o `UNCERTAIN`.
 
 Los fallos previos al envío se reintentan hasta cinco veces con espera creciente. Los destinatarios ya aceptados no se repiten. Un corte durante la fase de envío o un reinicio con una salida `SENDING` produce `UNCERTAIN`, sin repetición automática: se debe comprobar el seguimiento del proveedor antes de cualquier reenvío manual. Un bloqueo de PostgreSQL impide dos trabajadores enviando a la vez. Las pruebas usan una base desechable y transporte simulado; no se han enviado correos reales.
+
+
+## Reenviar desde un pedido
+
+En **Operaciones → Pedidos WEB → Listado → Ver detalle → Reenviar correo**, el operador puede comprobar y enviar el aviso del estado actual sin esperar al proceso automático.
+
+- Respeta los estados seleccionados en Parámetros y los destinos Email1/Email2 marcados. Si el estado no está configurado, falta SMTP o no hay destinatarios válidos, muestra el motivo y bloquea el envío.
+- El envío manual está disponible aunque el interruptor de avisos automáticos esté desactivado. La credencial y el contenido configurado son los mismos.
+- Comprueba de nuevo el estado al enviar. Si cambió desde que se abrió la ventana, pide revisar el estado actual.
+- Reutiliza la salida pendiente o fallida. Conserva los destinatarios ya aceptados tras un fallo parcial y evita reenviar un aviso ya aceptado del mismo estado.
+- Cuando el intento anterior es incierto, explica la posibilidad de duplicación y exige marcar la confirmación antes del reintento. Comparte el bloqueo del trabajador para impedir envíos paralelos.
+- Los errores muestran la fase, excepción y respuesta SMTP sanitizada. «Aceptado» confirma aceptación del proveedor, no recepción final en la bandeja.
+
+API: `GET /api/v1/store/orders/{id}/email` y `POST /api/v1/store/orders/{id}/email/resend`. Requiere permiso de pedidos y acceso a la delegación del pedido. No hay migraciones adicionales.
