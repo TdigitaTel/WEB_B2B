@@ -175,7 +175,8 @@ def test_source_context_and_history_differences_are_disclosed(monkeypatch):
     a=client.post(prefix+'/simulations',json={'filters':filters}).json()
     b=client.post(prefix+'/simulations',json={'filters':filters,'source_id':a['id'],'temporary_parameters':{'history_days':10}}).json()
     assert client.get(prefix+'/compare',params={'a':a['id'],'b':b['id']}).status_code==404
-    rows=client.get(f"{prefix}/simulations/{a['id']}/results",params={'needed_only':True,'alerts_only':True,'q':'Material','sort':'quantity'}).json()
+    assert client.get(f"{prefix}/simulations/{a['id']}/results").status_code==404  # Replaced calculation is removed.
+    rows=client.get(f"{prefix}/simulations/{b['id']}/results",params={'needed_only':True,'alerts_only':True,'q':'Material','sort':'quantity'}).json()
     assert rows['total']==1 and len(rows['items'])==1
 
 @pytest.mark.parametrize('mode,expected', [('EXIT',84),('MANUAL',80),('NONE',78)])

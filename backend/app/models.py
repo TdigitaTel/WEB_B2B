@@ -465,6 +465,13 @@ class ReplenishmentScenario(Base, TimestampMixin):
     summary: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
+class ReplenishmentDelegationCalculation(Base):
+    """One shared, published calculation per operational delegation."""
+    __tablename__ = "replenishment_delegation_calculations"
+    delegation: Mapped[str] = mapped_column(String(2), primary_key=True)
+    scenario_id: Mapped[int] = mapped_column(ForeignKey("replenishment_scenarios.id", ondelete="CASCADE"), index=True)
+
+
 class ReplenishmentResult(Base):
     __tablename__ = "replenishment_results"
     id: Mapped[int] = mapped_column(primary_key=True)

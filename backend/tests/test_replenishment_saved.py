@@ -1,0 +1,122 @@
+from decimal import Decimal
+import pytest
+from sqlalchemy import delete, select
+from app.bootstrap import main as bootstrap
+from app.db import SessionLocal
+from app.models import (ReplenishmentDelegationCalculation as Current,ReplenishmentScenario as Scenario,
+    ReplenishmentResult as Result,ReplenishmentJob as Job,ReplenishmentBatch as Batch,ReplenishmentAdjustment as Adjustment)
+from app.replenishment_saved import redistribution
+from test_replenishment_jobs import client, source, request, setup_source, PREFIX
+from app import replenishment_worker as worker
+bootstrap()
+
+@pytest.fixture(autouse=True)
+def clean_calculations():
+    def clean():
+        with SessionLocal() as db:
+            for model in (Current,Adjustment,Result,Batch,Job,Scenario):db.execute(delete(model))
+            db.commit()
+    clean();yield;clean()
+
+
+def test_saved_per_delegation_replaces_only_after_success(client,monkeypatch):
+    setup_source(monkeypatch,['SAVED'])
+    body=request();jid=client.post(PREFIX+'/jobs',json=body).json()['id'];assert worker.process_one()
+    first=client.get(PREFIX+'/jobs/'+jid).json()['result']['id']
+    saved=client.get(PREFIX+'/calculations').json()
+    assert [r['delegation'] for r in saved['items']]==['01','02','04','05'] and not saved['missing_delegations']
+    assert all(r['calculated_at'] and r['summary']['article_delegations']==1 for r in saved['items'])
+    body['filters']['delegations']=['02']
+    second_id=client.post(PREFIX+'/jobs',json=body).json()['id']
+    assert {r['id'] for r in client.get(PREFIX+'/calculations').json()['items']}=={first}
+    assert worker.process_one()
+    second=client.get(PREFIX+'/jobs/'+second_id).json()['result']['id']
+    saved=client.get(PREFIX+'/calculations').json()['items']
+    assert next(r for r in saved if r['delegation']=='02')['id']==second
+    assert {r['id'] for r in saved if r['delegation']!='02'}=={first}
+    assert client.get(f'{PREFIX}/simulations/{first}/results?delegation=02').json()['total']==0
+    assert client.get(f'{PREFIX}/simulations/{first}/results?delegation=01').json()['total']==1
+    # A failed recalculation does not discard the usable saved calculation.
+    client.post(PREFIX+'/jobs',json=body)
+    monkeypatch.setattr(worker,'read_replenishment_source',lambda *a:(_ for _ in ()).throw(ValueError('Conexión interrumpida')))
+    assert worker.process_one()
+    assert next(r for r in client.get(PREFIX+'/calculations').json()['items'] if r['delegation']=='02')['id']==second
+    # Replacing the final delegations releases the old snapshot/batches/results.
+    setup_source(monkeypatch,['SAVED']);body['filters']['delegations']=['01','04','05']
+    client.post(PREFIX+'/jobs',json=body);assert worker.process_one()
+    with SessionLocal() as db:
+        assert db.scalar(select(Scenario).where(Scenario.public_id==first)) is None
+        assert db.scalar(select(Job).where(Job.public_id==jid)).status=='REPLACED'
+        assert len(db.scalars(select(Current)).all())==4
+
+
+def test_redistribution_requires_all_saved_calculations_and_permissions(client,monkeypatch):
+    response=client.post(PREFIX+'/redistribution')
+    assert response.status_code==409 and len(response.json()['detail']['missing_delegations'])==4
+    setup_source(monkeypatch,['SAVED']);body=request();body['filters']['delegations']=['01']
+    client.post(PREFIX+'/jobs',json=body);worker.process_one()
+    response=client.post(PREFIX+'/redistribution')
+    assert response.status_code==409
+    assert [d['code'] for d in response.json()['detail']['missing_delegations']]==['02','04','05']
+    from fastapi.testclient import TestClient
+    from app.main import app
+    customer=TestClient(app);customer.post('/api/v1/auth/login',json={'email':'compras001@cliente.test','password':'123456'})
+    assert customer.get(PREFIX+'/calculations').status_code==403
+    assert customer.post(PREFIX+'/redistribution').status_code==403
+
+
+def material(delegation,stock=10,maximum=10,need=0,incoming=0,outgoing=0,multiple=None,sku='MAT'):
+    return {'sku':sku,'description':'Material','delegation':delegation,'unit_type':'UD','stock':stock,
+        'incoming':incoming,'outgoing':outgoing,'maximum_stock':maximum,'inventory_position':stock+incoming-outgoing,
+        'final_quantity':need,'daily_mean':1,'effective_multiple':multiple}
+
+
+def test_redistribution_conserves_physical_stock_prioritizes_need_and_returns_remainder():
+    rows=[material('01',stock=40,outgoing=5),material('02',stock=0,need=8),material('04',stock=2,need=4),material('05',stock=20)]
+    result=redistribution(rows);moves=result['movements']
+    assert [(m['from_delegation'],m['to_delegation'],m['quantity']) for m in moves]==[
+        ('01','02',8),('01','04',4),('01','00',13),('05','00',10)]
+    assert not result['unmet_needs'] and not result['material_warnings']
+    assert result['summary']['transfers']==2 and result['summary']['returns_to_central']==2
+    for code in ('01','05'):
+        row=next(r for r in rows if r['delegation']==code)
+        sent=sum(m['quantity'] for m in moves if m['from_delegation']==code)
+        assert row['stock']-row['outgoing']-sent>=row['maximum_stock']
+    assert rows[0]['stock']==40  # Pure proposal; no stock mutation.
+
+
+def test_redistribution_never_dispatches_incoming_or_missing_material_data():
+    rows=[material('01',stock=8,incoming=100),material('02',stock=0,need=10),material('04'),material('05')]
+    result=redistribution(rows)
+    assert not result['movements'] and result['unmet_needs'][0]['quantity']==10
+    assert redistribution(rows[:-1])['material_warnings'][0]['sku']=='MAT'
+    rows[0]['stock']=None
+    assert not redistribution(rows)['movements']
+    rows[0]['stock']=8;rows[1]['unit_type']='M'
+    assert 'unidades' in redistribution(rows)['material_warnings'][0]['reason']
+
+
+def test_redistribution_respects_both_decimal_multiples_and_does_not_overallocate():
+    rows=[material('01',stock=35.9,maximum=10,multiple=2.5),material('02',stock=0,need=16,multiple=4),material('04',stock=0,need=10,multiple=5),material('05')]
+    result=redistribution(rows);moves=result['movements']
+    # LCM(2.5,4)=20 cannot satisfy a need of 16 without exceeding it.
+    assert not any(m['to_delegation']=='02' for m in moves)
+    assert [(m['to_delegation'],m['quantity']) for m in moves]==[('04',10),('00',15)]
+    assert result['unmet_needs'][0]['quantity']==16
+    assert sum(Decimal(str(m['quantity'])) for m in moves)==Decimal(25)
+
+
+def test_redistribution_api_uses_current_snapshots_without_exit_reads(client,monkeypatch):
+    setup_source(monkeypatch,['SAVED'])
+    client.post(PREFIX+'/jobs',json=request());worker.process_one()
+    with SessionLocal() as db:
+        for result in db.scalars(select(Result)):
+            row=material(result.delegation,stock=30 if result.delegation=='01' else 0,need=4 if result.delegation=='02' else 0,sku=result.sku)
+            result.payload={**result.payload,**row}
+        db.commit()
+    monkeypatch.setattr(worker,'read_replenishment_source',lambda *a:pytest.fail('Must use snapshots'))
+    response=client.post(PREFIX+'/redistribution')
+    assert response.status_code==200
+    plan=response.json();assert plan['read_only_exit']
+    assert len(plan['calculations'])==4 and plan['movements'][0]['to_delegation']=='02'
+    assert plan['movements'][0]['quantity']==4

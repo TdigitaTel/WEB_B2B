@@ -1,0 +1,28 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),ts=require('typescript');
+const {JSDOM}=require('jsdom'),dom=new JSDOM('<div id="root"></div>',{url:'https://example.test'});
+for(const key of ['window','document','HTMLElement','Event'])global[key]=dom.window[key];global.IS_REACT_ACT_ENVIRONMENT=true;
+for(const ext of ['.ts','.tsx'])require.extensions[ext]=(m,f)=>m._compile(ts.transpileModule(fs.readFileSync(f,'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2020,jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS,esModuleInterop:true}}).outputText,f);
+const React=require('react'),{createRoot}=require('react-dom/client'),View=require('../app/ReplenishmentSaved.tsx').default;
+let opened=null,missing=true,calls=[];
+const saved={id:'saved',delegation:'01',delegation_name:'San Diego',calculated_at:'2026-11-08T10:30:00Z',summary:{articles_analyzed:4},filters:{date_from:'2026-10-01',date_to:'2026-10-31',delegations:['01']}};
+const plan={movements:[{sku:'MAT',description:'Material prueba',unit_type:'UD',from_delegation:'01',to_delegation:'02',quantity:3,kind:'TRANSFER'},{sku:'MAT',description:'Material prueba',unit_type:'UD',from_delegation:'01',to_delegation:'00',quantity:5,kind:'RETURN_CENTRAL'}],unmet_needs:[{sku:'OTHER',delegation:'05',quantity:2,unit_type:'M'}],material_warnings:[{sku:'INVALID',reason:'Falta cálculo del material.'}],warnings:['Los periodos son diferentes.'],calculations:[{delegation:'01',name:'San Diego',captured_at:'2026-11-08T10:00:00Z',date_from:'2026-10-01',date_to:'2026-10-31'}],summary:{materials:1,transfers:1,returns_to_central:1}};
+global.fetch=async(url,options)=>{calls.push([url,options]);if(url.endsWith('/calculations'))return {ok:true,status:200,json:async()=>({items:[saved,{...saved,delegation:'02',delegation_name:'Ferrol'}],missing_delegations:missing?[{code:'04',name:'Santiago'},{code:'05',name:'Sanxenxo'}]:[]})};
+ return {ok:!missing,status:missing?409:200,json:async()=>missing?{detail:{message:'Faltan cálculos guardados.',missing_delegations:[{code:'04',name:'Santiago'}]}}:plan};};
+const root=createRoot(document.getElementById('root')),render=revision=>root.render(React.createElement(View,{revision,onOpen:value=>opened=value}));
+const button=text=>[...document.querySelectorAll('button')].find(b=>b.textContent===text);
+(async()=>{
+ await React.act(async()=>render('1'));
+ assert.match(document.body.textContent,/04 · Santiago, 05 · Sanxenxo/);
+ assert.match(document.body.textContent,/8\/11\/2026/);
+ await React.act(async()=>button('Ver cálculo').click());assert.equal(opened.id,'saved');assert.equal(opened.delegation,'01');
+ await React.act(async()=>button('Calcular redistribución').click());
+ assert.match(document.querySelector('[role=alert]').textContent,/Faltan: 04 · Santiago/);assert.ok(!document.body.textContent.includes('[object Object]'));
+ missing=false;await React.act(async()=>button('Actualizar lista').click());
+ await React.act(async()=>button('Calcular redistribución').click());
+ assert.match(document.body.textContent,/devolución a Almeiras/i);assert.match(document.body.textContent,/3 UD/);assert.match(document.body.textContent,/5 UD/);
+ assert.match(document.body.textContent,/necesidades sin cubrir/);assert.match(document.body.textContent,/INVALID/);assert.match(document.body.textContent,/periodos son diferentes/);
+ assert.equal(calls.find(c=>c[0].endsWith('/redistribution'))[1].method,'POST');
+ const input=document.querySelector('input');await React.act(async()=>{const setter=Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype,'value').set;setter.call(input,'no-match');input.dispatchEvent(new Event('input',{bubbles:true}));});
+ await React.act(async()=>render('2'));assert.ok(!document.body.textContent.includes('Propuesta de redistribución'));
+ await React.act(async()=>root.unmount());dom.window.close();console.log('Saved calculations: dates, delegation selection, missing alert, moves, returns, warnings and invalidation passed');
+})().catch(e=>{console.error(e);process.exitCode=1;dom.window.close()});
