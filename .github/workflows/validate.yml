@@ -31,6 +31,7 @@ jobs:
       - run: npm run test:settings-menu
       - run: npm run test:customer-order-emails
       - run: npm run test:order-email
+      - run: npm run test:order-email-resend
       - run: npm run build
 
   backend:

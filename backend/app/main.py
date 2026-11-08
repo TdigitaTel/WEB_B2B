@@ -69,6 +69,8 @@ from .search_settings import router as search_settings_router
 app.include_router(search_settings_router)
 from .order_email_settings import router as order_email_settings_router
 app.include_router(order_email_settings_router)
+from .order_email_resend import router as order_email_resend_router
+app.include_router(order_email_resend_router)
 from .customer_order_email import router as customer_order_email_router
 app.include_router(customer_order_email_router)
 from . import order_email_events  # Transactional status notifications for all API writers.
