@@ -134,6 +134,8 @@ def publish(job_id,token):
         summary['average_coverage_days']=coverage/count if count else None
         scenario.summary=summary;scenario.source_fingerprint=digest(fingerprints)
         job.status='COMPLETED';job.phase='Cálculo completo y publicado';job.finished_at=now();job.error=None
+        from .replenishment_saved import publish_calculations
+        publish_calculations(db,scenario)
         db.commit()
 
 
