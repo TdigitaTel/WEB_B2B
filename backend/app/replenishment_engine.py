@@ -260,8 +260,14 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
                 'observed_days':0,'sold':0,'returned':0,'demand':0})
             bucket['to']=item['day'];bucket['observed_days']+=1
             for key in ('sold','returned','demand'):bucket[key]+=item[key]
-        result.update(daily_sales=stats['daily'],daily_median=median(positive_values) if positive_values else None,
-            daily_modes=sorted(value for value,count in counts.items() if count==frequency) if frequency>1 else [],
+        median_value=median(positive_values) if positive_values else None
+        modes=sorted(value for value,count in counts.items() if count==frequency) if frequency>1 else []
+        dates_by_value=defaultdict(list)
+        for item in stats['daily']:
+            if item['demand']>0:dates_by_value[item['demand']].append(item['day'])
+        result.update(daily_sales=stats['daily'],daily_median=median_value,
+            daily_median_frequency=counts.get(median_value,0),daily_median_dates=dates_by_value.get(median_value,[]),
+            daily_modes=modes,daily_mode_occurrences=[{'value':value,'count':counts[value],'dates':dates_by_value[value]} for value in modes],
             daily_mode_frequency=frequency,positive_consumption_days=len(positive_values),weekly_sales=list(weeks.values()))
     return result
 

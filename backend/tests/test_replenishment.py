@@ -635,3 +635,34 @@ def test_history_median_modes_ignore_zero_days_in_sparse_year():
     assert single['daily_modes']==[]  # No repeated value.
     decimal=calculate(source_for(values=[0,.25,.25,0,1.5]))
     assert decimal['daily_median']==.25 and decimal['daily_modes']==[.25]
+
+
+def test_history_occurrences_measure_representativeness_without_inventing_median_dates():
+    row=calculate(source_for(values=[0,2,2,8,0,4,4,4,0,0]))
+    assert row['daily_median']==4 and row['daily_median_frequency']==3
+    assert row['daily_median_dates']==['2026-04-06','2026-04-07','2026-04-08']
+    assert row['daily_mode_occurrences']==[{'value':4,'count':3,'dates':row['daily_median_dates']}]
+    assert row['positive_consumption_days']==6
+    # Interpolated medians need not be observed: never mark a fabricated occurrence.
+    interpolated=calculate(source_for(values=[0,1,1,3,3,0]))
+    assert interpolated['daily_median']==2 and interpolated['daily_median_frequency']==0
+    assert interpolated['daily_median_dates']==[]
+    assert interpolated['daily_mode_occurrences']==[
+        {'value':1,'count':2,'dates':['2026-04-02','2026-04-03']},
+        {'value':3,'count':2,'dates':['2026-04-04','2026-04-05']}]
+    empty=calculate(source_for(values=[0]*10))
+    assert empty['daily_median_frequency']==0 and empty['daily_median_dates']==[]
+    assert empty['daily_mode_occurrences']==[]
+
+
+def test_history_occurrence_dates_are_net_consumption_not_weekly_sales_or_returns():
+    source=source_for(values=[5,5,5,5])
+    source['sales'] += [
+        {'sku':'03009','delegation':'02','day':'2026-04-01','sold':0,'returned':3},
+        {'sku':'03009','delegation':'02','day':'2026-04-02','sold':0,'returned':3},
+        {'sku':'03009','delegation':'02','day':'2026-04-03','sold':0,'returned':9}]
+    row=calculate(source)
+    assert row['daily_median']==2 and row['daily_median_frequency']==2
+    assert row['daily_median_dates']==['2026-04-01','2026-04-02']
+    assert row['daily_mode_occurrences']==[{'value':2,'count':2,'dates':['2026-04-01','2026-04-02']}]
+    assert row['gross_sales']==20 and sum(w['sold'] for w in row['weekly_sales'])==20
