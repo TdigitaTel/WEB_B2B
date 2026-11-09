@@ -31,7 +31,8 @@
     "test:manual-classification": "node scripts/test-manual-classification.cjs",
     "test:order-email-resend": "node scripts/test-order-email-resend.cjs",
     "test:order-email": "node scripts/test-order-email.cjs",
-    "test:customer-order-emails": "node scripts/test-customer-order-emails.cjs"
+    "test:customer-order-emails": "node scripts/test-customer-order-emails.cjs",
+    "test:replenishment-quantities": "node scripts/test-replenishment-quantities.cjs"
   },
   "dependencies": {
     "jsqr": "^1.4.0",
