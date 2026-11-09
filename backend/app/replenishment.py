@@ -376,7 +376,7 @@ def detail(scenario_id:str,result_id:int,db:Session=Depends(get_db)):
     article,context=article_context(scenario,row,db)
     calculated=calculate_article(article,row.delegation,context,row.payload.get('manual_parameters'),True)
     history=db.scalars(select(Adjustment).where(Adjustment.result_id==row.id).order_by(Adjustment.created_at)).all()
-    return {'id':row.id,**row.payload,**{key:calculated[key] for key in ('daily_sales','daily_median','daily_modes','daily_mode_frequency','positive_consumption_days','weekly_sales')},'scenario_version':scenario.version,
+    return {'id':row.id,**row.payload,**{key:calculated[key] for key in ('daily_sales','daily_median','daily_median_frequency','daily_median_dates','daily_mode_occurrences','daily_modes','daily_mode_frequency','positive_consumption_days','weekly_sales')},'scenario_version':scenario.version,
         'adjustments':[{'created_at':event.created_at,'user_id':event.user_id,'reason':event.reason,'changes':event.changes} for event in history]}
 
 @router.post('/simulations/{scenario_id}/results/{result_id}/recalculate')
