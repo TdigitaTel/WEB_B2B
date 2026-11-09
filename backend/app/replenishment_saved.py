@@ -1,5 +1,7 @@
 """Current delegation calculations and read-only redistribution proposals."""
 from collections import defaultdict
+import hashlib
+import json
 from decimal import Decimal, ROUND_FLOOR
 from math import lcm
 from fastapi import HTTPException
@@ -163,5 +165,7 @@ def calculate_redistribution(db):
         calculations.append({'delegation':code,'name':DELEGATIONS[code],'scenario_id':scenario.public_id,
             'captured_at':scenario.source_snapshot['captured_at'],'date_from':scenario.filters['date_from'],'date_to':scenario.filters['date_to']})
     result=redistribution(rows)
-    return {**result,'calculations':calculations,'warnings':(['Los cálculos utilizan periodos de ventas diferentes. Revisa las fechas antes de aplicar la propuesta.'] if len(ranges)>1 else []),
+    proposal={**result,'calculations':calculations,'warnings':(['Los cálculos utilizan periodos de ventas diferentes. Revisa las fechas antes de aplicar la propuesta.'] if len(ranges)>1 else []),
         'read_only_exit':True}
+    proposal['fingerprint']=hashlib.sha256(json.dumps(proposal,sort_keys=True,ensure_ascii=False,separators=(',',':')).encode()).hexdigest()
+    return proposal

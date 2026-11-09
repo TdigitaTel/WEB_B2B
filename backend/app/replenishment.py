@@ -484,3 +484,21 @@ def calculate_saved_redistribution(db:Session=Depends(get_db),user:User=Depends(
     data=calculate_redistribution(db)
     audit(db,user,'REPLENISHMENT_REDISTRIBUTION_PROPOSED','CURRENT',{'summary':data['summary'],'calculations':data['calculations']})
     db.commit();return data
+
+
+class RedistributionExportInput(BaseModel):
+    fingerprint:str=Field(pattern=r'^[a-f0-9]{64}$')
+
+
+@router.post('/redistribution/export.xlsx')
+def export_redistribution(body:RedistributionExportInput,db:Session=Depends(get_db),user:User=Depends(operator)):
+    from .replenishment_saved import calculate_redistribution
+    from .replenishment_redistribution_export import workbook_bytes
+    proposal=calculate_redistribution(db)
+    if proposal['fingerprint']!=body.fingerprint:
+        raise HTTPException(409,'Los cálculos han cambiado desde que se generó la propuesta. Vuelve a calcular la redistribución antes de exportarla.')
+    data=workbook_bytes(proposal)
+    audit(db,user,'REPLENISHMENT_REDISTRIBUTION_EXPORTED','CURRENT',{'fingerprint':proposal['fingerprint'],'summary':proposal['summary']})
+    db.commit()
+    return Response(data,media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        headers={'Content-Disposition':'attachment; filename="redistribucion.xlsx"'})
