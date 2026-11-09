@@ -392,6 +392,16 @@ def catalog_brands(user: User = Depends(require_roles("OPERADOR_TIENDA", "ADMIN"
         raise HTTPException(503, "No se pudieron consultar las marcas de EXIT") from exc
 
 
+def catalog_codes_for_filters(db, family=None, area_id=None, family_id=None, subfamily_id=None, product_type_id=None):
+    classification_codes = PostgresCatalogService(db).classification_codes(
+        family, area_id, family_id, subfamily_id, product_type_id
+    )
+    if area_id and db.scalar(select(MaterialArea.code).where(MaterialArea.id == area_id)) == UNCLASSIFIED_CODE:
+        classification_codes = list(db.scalars(select(Product.sku).where(
+            Product.material_area_id.is_(None) | Product.material_area_id.in_(unclassified_area_ids(db)))).all())
+    return visible_catalog_codes(db, classification_codes)
+
+
 @app.get("/api/v1/products")
 def products(q: str = "", family: str | None = None, area_id: int | None = None,
              family_id: int | None = None, subfamily_id: int | None = None,
@@ -399,13 +409,7 @@ def products(q: str = "", family: str | None = None, area_id: int | None = None,
              page_size: int = Query(24, le=100), user: User = Depends(current_user),
              db: Session = Depends(get_db)):
     customer = customer_for(user, db)
-    classification_codes = PostgresCatalogService(db).classification_codes(
-        family, area_id, family_id, subfamily_id, product_type_id
-    )
-    if area_id and db.scalar(select(MaterialArea.code).where(MaterialArea.id == area_id)) == UNCLASSIFIED_CODE:
-        classification_codes = list(db.scalars(select(Product.sku).where(
-            Product.material_area_id.is_(None) | Product.material_area_id.in_(unclassified_area_ids(db)))).all())
-    classification_codes = visible_catalog_codes(db, classification_codes)
+    classification_codes = catalog_codes_for_filters(db,family,area_id,family_id,subfamily_id,product_type_id)
     try:
         articles, total = fetch_catalog_articles(q, page, page_size, classification_codes, excluded_codes=hidden_codes(db), search_config=catalog_search_config(db, q))
     except HTTPException:
@@ -521,10 +525,12 @@ def catalog_classification(user: User = Depends(current_user), db: Session = Dep
 
 
 @app.get("/api/v1/search/suggestions")
-def suggestions(q: str = Query(min_length=2), user: User = Depends(current_user), db: Session = Depends(get_db)):
+def suggestions(q: str = Query(min_length=2), area_id: int | None = None, family_id: int | None = None,
+                subfamily_id: int | None = None, product_type_id: int | None = None,
+                user: User = Depends(current_user), db: Session = Depends(get_db)):
     customer = customer_for(user, db)
     try:
-        articles, _ = fetch_catalog_articles(q, 1, 8, visible_catalog_codes(db), excluded_codes=hidden_codes(db), search_config=catalog_search_config(db, q))
+        articles, _ = fetch_catalog_articles(q, 1, 8, catalog_codes_for_filters(db,area_id=area_id,family_id=family_id,subfamily_id=subfamily_id,product_type_id=product_type_id), excluded_codes=hidden_codes(db), search_config=catalog_search_config(db, q))
     except HTTPException:
         raise
     except Exception as exc:

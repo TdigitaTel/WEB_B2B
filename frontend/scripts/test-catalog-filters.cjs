@@ -1,0 +1,52 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),ts=require('typescript');
+const {JSDOM}=require('jsdom'),dom=new JSDOM('<div id="root"></div>',{url:'https://example.test/?kiosk=1',pretendToBeVisual:true});
+for(const key of ['window','document','HTMLElement','Event','CustomEvent'])global[key]=dom.window[key];
+Object.defineProperty(global,'navigator',{value:dom.window.navigator,configurable:true});
+global.location=window.location;global.IS_REACT_ACT_ENVIRONMENT=true;
+global.IntersectionObserver=class{observe(){}disconnect(){}};
+window.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});
+const timers=new Set();window.setInterval=fn=>{timers.add(fn);return timers.size};window.clearInterval=()=>{};
+for(const ext of ['.ts','.tsx'])require.extensions[ext]=(m,f)=>m._compile(ts.transpileModule(fs.readFileSync(f,'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2020,jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS,esModuleInterop:true}}).outputText,f);
+require.extensions['.css']=m=>m.exports={};
+const React=require('react'),{createRoot}=require('react-dom/client'),App=require('../app/page.tsx').default;
+const classification=[{id:1,name:'Herramientas',count:2,families:[{id:2,name:'Manuales',count:2,subfamilies:[{id:3,name:'Golpeo',count:2,product_types:[{id:4,name:'Martillos',count:2}]}]}]},{id:5,name:'Electricidad',count:1,families:[]}];
+const calls=[];
+global.fetch=async url=>{url=String(url);calls.push(url);let data;
+ if(url.endsWith('/account'))data={user:{id:'customer',name:'Cliente',email:'client@example.test',role:'CLIENTE',must_change_password:false,idle_timeout_seconds:900},customer:{trade_name:'Cliente',legal_name:'Cliente'}};
+ else if(url.includes('/catalog/classification'))data=classification;
+ else if(url.includes('/products?')||url.includes('/catalog/favorites'))data={items:[],total:0};
+ else if(url.includes('/search/suggestions'))data=[{id:'p1',sku:'0001',name:'Martillo ACME',area_id:1,family_id:2,subfamily_id:3,product_type_id:4}];
+ else if(url.endsWith('/cart'))data={items:[],line_count:0,subtotal:0,tax_total:0,total:0,store:null};
+ else data=[];
+ return new Response(JSON.stringify(data));
+};
+const root=createRoot(document.getElementById('root'));
+const search=()=>document.querySelector('input[aria-label="Buscar productos"]');
+const department=()=>document.querySelector('select[aria-label="Departamento"]');
+async function type(value){await React.act(async()=>{Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype,'value').set.call(search(),value);search().dispatchEvent(new Event('input',{bubbles:true}));});await settle()}
+async function settle(){await React.act(async()=>new Promise(resolve=>setTimeout(resolve,260)))}
+const lastQuery=path=>new URL(calls.filter(url=>url.startsWith(path)).at(-1),'https://example.test').searchParams;
+const button=text=>[...document.querySelectorAll('button')].find(b=>b.textContent.trim()===text);
+(async()=>{
+ await React.act(async()=>root.render(React.createElement(App)));await settle();
+ await React.act(async()=>{department().value='1';department().dispatchEvent(new Event('change',{bubbles:true}))});
+ await type('ACME');
+ for(const path of ['/api/v1/products?','/api/v1/search/suggestions?']){assert.equal(lastQuery(path).get('q'),'ACME');assert.equal(lastQuery(path).get('area_id'),'1')}
+ assert.equal(department().value,'1');assert.match(document.querySelector('.active-filter-bar').textContent,/Herramientas/);
+ await React.act(async()=>[...document.querySelectorAll('.facet-options button')].find(b=>b.textContent.startsWith('Manuales')).click());await settle();
+ assert.equal(search().value,'ACME');assert.equal(lastQuery('/api/v1/products?').get('family_id'),'2');
+ await type('ACME tools');assert.equal(lastQuery('/api/v1/search/suggestions?').get('family_id'),'2');
+ await React.act(async()=>document.querySelector('.suggestion').click());await settle();
+ assert.equal(department().value,'1');assert.equal(lastQuery('/api/v1/products?').get('family_id'),'2');assert.equal(lastQuery('/api/v1/products?').has('product_type_id'),false,'Suggestion preserves selected generic category instead of narrowing it');
+ await React.act(async()=>document.querySelector('button[aria-label="Limpiar búsqueda"]').click());await settle();
+ assert.equal(search().value,'');assert.equal(lastQuery('/api/v1/products?').get('area_id'),'1');assert.equal(lastQuery('/api/v1/products?').get('family_id'),'2');
+ await React.act(async()=>document.querySelector('button[aria-label="Abrir teclado en pantalla"]').click());
+ await React.act(async()=>[...document.querySelectorAll('.kiosk-keyboard button')].find(b=>b.textContent==='A').click());await settle();
+ assert.equal(search().value,'A');assert.equal(department().value,'1');assert.equal(lastQuery('/api/v1/products?').get('family_id'),'2');
+ await React.act(async()=>[...document.querySelectorAll('.kiosk-keyboard button')].find(b=>b.textContent==='Limpiar').click());await settle();assert.equal(department().value,'1');
+ await type('ACME');await React.act(async()=>{department().value='5';department().dispatchEvent(new Event('change',{bubbles:true}))});await settle();
+ assert.equal(search().value,'ACME');assert.equal(lastQuery('/api/v1/products?').get('area_id'),'5');assert.equal(lastQuery('/api/v1/products?').has('family_id'),false);
+ await React.act(async()=>button('Limpiar filtros').click());await settle();
+ assert.equal(search().value,'');assert.equal(department().value,'');assert.equal(lastQuery('/api/v1/products?').has('area_id'),false);assert.equal(lastQuery('/api/v1/products?').get('page'),'1');
+ await React.act(async()=>root.unmount());dom.window.close();console.log('Catalog: category + brand query, scoped suggestions, category changes, text-only clear, kiosk and clear-all passed');
+})().catch(e=>{console.error(e);process.exitCode=1;dom.window.close()});
