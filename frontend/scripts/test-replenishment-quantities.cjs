@@ -1,0 +1,38 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),ts=require('typescript');
+const {JSDOM}=require('jsdom'),dom=new JSDOM('<div id="root"></div>',{url:'https://example.test',pretendToBeVisual:true});
+for(const key of ['window','document','HTMLElement','Event','CustomEvent'])global[key]=dom.window[key];
+global.IS_REACT_ACT_ENVIRONMENT=true;
+for(const ext of ['.ts','.tsx'])require.extensions[ext]=(m,f)=>m._compile(ts.transpileModule(fs.readFileSync(f,'utf8'),{compilerOptions:{jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS,esModuleInterop:true,target:ts.ScriptTarget.ES2020}}).outputText,f);
+require.extensions['.css']=m=>m.exports={};
+const React=require('react'),{createRoot}=require('react-dom/client'),View=require('../app/Replenishment.tsx').default;
+let posted=null;
+const filters={date_from:'2026-04-01',date_to:'2026-04-30',delegations:['02'],skus:[]};
+const calculation={id:'saved',filters,temporary_parameters:{multiple_mode:'EXIT',target_mode:'POINT'},captured_at:'2026-04-30T10:00:00Z'};
+const row={id:1,sku:'VALID',description:'Material',delegation:'02',unit_type:'UD',stock:2,incoming:0,outgoing:0,inventory_position:2,monthly_mean:300,daily_mean:10,minimum_stock:10,replenishment_point:80,maximum_stock:310,final_quantity:84,quantity_without_multiple:78,quantity_with_exit_multiple:84,exit_multiple:12,central_available:80,central_covers_without_multiple:true,central_covers_with_exit_multiple:false,recommendations:[]};
+global.fetch=async(url,options={})=>{let body;
+ if(url.endsWith('/options'))body={article_limit:1000,server_date:'2026-04-30',delegations:[],areas:[],families:[],subfamilies:[],types:[]};
+ else if(url.endsWith('/jobs/current'))body={job:null,latest_result:calculation};
+ else if(url.includes('/results?'))body={items:[row,{...row,id:2,sku:'INVALID',quantity_with_exit_multiple:null,exit_multiple:null,central_covers_with_exit_multiple:null}],total:2,summary:{articles_analyzed:2}};
+ else if(url.endsWith('/jobs')&&options.method==='POST'){posted=JSON.parse(options.body);body={id:'job',status:'FAILED',phase:'',filters:posted.filters,temporary_parameters:posted.temporary_parameters};}
+ else throw Error('Unexpected '+url);
+ return {ok:true,status:200,text:async()=>JSON.stringify(body)};
+};
+const root=createRoot(document.getElementById('root'));
+(async()=>{
+ await React.act(async()=>root.render(React.createElement(View)));
+ await React.act(async()=>new Promise(resolve=>setTimeout(resolve,230)));
+ assert.ok(!document.body.textContent.includes('Formato de despacho'));
+ const headers=[...document.querySelectorAll('.repl-results th')].map(cell=>cell.textContent);
+ assert.ok(headers.includes('Sin agrupación'));
+ assert.ok(headers.includes('Con múltiplos EXIT'));
+ const proposals=[...document.querySelectorAll('.repl-results tbody tr')];
+ assert.deepEqual([...proposals[0].querySelectorAll('.repl-final-quantity')].map(cell=>cell.textContent),['78','84']);
+ assert.match(proposals[0].textContent,/Sin agrupar: Cubre conjunto/);
+ assert.match(proposals[0].textContent,/Con múltiplos: No cubre conjunto/);
+ assert.match(proposals[1].textContent,/Revisar múltiplo EXIT/);
+ assert.match(document.body.textContent,/formato de despacho anterior/);
+ const run=[...document.querySelectorAll('button')].find(b=>/Calcular reposición/.test(b.textContent));
+ await React.act(async()=>run.click());
+ assert.equal(posted.temporary_parameters.multiple_mode,'NONE','Legacy restored dispatch selector must not silently alter new runs');
+ await React.act(async()=>root.unmount());dom.window.close();console.log('Dispatch alternatives: quantities, invalid multiples, coverage and restored parameters passed');
+})().catch(e=>{console.error(e);process.exitCode=1;dom.window.close();});

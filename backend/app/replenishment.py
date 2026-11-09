@@ -23,7 +23,7 @@ from .models import (AuditEvent, MaterialArea, MaterialFamily, MaterialSubfamily
     ReplenishmentPolicy as Policy, ReplenishmentScenario as Scenario, ReplenishmentResult as Result,
     ReplenishmentAdjustment as Adjustment, ReplenishmentSettings as ModuleSettings,
     ReplenishmentJob as Job, ReplenishmentBatch as Batch, User)
-from .replenishment_engine import Parameters, PRECEDENCE, prepare_context, calculate_article, annotate_central, summarize, rounded_dispatch
+from .replenishment_engine import Parameters, PRECEDENCE, prepare_context, calculate_article, annotate_central, summarize, rounded_dispatch, quantity_comparison
 from .replenishment_source import DELEGATIONS, MAX_ARTICLES, HARD_MAX_ARTICLES, read_replenishment_source
 
 operator=require_roles('ADMIN','OPERADOR_TIENDA')
@@ -351,7 +351,7 @@ def results(scenario_id:str,filters:ResultFilters=Depends(),page:int=Query(1,ge=
     query=filtered_results(scenario.id,filters)
     summary=result_summary(db,query)
     rows=db.scalars(ordered_results(query,filters.sort,filters.descending).offset((page-1)*page_size).limit(page_size)).all()
-    return {'items':[{'id':row.id,**row.payload} for row in rows],'total':summary['article_delegations'],
+    return {'items':[{'id':row.id,**quantity_comparison(row.payload)} for row in rows],'total':summary['article_delegations'],
         'summary':summary,'page':page,'version':scenario.version}
 
 
@@ -376,7 +376,7 @@ def detail(scenario_id:str,result_id:int,db:Session=Depends(get_db)):
     article,context=article_context(scenario,row,db)
     calculated=calculate_article(article,row.delegation,context,row.payload.get('manual_parameters'),True)
     history=db.scalars(select(Adjustment).where(Adjustment.result_id==row.id).order_by(Adjustment.created_at)).all()
-    return {'id':row.id,**row.payload,**{key:calculated[key] for key in ('daily_sales','daily_median','daily_median_frequency','daily_median_dates','daily_mode_occurrences','daily_modes','daily_mode_frequency','positive_consumption_days','weekly_sales')},'scenario_version':scenario.version,
+    return {'id':row.id,**quantity_comparison(row.payload),**{key:calculated[key] for key in ('daily_sales','daily_median','daily_median_frequency','daily_median_dates','daily_mode_occurrences','daily_modes','daily_mode_frequency','positive_consumption_days','weekly_sales')},'scenario_version':scenario.version,
         'adjustments':[{'created_at':event.created_at,'user_id':event.user_id,'reason':event.reason,'changes':event.changes} for event in history]}
 
 @router.post('/simulations/{scenario_id}/results/{result_id}/recalculate')
@@ -437,21 +437,25 @@ def export(scenario_id:str,filters:ResultFilters=Depends(),db:Session=Depends(ge
     fields=[('sku','Código'),('description','Descripción'),('delegation','Delegación'),('unit_type','Tipo unidad'),('family','Familia'),('target_mode','Objetivo elegido'),
         ('central_stock','Stock Almeiras'),('central_outgoing','Comprometido Almeiras'),('central_incoming','Pendiente recibir Almeiras'),('central_monthly_consumption','Consumo mensual Almeiras'),('central_reserve','Reserva Almeiras'),('central_available','Disponible para despacho Almeiras'),('central_total_requested','Propuesta conjunta'),('central_can_supply','Almeiras cubre propuesta conjunta'),('overstock','Sobrestock'),('excess_stock','Exceso previsto'),('no_consumption','Sin consumo'),('stock','Stock'),('incoming','Pendiente recibir'),('outgoing','Pendiente servir'),('inventory_position','Disponible previsto'),('monthly_mean','Consumo mensual medio'),
         ('safety_stock','Seguridad'),('minimum_stock','Mínimo'),('maximum_stock','Stock máximo'),('expected_cycle_consumption','Consumo hasta próxima reposición'),('replenishment_point','Punto de reposición'),('target_stock','Objetivo aplicado'),('calculated_quantity','Cantidad calculada'),
-        ('exit_multiple','Múltiplo EXIT'),('effective_multiple','Múltiplo aplicado'),('quantity_before_rounding','Cantidad antes de agrupar'),('recommended_quantity','Cantidad recomendada'),('adjusted_quantity','Ajuste manual'),('final_quantity','Cantidad final'),('method','Método'),('confidence','Confianza')]
+        ('exit_multiple','Múltiplo EXIT'),('effective_multiple','Múltiplo aplicado'),('quantity_before_rounding','Cantidad antes de agrupar'),('recommended_quantity','Cantidad recomendada'),('adjusted_quantity','Ajuste manual'),('quantity_without_multiple','A reponer sin agrupación'),('quantity_with_exit_multiple','A reponer con múltiplos EXIT'),('central_total_without_multiple','Propuesta conjunta sin agrupación'),('central_total_with_exit_multiple','Propuesta conjunta con múltiplos EXIT'),('central_covers_without_multiple','Almeiras cubre sin agrupación'),('central_covers_with_exit_multiple','Almeiras cubre con múltiplos EXIT'),('final_quantity','Cantidad final'),('method','Método'),('confidence','Confianza')]
     if mode=='simple':
         fields=[('sku','Código'),('description','Descripción'),('delegation','Delegación'),
             ('stock','Stock'),('incoming','Por recibir'),('outgoing','Por servir'),
             ('inventory_position','Disponible previsto'),('unit_type','Unidad'),('monthly_mean','Consumo mensual'),
             ('minimum_stock','Mínimo'),('replenishment_point','Punto reposición'),
-            ('maximum_stock','Stock máximo'),('final_quantity','A reponer'),
-            ('central_available','Disponible para despacho'),('central_status','Cobertura Almeiras'),
+            ('maximum_stock','Stock máximo'),('quantity_without_multiple','A reponer sin agrupación'),('quantity_with_exit_multiple','A reponer con múltiplos EXIT'),('exit_multiple','Múltiplo EXIT'),
+            ('central_available','Disponible para despacho'),('central_status','Cobertura Almeiras sin agrupación'),('central_exit_status','Cobertura Almeiras con múltiplos EXIT'),
             ('notices','Avisos')]
     extra=['Reglas aplicadas','Recomendaciones'] if mode=='expanded' else []
     append(sheet,[label for _,label in fields]+extra)
     count=0
     for result in rows:
-        row={**result.payload,'monthly_mean':result.payload.get('monthly_mean',result.payload['daily_mean']*30)}
-        row['central_status']=('Sin necesidad' if not row['final_quantity'] else 'Revisar datos' if row.get('central_available') is None else 'Cubre conjunto' if row.get('central_can_supply') else 'No cubre conjunto')
+        row={**quantity_comparison(result.payload),'monthly_mean':result.payload.get('monthly_mean',result.payload['daily_mean']*30)}
+        for suffix,key in [('without_multiple','central_status'),('with_exit_multiple','central_exit_status')]:
+            quantity=row['quantity_'+suffix]
+            covered=row.get('central_covers_'+suffix)
+            row[key]='Revisar múltiplo EXIT' if quantity is None else 'Sin necesidad' if not quantity else ('Revisar datos' if row.get('central_available') is None else 'Recalcular cobertura') if covered is None else 'Cubre conjunto' if covered else 'No cubre conjunto'
+        if row['quantity_with_exit_multiple'] is None:row['quantity_with_exit_multiple']='Revisar múltiplo EXIT'
         row['notices']='; '.join(item['reason'] for item in row['recommendations'])
         if mode=='simple':
             for key in ('minimum_stock','replenishment_point','maximum_stock'):
