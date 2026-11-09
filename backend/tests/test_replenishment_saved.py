@@ -120,3 +120,55 @@ def test_redistribution_api_uses_current_snapshots_without_exit_reads(client,mon
     plan=response.json();assert plan['read_only_exit']
     assert len(plan['calculations'])==4 and plan['movements'][0]['to_delegation']=='02'
     assert plan['movements'][0]['quantity']==4
+
+
+def test_redistribution_excel_matches_proposal_and_rejects_changed_data(client,monkeypatch):
+    import io
+    from openpyxl import load_workbook
+    setup_source(monkeypatch,['000012'])
+    client.post(PREFIX+'/jobs',json=request());worker.process_one()
+    with SessionLocal() as db:
+        for result in db.scalars(select(Result)):
+            row=material(result.delegation,stock=30 if result.delegation=='01' else 0,need=4 if result.delegation=='02' else 0,sku=result.sku)
+            row['description']='=HYPERLINK("example.test","Material")'
+            result.payload={**result.payload,**row}
+        db.commit()
+    proposal=client.post(PREFIX+'/redistribution').json()
+    response=client.post(PREFIX+'/redistribution/export.xlsx',json={'fingerprint':proposal['fingerprint']})
+    assert response.status_code==200 and 'spreadsheetml' in response.headers['content-type']
+    book=load_workbook(io.BytesIO(response.content))
+    assert book.sheetnames==['Movimientos','Necesidades sin cubrir','Alertas','Cálculos utilizados','Resumen']
+    sheet=book['Movimientos']
+    assert sheet.max_row==len(proposal['movements'])+1
+    assert sheet['A2'].value=='000012' and sheet['A2'].data_type=='s'
+    assert sheet['B2'].value.startswith('=HYPERLINK') and sheet['B2'].data_type=='s'
+    assert sheet['C2'].value=='01' and sheet['E2'].value=='02'
+    assert sheet['G2'].value==4 and sheet['G2'].data_type=='n'
+    assert sheet['E3'].value=='00' and sheet['F3'].value=='Almeiras'
+    assert book['Cálculos utilizados'].max_row==5
+    assert book['Resumen']['B3'].value==proposal['fingerprint']
+    with SessionLocal() as db:
+        result=db.scalar(select(Result).where(Result.delegation=='02'))
+        result.payload={**result.payload,'final_quantity':3};db.commit()
+    response=client.post(PREFIX+'/redistribution/export.xlsx',json={'fingerprint':proposal['fingerprint']})
+    assert response.status_code==409 and 'Vuelve a calcular' in response.json()['detail']
+    assert client.post(PREFIX+'/redistribution/export.xlsx',json={'fingerprint':'bad'}).status_code==422
+
+
+def test_redistribution_excel_with_empty_movements_and_missing_calculations(client,monkeypatch):
+    import io
+    from openpyxl import load_workbook
+    assert client.post(PREFIX+'/redistribution/export.xlsx',json={'fingerprint':'0'*64}).status_code==409
+    setup_source(monkeypatch,['EMPTY'])
+    client.post(PREFIX+'/jobs',json=request());worker.process_one()
+    proposal=client.post(PREFIX+'/redistribution').json()
+    assert proposal['movements']==[] and proposal['unmet_needs']
+    response=client.post(PREFIX+'/redistribution/export.xlsx',json={'fingerprint':proposal['fingerprint']})
+    assert response.status_code==200
+    book=load_workbook(io.BytesIO(response.content))
+    assert book['Movimientos'].max_row==1
+    assert book['Necesidades sin cubrir'].max_row>1
+    from fastapi.testclient import TestClient
+    from app.main import app
+    customer=TestClient(app);customer.post('/api/v1/auth/login',json={'email':'compras001@cliente.test','password':'123456'})
+    assert customer.post(PREFIX+'/redistribution/export.xlsx',json={'fingerprint':proposal['fingerprint']}).status_code==403
