@@ -582,8 +582,9 @@ def test_history_median_modes_weekly_sales_and_returns():
     source['sales'].append({'sku':'03009','delegation':'01','day':'2026-04-03','sold':999,'returned':0})
     row=calculate(source)
     # Daily net is [0,0,2,8,0,4,4,4,0,0], including the return-only excess.
-    assert row['daily_median']==1
-    assert row['daily_modes']==[0] and row['daily_mode_frequency']==5
+    assert row['daily_median']==4
+    assert row['positive_consumption_days']==5
+    assert row['daily_modes']==[4] and row['daily_mode_frequency']==3
     weeks=row['weekly_sales']
     assert [(w['from'],w['to'],w['observed_days']) for w in weeks]==[
         ('2026-04-01','2026-04-05',5),('2026-04-06','2026-04-10',5)]
@@ -604,7 +605,8 @@ def test_history_tied_modes_unique_values_and_zero_weeks():
     unique=calculate(source_for(values=[1,2,3]))
     assert unique['daily_modes']==[] and unique['daily_mode_frequency']==1
     zero=calculate(source_for(values=[0]*14))
-    assert zero['daily_median']==0 and zero['daily_modes']==[0]
+    assert zero['daily_median'] is None and zero['daily_modes']==[]
+    assert zero['positive_consumption_days']==0 and zero['daily_mode_frequency']==0
     assert len(zero['weekly_sales'])==3
     assert all(w['sold']==0 for w in zero['weekly_sales'])
 
@@ -618,3 +620,18 @@ def test_history_uses_effective_window_and_article_creation():
     source['articles'][0]['created_at']='2026-04-12'
     row=calculate(source)
     assert row['daily_mode_frequency']==3 and row['weekly_sales'][0]['from']=='2026-04-12'
+
+
+
+def test_history_median_modes_ignore_zero_days_in_sparse_year():
+    row=calculate(source_for(values=[0]*346+[1]*15+[3]*5))
+    assert row['observed_days']==366 and row['positive_consumption_days']==20
+    assert row['daily_median']==1 and row['daily_modes']==[1]
+    assert row['daily_mode_frequency']==15
+    assert len(row['daily_sales'])==366
+    assert sum(w['observed_days'] for w in row['weekly_sales'])==366
+    single=calculate(source_for(values=[0,0,5,0]))
+    assert single['daily_median']==5 and single['positive_consumption_days']==1
+    assert single['daily_modes']==[]  # No repeated value.
+    decimal=calculate(source_for(values=[0,.25,.25,0,1.5]))
+    assert decimal['daily_median']==.25 and decimal['daily_modes']==[.25]

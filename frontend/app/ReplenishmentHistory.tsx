@@ -2,7 +2,7 @@
 import {useEffect,useState} from 'react';
 
 type Week={week_start:string;from:string;to:string;observed_days:number;sold:number;returned:number;demand:number};
-type History={daily_median:number|null;daily_modes:number[];daily_mode_frequency:number;observed_days:number;weekly_sales:Week[];calculation:{window_start:string;window_end:string}};
+type History={daily_median:number|null;daily_modes:number[];daily_mode_frequency:number;positive_consumption_days:number;observed_days:number;weekly_sales:Week[];calculation:{window_start:string;window_end:string}};
 const fmt=(n:number)=>n.toLocaleString('es-ES',{maximumFractionDigits:3});
 const day=(s:string)=>s.split('-').reverse().join('/');
 export default function ReplenishmentHistory({endpoint,unit}:{endpoint:string;unit:string}){
@@ -11,7 +11,7 @@ export default function ReplenishmentHistory({endpoint,unit}:{endpoint:string;un
   void(async()=>{try{const res=await fetch(endpoint,{credentials:'include',signal:controller.signal});
    if(res.status===401)window.dispatchEvent(new Event('session-expired'));
    const body=await res.json();if(!res.ok)throw Error(typeof body.detail==='string'?body.detail:'No se pudo cargar el histórico del material.');
-   if(!Array.isArray(body.weekly_sales)||!Array.isArray(body.daily_modes))throw Error('Este servidor todavía no ofrece las estadísticas del histórico.');
+   if(!Array.isArray(body.weekly_sales)||!Array.isArray(body.daily_modes)||typeof body.positive_consumption_days!=='number')throw Error('Este servidor todavía no ofrece las estadísticas del histórico.');
    if(!controller.signal.aborted)setData(body);
   }catch(e){if(!controller.signal.aborted)setError(e instanceof Error?e.message:'No se pudo cargar el histórico.');}})();
   return()=>controller.abort();
@@ -21,8 +21,8 @@ export default function ReplenishmentHistory({endpoint,unit}:{endpoint:string;un
  {!data&&!error&&<p role="status">Cargando estadísticas y ventas semanales…</p>}
  {error&&<div role="alert"><p>{error}</p><button className="secondary" onClick={()=>setAttempt(n=>n+1)}>Reintentar</button></div>}
  {data&&<><p>Periodo analizado: <b>{day(data.calculation.window_start)} — {day(data.calculation.window_end)}</b> · {data.observed_days} días · Delegación de esta línea.</p>
- <dl className="repl-history-metrics"><div><dt>Mediana del consumo diario</dt><dd>{data.daily_median==null?'Sin datos':`${fmt(data.daily_median)} ${unit}/día`}</dd></div><div><dt>Moda del consumo diario</dt><dd>{data.daily_modes.length?<>{data.daily_modes.map(fmt).join(' · ')} {unit}/día <small>Cada valor aparece en {data.daily_mode_frequency} de {data.observed_days} días.</small></>:'Sin moda: ningún valor se repite.'}</dd></div></dl>
- <p className="small">La mediana es el valor central al ordenar los consumos diarios; la moda es el valor que más se repite. Se incluyen los días sin ventas. Consumo diario = máximo entre 0 y (ventas − devoluciones). Son datos informativos: no modifican la reposición calculada.</p>
+ <dl className="repl-history-metrics"><div><dt>Mediana del consumo diario</dt><dd>{data.daily_median==null?'Sin consumo positivo':`${fmt(data.daily_median)} ${unit}/día`}</dd></div><div><dt>Moda del consumo diario</dt><dd>{data.daily_modes.length?<>{data.daily_modes.map(fmt).join(' · ')} {unit}/día <small>Cada valor aparece en {data.daily_mode_frequency} de {data.positive_consumption_days} días con consumo positivo.</small></>:data.positive_consumption_days===0?'Sin consumo positivo':'Sin moda: ningún valor se repite.'}</dd></div></dl>
+ <p className="small">La mediana es el valor central al ordenar los consumos diarios; la moda es el valor que más se repite. Se calculan solo con los días de consumo positivo: <b>{data.positive_consumption_days}</b> días incluidos y <b>{data.observed_days-data.positive_consumption_days}</b> días con consumo cero excluidos. Consumo diario = máximo entre 0 y (ventas − devoluciones). Son datos informativos: no modifican la reposición calculada.</p>
  <h4>Ventas semanales · {unit}</h4><p className="small">Semanas de lunes a domingo, limitadas al periodo analizado. Las barras muestran ventas brutas, sin restar devoluciones. Las semanas incompletas no se extrapolan.</p>
  {weeks.length>0?<><p>{peak>0?<>Pico semanal: <b>{fmt(peak)} {unit}</b> · {weeks.filter(w=>w.sold===peak).map(w=>`${day(w.from)} — ${day(w.to)}`).join('; ')}.</>:'Sin ventas en el periodo analizado.'}</p>
  <div className="repl-weekly-scroll" tabIndex={0} role="region" aria-label="Gráfico semanal desplazable"><svg width={chartWidth} height={265} viewBox={`0 0 ${chartWidth} 265`} role="img" aria-labelledby="repl-weekly-title repl-weekly-desc"><title id="repl-weekly-title">Ventas semanales del material</title><desc id="repl-weekly-desc">Cantidades en {unit}. Los picos se destacan en naranja. El detalle exacto está en la tabla de semanas.</desc>
