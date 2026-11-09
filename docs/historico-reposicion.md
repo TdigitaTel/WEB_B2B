@@ -11,3 +11,14 @@ Las estadísticas corresponden al artículo y delegación de esa línea y a la i
 Estos indicadores son informativos: no sustituyen el promedio ni modifican el stock de seguridad o la cantidad propuesta. La unidad se conserva tal como llega de EXIT.
 
 La evidencia se obtiene al abrir la línea desde el endpoint de detalle existente, también para cálculos anteriores que conserven su instantánea. No se vuelve a consultar EXIT ni se incluyen series semanales en todas las filas de las páginas de resultados. No requiere migraciones.
+
+
+## Frecuencia y ubicación temporal de mediana y moda
+
+El detalle indica cuántos días tuvieron exactamente el valor de la mediana y cada moda, junto con su porcentaje sobre los días de consumo positivo. También muestra la proporción de días con actividad respecto al periodo completo. «Mayoría» significa estrictamente más del 50 % de los días positivos; no se asignan niveles de confianza ni se afirma estacionalidad por frecuencia solamente.
+
+Si la mediana es un valor intermedio que nunca se observó (por ejemplo, mediana 2 para consumos 1, 1, 3, 3), su frecuencia es cero. La pantalla explica el motivo y no inventa fechas.
+
+El gráfico mantiene las barras de ventas brutas semanales y añade dos líneas inferiores con ocurrencias **diarias**: círculos verdes para la mediana y rombos violetas para las modas. Cuando ambos indicadores coinciden en una fecha se ven en las dos líneas. Las marcas comparten un eje de fechas continuo con las barras, pero no representan totales semanales. Sus títulos y una tabla desplegable permiten consultar fechas, cantidades y coincidencias exactas.
+
+Fondos alternos y rótulos en marca de agua separan los meses naturales. Los límites se sitúan en el primer día de cada mes, aunque la semana cruce entre meses o el periodo empiece o termine a mitad de mes. Las estadísticas se reconstruyen de la instantánea guardada, también para los cálculos anteriores.
