@@ -23,3 +23,12 @@ Para cada material:
 5. El excedente despachable que no se pueda asignar a otro destino se propone devolver a Almeiras (00). Las necesidades sin cubrir se muestran aparte; no se promete que Almeiras las cubra usando estas devoluciones futuras.
 
 La tabla muestra material, origen, destino, cantidad/unidad y motivo. Incluye las fechas de consulta de stock y periodos de ventas utilizados y una advertencia si los periodos difieren. La propuesta es informativa: no crea pedidos, movimientos ni reservas reales. No suma cantidades de unidades distintas en un total global.
+
+
+## Pestañas y Excel
+
+La pestaña «Cálculo de reposición» contiene los parámetros, el progreso y la tabla de resultados. «Redistribución» agrupa los cálculos vigentes por delegación y la propuesta de movimientos. Cambiar de pestaña conserva los parámetros y la propuesta; «Ver cálculo» abre la delegación elegida en la primera pestaña.
+
+Después de calcular la redistribución, «Exportar redistribución a Excel» descarga la propuesta completa (la búsqueda visible no recorta el archivo). El libro incluye Movimientos, Necesidades sin cubrir, Alertas, Cálculos utilizados y Resumen. Conserva códigos con ceros iniciales y cantidades numéricas; los textos del catálogo se escriben como texto de Excel, sin ejecutar fórmulas.
+
+El servidor comprueba la referencia de la propuesta antes de exportar. Si otro cálculo o ajuste cambia su contenido, responde solicitando recalcular; no descarga una propuesta diferente de la revisada. La exportación usa los cálculos guardados y no escribe movimientos en EXIT.
