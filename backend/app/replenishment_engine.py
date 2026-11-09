@@ -247,6 +247,8 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
         'calculation':{'horizon':horizon,'z':z,'formula':('Stock máximo = stock mínimo + consumo diario × días de cobertura máxima' if parameters['target_mode']=='MAXIMUM' else 'Punto de reposición = stock mínimo + consumo diario × días hasta próxima reposición') + '; cantidad = max(0, objetivo − disponible previsto).',
             'safety_formula':'Sin stock de seguridad (opción seleccionada)' if not parameters['use_safety_stock'] else 'Z × desviación diaria × sqrt(plazo de llegada)' if method=='REVISION_PERIODICA' else 'Modelo alternativo explicado en método y recomendaciones',
             'maximum_formula':'stock mínimo + consumo diario × días de cobertura máxima', 'minimum_formula':'consumo diario × plazo de llegada + stock de seguridad' if parameters['use_safety_stock'] else 'consumo diario × plazo de llegada', 'dispatch_days':parameters['review_days'],'lead_days':parameters['lead_days'],'raw_maximum':raw_maximum,'window_start':stats['start'],'window_end':stats['end']}}
+    result['comparison_eligible']=bool(parameters['enabled'] and not stats['created_in_future'] and not (parameters['exclude_no_consumption'] and stats['total_demand']<=0) and not (sparse and (parameters['new_policy'] if stats['new_article'] else parameters['no_sales_policy'])=='NO_REPLENISH'))
+    result=quantity_comparison(result)
     if include_daily:
         # Median/modes describe active consumption days only. Sigma and the
         # weekly evidence still retain zero days over the entire observed window.
@@ -271,6 +273,28 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
             daily_mode_frequency=frequency,positive_consumption_days=len(positive_values),weekly_sales=list(weeks.values()))
     return result
 
+def quantity_comparison(row):
+    """Compare the same saved need without changing legacy/manual final quantities."""
+    multiple=effective_dispatch_multiple(row,{'multiple_mode':'EXIT'})
+    allowed=row.get('comparison_eligible')
+    if allowed is None:
+        allowed=row.get('recommended_quantity',row.get('final_quantity',0))>0 or any(
+            note['code']=='MULTIPLO_EXIT_INVALIDO' for note in row.get('recommendations',[]))
+        if row.get('parameters',{}).get('exclude_no_consumption') and row.get('no_consumption'):allowed=False
+        params=row.get('parameters',{})
+        if not params.get('enabled',True):allowed=False
+        sparse=row.get('sales_days',0)<5 or row.get('new_article',False)
+        if sparse and params.get('new_policy' if row.get('new_article') else 'no_sales_policy')=='NO_REPLENISH':allowed=False
+        created=str(row.get('created_at') or '')[:10]
+        window_end=row.get('calculation',{}).get('window_end')
+        if created and window_end and created>window_end:allowed=False
+    raw=row.get('quantity_before_rounding',row.get('calculated_quantity',0)) if allowed else 0
+    if row.get('adjusted_quantity') is not None:raw=row['adjusted_quantity']
+    if row.get('manually_excluded'):raw=0
+    return {**row,'quantity_without_multiple':round(rounded_dispatch(raw,None),6),
+        'quantity_with_exit_multiple':round(rounded_dispatch(raw,multiple),6) if multiple is not None else (0 if raw<=0 else None),
+        'exit_multiple_valid':multiple is not None}
+
 def annotate_central(results,source):
     """Comprueba la propuesta conjunta sin prometer entradas pendientes ni asignar dos veces stock."""
     central={row['sku']:row for row in source['stocks'] if row['delegation']=='00'}
@@ -280,9 +304,12 @@ def annotate_central(results,source):
         key=(row['sku'],row['delegation'],row['day']);old=sales_index.get(key,(0,0))
         sales_index[key]=(old[0]+row['sold'],old[1]+row['returned'])
     central_sales_known='00' in source.get('sales_delegations',[]) or any(row['delegation']=='00' for row in source['sales'])
-    for row in results:groups[row['sku']].append(row)
+    for row in results:
+        row.update(quantity_comparison(row))
+        groups[row['sku']].append(row)
     for sku,rows in groups.items():
         stock=central.get(sku);total=sum(row['final_quantity'] for row in rows)
+        comparison_totals={key:(sum(row[key] for row in rows) if all(row[key] is not None for row in rows) else None) for key in ('quantity_without_multiple','quantity_with_exit_multiple')}
         stats_cache={};reserve=0;central_avg=0;reserve_days=0;central_std=0
         for row in rows:
             params=Parameters.model_validate(row['parameters']).model_dump()
@@ -311,6 +338,10 @@ def annotate_central(results,source):
                 central_reserve=reserve if valid_history else None,central_reserve_days=reserve_days,
                 central_available=available,central_total_requested=total,central_can_supply=covered and row['final_quantity']>0,
                 central_shortage=max(0,total-available) if available is not None else None)
+            for key,suffix in [('quantity_without_multiple','without_multiple'),('quantity_with_exit_multiple','with_exit_multiple')]:
+                requested=comparison_totals[key]
+                row['central_total_'+suffix]=requested
+                row['central_covers_'+suffix]=(None if requested is None or available is None else bool(requested<=available+1e-8))
             if total>0 and not covered:
                 row['recommendations'].append(recommendation('CENTRAL_SIN_DATOS' if available is None else 'CENTRAL_INSUFICIENTE',
                     'No se puede asegurar despacho: faltan datos de stock o consumo de Almeiras.' if available is None else

@@ -391,7 +391,7 @@ def test_filtered_summary_and_export_all_pages_with_exit_control_characters(monk
     assert book.sheetnames==['Reposición']
     headers=[cell.value for cell in sheet[1]]
     assert 'Disponible previsto' in headers and 'Posición' not in headers
-    assert 'Seguridad' not in headers and len(headers)==16
+    assert 'Seguridad' not in headers and len(headers)==19
     assert sheet.max_row==56 and sheet['A2'].value=='00054'
     assert sheet['A56'].value=='00000' and sheet['A56'].data_type=='s'
     assert sheet['B56'].value=='=Material de EXIT' and sheet['B56'].data_type=='s'
@@ -666,3 +666,70 @@ def test_history_occurrence_dates_are_net_consumption_not_weekly_sales_or_return
     assert row['daily_median_dates']==['2026-04-01','2026-04-02']
     assert row['daily_mode_occurrences']==[{'value':2,'count':2,'dates':['2026-04-01','2026-04-02']}]
     assert row['gross_sales']==20 and sum(w['sold'] for w in row['weekly_sales'])==20
+
+
+@pytest.mark.parametrize('multiple,expected',[(12,84),(2.5,80),(1,78),(None,None),(0,None),(-2,None),('bad',None)])
+def test_both_dispatch_proposals_from_same_need(multiple,expected):
+    source=source_for();source['articles'][0]['exit_multiple']=multiple
+    row=calculate(source,{'simple_formula':True,'multiple_mode':'NONE'})
+    assert row['quantity_without_multiple']==row['final_quantity']==78
+    assert row['quantity_with_exit_multiple']==expected
+    assert row['exit_multiple_valid']==(expected is not None)
+    # Snapshots must survive annotation without changing the dispatch reference.
+    annotate_central([row],source)
+    assert row['central_total_without_multiple']==78
+    assert row['central_total_with_exit_multiple']==expected
+
+
+def test_dispatch_comparison_exclusions_and_saved_manual_override():
+    from app.replenishment_engine import quantity_comparison
+    source=source_for();source['articles'][0]['exit_multiple']=12
+    disabled=calculate(source,{'enabled':False})
+    assert disabled['quantity_without_multiple']==disabled['quantity_with_exit_multiple']==0
+    excluded=calculate(source_for(values=[0]*30,stock=-3),{'simple_formula':True,'exclude_no_consumption':True})
+    assert excluded['quantity_without_multiple']==excluded['quantity_with_exit_multiple']==0
+    legacy=calculate(source,{'multiple_mode':'EXIT','simple_formula':True})
+    for key in ('quantity_without_multiple','quantity_with_exit_multiple','comparison_eligible'):legacy.pop(key)
+    assert quantity_comparison(legacy)['quantity_without_multiple']==78
+    assert quantity_comparison(legacy)['quantity_with_exit_multiple']==84
+    legacy['adjusted_quantity']=25
+    assert quantity_comparison(legacy)['quantity_without_multiple']==25
+    assert quantity_comparison(legacy)['quantity_with_exit_multiple']==36
+    legacy['manually_excluded']=True
+    assert quantity_comparison(legacy)['quantity_with_exit_multiple']==0
+
+
+def test_central_coverage_distinguishes_both_joint_proposals():
+    source=source_for();source['articles'][0]['exit_multiple']=12
+    source['stocks'][0]['stock']=160
+    first=calculate(source,{'simple_formula':True,'multiple_mode':'NONE'})
+    second={**first,'delegation':'01'}
+    annotate_central([first,second],source)
+    for row in [first,second]:
+        assert row['central_total_without_multiple']==156
+        assert row['central_total_with_exit_multiple']==168
+        assert row['central_covers_without_multiple'] is True
+        assert row['central_covers_with_exit_multiple'] is False
+        assert row['final_quantity']==78
+
+
+@pytest.mark.parametrize('mode',['simple','expanded'])
+def test_excel_exports_both_proposals_and_invalid_exit_multiple(monkeypatch,mode):
+    import app.replenishment as module
+    raw=source_for(('VALID','INVALID'))
+    raw['articles'][0]['exit_multiple']=12
+    monkeypatch.setattr(module,'read_replenishment_source',lambda *a:raw)
+    client=login();prefix='/api/v1/store/replenishment/simulations'
+    response=client.post(prefix,json={'filters':{'date_from':raw['start'],'date_to':raw['end'],'delegations':['02']},'temporary_parameters':{'simple_formula':True,'multiple_mode':'NONE'}})
+    assert response.status_code==201,response.text
+    path=prefix+'/'+response.json()['id']
+    rows=client.get(path+'/results').json()['items']
+    assert next(row for row in rows if row['sku']=='VALID')['quantity_with_exit_multiple']==84
+    exported=client.get(path+'/export.xlsx',params={'mode':mode})
+    assert exported.status_code==200
+    sheet=load_workbook(io.BytesIO(exported.content)).active
+    headers=[cell.value for cell in sheet[1]]
+    base=headers.index('A reponer sin agrupación');grouped=headers.index('A reponer con múltiplos EXIT')
+    data={row[0]:row for row in sheet.iter_rows(min_row=2,values_only=True)}
+    assert data['VALID'][base]==78 and data['VALID'][grouped]==84
+    assert data['INVALID'][base]==78 and data['INVALID'][grouped]=='Revisar múltiplo EXIT'
