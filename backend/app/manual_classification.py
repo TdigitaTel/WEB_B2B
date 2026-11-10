@@ -13,7 +13,7 @@ from .models import MaterialArea as Area, MaterialFamily as Family, MaterialSubf
 from .erp_db import fetch_catalog_articles, fetch_catalog_articles_by_codes
 from .category_import import _get_or_create_brand, _get_or_create_category, _get_or_create_subfamily, _get_or_create_type
 from .category_visibility import unclassified_area_ids
-from .product_type_synonyms import catalog_search_config
+from .search_settings import get_search_config
 from .import_materials import fake_ean
 
 router = APIRouter(prefix='/api/v1/store/catalog-categories/manual', tags=['catalog-categories'])
@@ -54,8 +54,8 @@ def materials(q: str = Query('', max_length=200), area_id: int | None = None, fa
             query = query.where(getattr(Product,field)==value)
     selected_codes = list(db.scalars(query)) if any((area_id,family_id,subfamily_id,product_type_id)) else None
     try:
-        # Same text/measure/synonym search as the catalog; no visibility or stock restrictions here.
-        articles,total = fetch_catalog_articles(q,page,page_size,selected_codes,search_config=catalog_search_config(db,q),
+        # Administrative lookup must not infer a required classification from the description.
+        articles,total = fetch_catalog_articles(q,page,page_size,selected_codes,search_config=get_search_config(db),
                                                management=True,excluded_codes=(list(db.scalars(select(Product.sku).where(
                 Product.material_product_type_id.is_not(None),Product.material_area_id.is_not(None),
                 Product.material_family_id.is_not(None),Product.material_subfamily_id.is_not(None),

@@ -2,7 +2,7 @@
 
 Disponible para operadores con permiso de **Categorías** y administradores, en **Categorías → Asignación manual**. Se conserva la pestaña de visibilidad e imágenes y la carga por archivo existente.
 
-1. Buscar por código, descripción, referencia de fabricante, EAN o marca. Se utiliza el mismo buscador de materiales, con sus equivalencias y sinónimos. Los filtros de origen son categoría, familia, subfamilia y tipo, además de «Solo materiales sin clasificar».
+1. Buscar por código, descripción, referencia de fabricante, EAN o marca. Se buscan las palabras escritas en los campos de EXIT, sin exigir un orden y admitiendo palabras parciales. Se mantienen la normalización de acentos y las equivalencias de medidas, pero no se deduce una clasificación obligatoria a partir de la descripción. Así se pueden localizar materiales cuya clasificación actual es genérica o incorrecta. Los filtros de origen son categoría, familia, subfamilia y tipo, además de «Solo materiales sin clasificar».
 2. Marcar materiales o pulsar «Seleccionar esta página». La lista admite 50 resultados por página y conserva la selección explícita entre páginas y búsquedas. «Ver selección completa» permite revisar y quitar materiales. Máximo: 5.000 por operación; no se seleccionan resultados ocultos automáticamente.
 3. Elegir la clasificación completa de destino. Se puede crear una subfamilia dentro de una familia existente y un tipo dentro de una subfamilia. Los códigos se generan automáticamente. Un nombre repetido dentro del mismo padre selecciona el existente.
 4. Revisar el número seleccionado y la ruta de destino y confirmar. Tras un error se mantiene la selección para corregir o reintentar.
