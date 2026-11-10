@@ -36,3 +36,5 @@
 .errorRow span:nth-child(2){font-weight:800;color:var(--navy)}
 @media(max-width:860px){.heading{align-items:flex-start;flex-direction:column}.uploadCard{grid-template-columns:1fr}.actions{grid-column:auto}.summary{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:560px){.headingActions,.headingActions a,.actions,.actions button{width:100%}.headingActions,.actions{flex-direction:column}.summary{grid-template-columns:1fr}.errorTable{overflow-x:auto}.errorHead,.errorRow{min-width:650px}}
+
+.embedded{max-width:none}.embedded .heading{padding:8px 0 4px}.embedded .heading h2{margin:4px 0 6px;color:var(--navy);font-size:24px}
