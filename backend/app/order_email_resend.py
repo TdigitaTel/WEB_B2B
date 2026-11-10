@@ -1,14 +1,15 @@
 """Operator-triggered delivery of the current order state, with the same mail outbox."""
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response, Query
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 from .auth import require_roles, audit
 from .db import get_db
-from .models import OrderEmailCheckpoint, OrderEmailDelivery
+from .models import OrderEmailCheckpoint, OrderEmailDelivery, AuditEvent
 from .order_email_events import snapshot
 from .order_email_settings import configuration
 from .order_email_texts import LABELS, STATES
+from .order_email_log import STATUS_LABELS, safe_diagnostic
 from .customer_order_email import preferences, destinations
 from .order_email_worker import deliver, delivery_lock
 
@@ -110,3 +111,25 @@ def resend(order_id:str,data:Resend,db:Session=Depends(get_db),user=Depends(oper
             detail+='\nRespuesta: '+str(diagnostic.get('response','—'))
             if diagnostic.get('reference'):detail+='\nReferencia: '+diagnostic['reference']
         raise HTTPException(502,detail)
+
+
+@router.get('/{order_id}/email/history')
+def email_history(order_id:str,response:Response,limit:int=Query(50,ge=1,le=100),db:Session=Depends(get_db),user=Depends(operator)):
+    order=scoped_order(db,user,order_id)
+    response.headers['Cache-Control']='no-store'
+    jobs=db.scalars(select(OrderEmailDelivery).where(OrderEmailDelivery.order_id==order.id).order_by(OrderEmailDelivery.id.desc()).limit(limit)).all()
+    logs=db.scalars(select(AuditEvent).where(AuditEvent.action=='ORDER_EMAIL_LOG',AuditEvent.entity_type=='ORDER',AuditEvent.entity_id==order.public_id).order_by(AuditEvent.id.desc()).limit(limit*4)).all()
+    delivery_key=AuditEvent.metadata_json['delivery_id'].as_integer()
+    attempts=dict(db.execute(select(delivery_key,func.count()).where(AuditEvent.action=='ORDER_EMAIL_LOG',
+        AuditEvent.entity_type=='ORDER',AuditEvent.entity_id==order.public_id,
+        AuditEvent.metadata_json['status'].as_string()=='SENDING').group_by(delivery_key)).all())
+    return {'deliveries':[{'id':job.id,'revision':job.revision,'state':job.state,'state_label':LABELS.get(job.state,job.state),
+        'status':job.status,'status_label':STATUS_LABELS.get(job.status,job.status),'attempts':max(job.attempts,attempts.get(job.id,0)),
+        'created_at':job.created_at,'updated_at':job.updated_at,'next_attempt_at':job.next_attempt_at,
+        'completed_slots':job.completed_slots or [],'diagnostic':safe_diagnostic(job.diagnostic)} for job in jobs],
+        'events':[{'id':event.id,'created_at':event.created_at,
+            **{key:event.metadata_json.get(key) for key in ('state','status','mode','reason','delivery_id','revision','attempt','completed_slots')},
+            'state_label':LABELS.get(event.metadata_json.get('state'),event.metadata_json.get('state')),
+            'status_label':STATUS_LABELS.get(event.metadata_json.get('status'),event.metadata_json.get('status')),
+            'diagnostic':safe_diagnostic(event.metadata_json.get('diagnostic'))} for event in logs],
+        'limit':limit,'notice':'La aceptación SMTP no confirma la entrega en la bandeja del destinatario. El detalle de intentos se registra desde esta actualización; los avisos anteriores muestran el último resultado guardado.'}

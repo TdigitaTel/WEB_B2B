@@ -8,6 +8,7 @@ from . import order_pickups
 from .models import (CustomerOrderEmailSetting, Order, OrderItem, OrderStatusHistory,
                      OrderDeliveryNote, OrderDeliveryNoteLine, OrderPickup, OrderPickupLine,
                      OrderEmailCheckpoint, OrderEmailDelivery, OrderEmailSettings)
+from .order_email_log import record as mail_log
 from .order_email_texts import LABELS, STATES, customer_mail_state
 
 
@@ -33,8 +34,6 @@ def observe(db, order, baseline=False):
     if order.origen_pedido != 'B2B' or not order.customer_code:
         return
     choice = db.get(CustomerOrderEmailSetting, order.customer_code)
-    if not choice or not (choice.email1_enabled or choice.email2_enabled):
-        return
     db.scalar(select(Order.id).where(Order.id == order.id).with_for_update())
     db.info.pop('pickup_summary_cache', None)
     key, state, payload = snapshot(db, order)
@@ -57,10 +56,18 @@ def observe(db, order, baseline=False):
     checkpoint.revision += 1
     setting = db.get(OrderEmailSettings, 1)
     config = setting.configuration if setting else {}
-    if (baseline or not config.get('automatic_enabled') or order.deleted_at
-            or order.estado_registro_exit == 'BORRADOR' or state not in STATES or state not in config.get('selected_states', [])):
+    reason=('No se envían avisos históricos al activar la función.' if baseline else
+        'No hay correos destino marcados en la ficha del cliente.' if not choice or not (choice.email1_enabled or choice.email2_enabled) else
+        'Los avisos automáticos están desactivados.' if not config.get('automatic_enabled') else
+        'El pedido está eliminado.' if order.deleted_at else
+        'El pedido es un borrador.' if order.estado_registro_exit=='BORRADOR' else
+        f'El estado «{LABELS.get(state,state)}» no está configurado para enviar correos.' if state not in STATES or state not in config.get('selected_states',[]) else None)
+    if reason:
+        if not baseline:mail_log(db,order,state,'SKIPPED',reason=reason,revision=checkpoint.revision)
         return
-    db.add(OrderEmailDelivery(order_id=order.id, revision=checkpoint.revision, state=state, payload=payload))
+    job=OrderEmailDelivery(order_id=order.id,revision=checkpoint.revision,state=state,payload=payload)
+    db.add(job)
+    mail_log(db,order,state,'QUEUED',job=job,reason='Aviso guardado en cola; pendiente del proceso de correo.')
 
 
 def baseline_customer(db, code):

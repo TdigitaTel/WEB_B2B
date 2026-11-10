@@ -15,6 +15,7 @@ from .customer_order_email import preferences, destinations
 from .erp_db import fetch_customer
 from .order_email_settings import configuration, cipher, send_message, smtp_diagnostic
 from .order_status_email import render_status_email
+from .order_email_log import record as mail_log
 from . import order_email_events  # Also register listeners in this process.
 
 logger = logging.getLogger(__name__)
@@ -30,25 +31,29 @@ def deliver(db, job, contact_reader=None, transport=None, *, manual=False):
     transport = transport or send_message
     row, config = configuration(db)
     order = db.get(Order, job.order_id)
+    mode='MANUAL' if manual else 'AUTOMATIC'
+    def log(status,reason=None,diagnostic=None,slots=None):
+        mail_log(db,order,job.state,status,job=job,mode=mode,reason=reason,diagnostic=diagnostic,slots=slots)
     if ((not config.automatic_enabled and not manual) or job.state not in config.selected_states or not order
             or order.deleted_at or order.reconciliation_reason == 'MISSING_EXIT' or order.estado_registro_exit == 'BORRADOR'):
-        job.status = 'CANCELLED'; db.commit(); return
+        job.status = 'CANCELLED'; log('CANCELLED','El aviso ya no cumple las condiciones de configuración, estado o destinatarios.'); db.commit(); return
     # The initial receipt remains valid after processing starts; other stale states do not.
     checkpoint = db.get(order_email_events.OrderEmailCheckpoint, order.id)
     if checkpoint and job.revision < checkpoint.revision and job.state != 'PENDIENTE':
-        job.status = 'SUPERSEDED'; db.commit(); return
+        job.status = 'SUPERSEDED'; log('SUPERSEDED','El pedido tiene un estado posterior; este aviso no se enviará.'); db.commit(); return
     selected = preferences(db, order.customer_code)
     if not any(selected.values()):
-        job.status = 'CANCELLED'; db.commit(); return
+        job.status = 'CANCELLED'; log('CANCELLED','El aviso ya no cumple las condiciones de configuración, estado o destinatarios.'); db.commit(); return
     phase = ['CONTACTS']; password = ''; address = ''
     job.attempts += 1
+    log('SENDING','Inicio del intento de envío.')
     try:
         customer = contact_reader(order.customer_code)
         if customer is None:
             raise ValueError('El cliente no está disponible en EXIT')
         recipients = destinations(customer, selected)
         if not recipients:
-            job.status = 'NO_RECIPIENT'; job.diagnostic = {'phase': 'CONTACTS', 'response': 'Los campos marcados no contienen correos válidos en EXIT'}; db.commit(); return
+            job.status = 'NO_RECIPIENT'; job.diagnostic = {'phase': 'CONTACTS', 'response': 'Los campos marcados no contienen correos válidos en EXIT'}; log('NO_RECIPIENT',diagnostic=job.diagnostic); db.commit(); return
         if not row or not row.password_ciphertext or not config.smtp_host or not config.username:
             raise ValueError('Completa la configuración SMTP')
         password = cipher().decrypt(row.password_ciphertext.encode()).decode()
@@ -80,8 +85,12 @@ def deliver(db, job, contact_reader=None, transport=None, *, manual=False):
             phase[0] = 'CONNECT'
             transport(config, password, message, phase)
             completed.update(recipient['slots'])
-            job.completed_slots = sorted(completed); job.status = 'PENDING'; db.commit()
-        job.status = 'SENT'; job.diagnostic = None; db.commit()
+            job.completed_slots = sorted(completed); job.status = 'PENDING'
+            log('RECIPIENT_ACCEPTED','La librería SMTP confirmó el envío sin destinatarios rechazados. No confirma entrega en bandeja de entrada.',slots=recipient['slots'])
+            db.commit()
+        job.status = 'SENT'; job.diagnostic = None
+        log('SENT','El servidor SMTP aceptó el aviso para los destinos marcados. No confirma entrega en bandeja de entrada.')
+        db.commit()
         logger.info('ORDER_EMAIL_SENT delivery=%s order=%s', job.id, order.public_id)
     except Exception as exc:
         diagnostic = smtp_diagnostic(exc, phase[0], config, password, address)
@@ -90,6 +99,7 @@ def deliver(db, job, contact_reader=None, transport=None, *, manual=False):
         # Never auto-retry this ambiguous phase; avoid duplicate customer emails.
         job.status = 'UNCERTAIN' if phase[0] == 'SEND' else 'RETRY' if job.attempts < 5 else 'FAILED'
         job.next_attempt_at = now() + timedelta(seconds=min(3600, 60 * 2**job.attempts))
+        log(job.status,'El intento de envío no terminó correctamente.',diagnostic)
         db.commit()
         logger.warning('ORDER_EMAIL_FAILED delivery=%s %s', job.id, json.dumps(diagnostic, ensure_ascii=False))
 
@@ -113,6 +123,7 @@ def run_once():
         with SessionLocal() as db:
             for job in db.scalars(select(OrderEmailDelivery).where(OrderEmailDelivery.status=='SENDING')):
                 job.status='UNCERTAIN'
+                mail_log(db,db.get(Order,job.order_id),job.state,'UNCERTAIN',job=job,mode='SYSTEM',reason='El proceso se interrumpió durante el envío; comprueba el destinatario antes de reintentar.')
             db.commit()
             jobs=list(db.scalars(select(OrderEmailDelivery).where(
                 OrderEmailDelivery.status.in_(['PENDING','RETRY']),
