@@ -154,3 +154,47 @@ def test_database_error_rolls_back_existing_assignment_and_audit(context,monkeyp
         assert existing.source_system=='CATEGORY_UPLOAD'
         assert db.scalar(select(Product).where(Product.sku==list(articles)[1])) is None
         assert not list(db.scalars(select(MaterialImportRow).where(MaterialImportRow.product_id==existing.id,MaterialImportRow.source_sheet=='Manual')))
+
+
+def test_description_lookup_does_not_infer_current_classification(context):
+    client,ids,articles,calls=context
+    code=next(iter(articles))
+    articles[code]['description']='TORNILLO PLETINA M10 LLAVE ENTRADA CONTADOR'
+    # It can still be found by a partial description, under its existing source filter.
+    for q in (code,'TORNILLO PLETINA M10 LLAVE ENTRADA CONTADO'):
+        result=client.get(BASE+'/materials',params={'q':q,'product_type_id':ids['type']})
+        assert result.status_code==200,result.text
+        assert [item['code'] for item in result.json()['items']]==[code]
+        assert calls[-1]['codes']==[code]
+        assert calls[-1]['management'] is True
+        assert 'search_plan' not in calls[-1]['search_config']
+        assert 'type_synonym' not in calls[-1]['search_config']
+
+
+@pytest.mark.parametrize('query,terms',[
+    ('TORNILLO PLETINA M10 LLAVE ENTRADA CONTADO',['tornillo','pletina','m10','llave','entrada','contado']),
+    ('20254',['20254']),
+    ('  plétina   TORNILLO  m10 ',['pletina','tornillo','m10']),
+])
+def test_management_description_sql_ignores_inferred_type_but_keeps_explicit_filters(monkeypatch,query,terms):
+    from app.search import default_search_config
+    connection=MagicMock();connection.__enter__.return_value=connection
+    cursor=connection.cursor.return_value.__enter__.return_value
+    cursor.fetchone.return_value={'total':1}
+    cursor.fetchall.return_value=[{'article_code':'20254','description':'TORNILLO PLETINA M10 LLAVE ENTRADA CONTADOR'}]
+    monkeypatch.setattr(erp_db,'connect_sqlserver',lambda:connection)
+    monkeypatch.setattr(erp_db,'_article_columns',lambda conn:{key:None for key in ['code','description','manufacturer_reference','ean','brand_name','brand_code','inactive','unit','price_with_tax','price_without_tax']}|{'code':'CodigoArticulo','description':'DescripcionArticulo'})
+    config={**default_search_config(),'search_plan':{'term_groups':[['ignored'] ]},'type_synonym':{'codes':[]}}
+    rows,total=erp_db.fetch_catalog_articles(query,page=2,page_size=10,article_codes=['20254'],excluded_codes=['99999'],search_config=config,management=True)
+    assert total==1 and rows[0]['article_code']=='20254'
+    count=next(call for call in cursor.execute.call_args_list if 'COUNT_BIG' in call.args[0])
+    page=next(call for call in cursor.execute.call_args_list if 'OFFSET %s' in call.args[0])
+    for call in (count,page):
+        sql=call.args[0]
+        assert '#SynonymArticles' not in sql and '1=0' not in sql
+        assert '#EligibleArticles' in sql and '#HiddenArticles' in sql
+        assert 'DescripcionArticulo' in sql and 'COLLATE Latin1_General_CI_AI LIKE %s' in sql
+        assert all('%'+term+'%' in call.args[1] for term in terms)
+        assert '%ignored%' not in call.args[1]
+    assert page.args[1][:-2]==count.args[1]
+    assert page.args[1][-2:]==(10,10)
