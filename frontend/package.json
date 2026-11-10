@@ -33,7 +33,8 @@
     "test:order-email": "node scripts/test-order-email.cjs",
     "test:customer-order-emails": "node scripts/test-customer-order-emails.cjs",
     "test:replenishment-quantities": "node scripts/test-replenishment-quantities.cjs",
-    "test:customer-access-delivery": "node scripts/test-customer-access-delivery.cjs"
+    "test:customer-access-delivery": "node scripts/test-customer-access-delivery.cjs",
+    "test:category-menu": "node scripts/test-category-menu.cjs"
   },
   "dependencies": {
     "jsqr": "^1.4.0",

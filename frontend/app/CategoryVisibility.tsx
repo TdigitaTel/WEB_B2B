@@ -1,5 +1,6 @@
 "use client";
 import ManualClassification from "./ManualClassification";
+import CategoryUpload from "./CategoryUpload";
 import {useAutoRefresh} from "./AutoRefresh";
 import {useEffect,useState} from "react";
 type Category={id:number;code:string;name:string;visible:boolean;image_url:string|null};
@@ -25,5 +26,6 @@ function CategoryImages(){
 
 export default function CategoryVisibility(){
  const [tab,setTab]=useState('manual');
- return <div className="page"><h1>Categorías y clasificación</h1><nav className="category-workspace-tabs" aria-label="Gestión de categorías"><button className="secondary" aria-pressed={tab==='manual'} onClick={()=>setTab('manual')}>Asignación manual</button><button className="secondary" aria-pressed={tab==='images'} onClick={()=>setTab('images')}>Categorías e imágenes</button></nav><div hidden={tab!=='manual'}><ManualClassification/></div>{tab==='images'&&<CategoryImages/>}</div>
+ const [uploadOpened,setUploadOpened]=useState(false);
+ return <div className="page"><h1>Categorías y clasificación</h1><nav className="category-workspace-tabs" aria-label="Gestión de categorías"><button className="secondary" aria-pressed={tab==='manual'} onClick={()=>setTab('manual')}>Asignación manual</button><button className="secondary" aria-pressed={tab==='images'} onClick={()=>setTab('images')}>Categorías e imágenes</button><button className="secondary" aria-pressed={tab==='upload'} onClick={()=>{setUploadOpened(true);setTab('upload')}}>Carga por archivo</button></nav><div hidden={tab!=='manual'}><ManualClassification/></div>{tab==='images'&&<CategoryImages/>}{uploadOpened&&<div hidden={tab!=='upload'}><CategoryUpload embedded/></div>}</div>
 }
