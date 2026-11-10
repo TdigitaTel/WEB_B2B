@@ -139,3 +139,13 @@ def test_draft_preview_does_not_save_and_saved_test_matches_content(monkeypatch)
     message=smtp.send_message.call_args.args[0]
     assert message.get_body(preferencelist=('html',)).get_content().strip()==draft.json()['html']
     assert 'private-secret' not in str(message)
+
+
+def test_pending_is_not_overridden_by_empty_preparation_ledger():
+    result=render_status_email(payload(state='PENDIENTE',pickup_summary={'state':'EN_PREPARACION','total_materials':1,'delivered_materials':0}),URL)
+    assert result['state']=='PENDIENTE' and 'Pendiente' in result['subject']
+    assert MESSAGES['PENDIENTE'] in result['text']
+    assert MESSAGES['EN_PREPARACION'] not in result['text']
+    # Real prepared materials still take precedence over a stale raw pending flag.
+    ready=render_status_email(payload(state='PENDIENTE',pickup_summary={'state':'PENDIENTE_RECOGIDA_PARCIAL'}),URL)
+    assert ready['state']=='PENDIENTE_RECOGIDA_PARCIAL'

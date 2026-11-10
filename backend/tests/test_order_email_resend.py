@@ -47,7 +47,7 @@ def test_unconfigured_state_explains_why_and_never_sends(context,monkeypatch):
     with SessionLocal() as db:
         row=db.get(OrderEmailSettings,1);row.configuration={**row.configuration,'selected_states':[]};db.commit()
     status=client.get(path).json();assert status['can_send'] is False
-    assert 'no está configurado' in status['reason'] and 'Pedido recibido' in status['reason']
+    assert 'no está configurado' in status['reason'] and 'Pendiente' in status['reason']
     response=client.post(path+'/resend',json={'expected_state_key':status['state_key']})
     assert response.status_code==409 and 'no está configurado' in response.json()['detail']
     assert sent==[]

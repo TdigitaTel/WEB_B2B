@@ -211,3 +211,40 @@ def test_global_activation_starts_from_current_state(context):
     with SessionLocal() as db:
         assert db.get(Delivery,old_id).status=='CANCELLED'
         assert len(list(db.scalars(select(Delivery))))==1
+
+
+def test_pending_receipt_survives_empty_preparation_summary_and_fast_processing(context,monkeypatch):
+    client,customer=context
+    client.patch(PATH,json={'email1_enabled':True,'email2_enabled':False})
+    monkeypatch.setattr(order_pickups,'summary',lambda *args:{'state':'EN_PREPARACION','total_materials':1,'delivered_materials':0})
+    with SessionLocal() as db:
+        configure(db)
+        setting=db.get(OrderEmailSettings,1)
+        setting.configuration={**setting.configuration,'selected_states':['PENDIENTE']};db.commit()
+        order=new_order(db)
+        receipt=latest(db)
+        assert receipt.state=='PENDIENTE' and receipt.payload['items'][0]['description']=='Material de prueba'
+        order.estado_registro_exit='REGISTRADO';db.commit()
+        assert db.get(Checkpoint,order.id).revision>receipt.revision
+        sent=[]
+        deliver(db,receipt,lambda code:customer,lambda config,password,message,phase:sent.append(message))
+        assert receipt.status=='SENT' and len(sent)==1
+        assert 'Pendiente' in sent[0]['Subject']
+        assert 'Hemos recibido tu pedido' in sent[0].get_body(preferencelist=('plain',)).get_content()
+        assert 'Estamos preparando' not in str(sent[0])
+        # Refreshes do not queue another receipt.
+        order.notes='Refresco';db.commit()
+        assert len(list(db.scalars(select(Delivery).where(Delivery.order_id==order.id))))==1
+
+
+def test_removed_order_is_not_a_customer_notification_state(context):
+    client,_=context
+    client.patch(PATH,json={'email1_enabled':True,'email2_enabled':False})
+    with SessionLocal() as db:
+        configure(db);order=new_order(db)
+        count=len(list(db.scalars(select(Delivery))))
+        order.reconciliation_reason='MISSING_EXIT';db.commit()
+        assert len(list(db.scalars(select(Delivery))))==count
+        receipt=latest(db);sent=[]
+        deliver(db,receipt,lambda code:{},lambda *args:sent.append(args))
+        assert receipt.status=='CANCELLED' and sent==[]
