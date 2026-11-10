@@ -34,7 +34,7 @@ async function uploadCategoryFile(file: File, validateOnly: boolean): Promise<Im
   return payload as ImportResult;
 }
 
-export default function CategoryUpload() {
+export default function CategoryUpload({embedded=false}:{embedded?:boolean}={}) {
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState<"validate" | "import" | null>(null);
   const [error, setError] = useState("");
@@ -56,11 +56,11 @@ export default function CategoryUpload() {
     run(false);
   }
 
-  return <div className={`page ${styles.page}`}>
+  return <div className={`${embedded?styles.embedded:"page"} ${styles.page}`}>
     <header className={styles.heading}>
       <div>
-        <span className="eyebrow">CATÁLOGO · POSTGRESQL</span>
-        <h1>Carga de categorías</h1>
+        {!embedded&&<span className="eyebrow">CATÁLOGO · POSTGRESQL</span>}
+        {embedded?<h2>Carga por archivo</h2>:<h1>Carga de categorías</h1>}
         <p>Actualiza la clasificación y el nombre homologado utilizando el código de material de EXIT.</p>
       </div>
       <div className={styles.headingActions}>

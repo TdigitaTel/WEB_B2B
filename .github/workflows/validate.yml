@@ -29,6 +29,7 @@ jobs:
       - run: npm run test:replenishment-saved
       - run: npm run test:replenishment-quantities
       - run: npm run test:replenishment-history
+      - run: npm run test:category-menu
       - run: npm run test:manual-classification
       - run: npm run test:operation-filter
       - run: npm run test:operator-order-images
