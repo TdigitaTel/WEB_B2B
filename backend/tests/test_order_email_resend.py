@@ -109,3 +109,59 @@ def test_customer_outside_delegation_and_busy_worker_are_blocked(context,monkeyp
     with SessionLocal() as db:
         order=db.get(Order,oid);order.company_code=123456;order.delegation_code='FORBIDDEN';db.commit()
     assert client.get(path).status_code==404
+
+
+def test_history_keeps_sanitized_failed_attempt_after_success(context,monkeypatch):
+    client,path,oid,sent=prepare(context,monkeypatch)
+    current=client.get(path).json()
+    def fail(config,password,message,phase):
+        phase[0]='AUTH';raise smtplib.SMTPAuthenticationError(535,b'test-password first@example.test AUTH rejected')
+    monkeypatch.setattr(worker,'send_message',fail)
+    assert client.post(path+'/resend',json={'expected_state_key':current['state_key']}).status_code==502
+    monkeypatch.setattr(worker,'send_message',lambda config,password,message,phase:sent.append(message))
+    assert client.post(path+'/resend',json={'expected_state_key':current['state_key']}).status_code==200
+    history=client.get(path+'/history')
+    assert history.status_code==200,history.text
+    assert 'no-store' in history.headers['cache-control']
+    data=history.json()
+    assert data['deliveries'][0]['status']=='SENT'
+    assert data['deliveries'][0]['attempts']==2
+    assert data['deliveries'][0]['completed_slots']==['email1']
+    assert any(row['status']=='SENT' and row['mode']=='MANUAL' for row in data['events'])
+    failure=next(row for row in data['events'] if row['status']=='RETRY')
+    assert failure['diagnostic']['smtp_code']==535
+    assert failure['diagnostic']['phase']=='AUTH'
+    assert 'test-password' not in history.text and 'first@example.test' not in history.text
+    assert 'tracking_token_ciphertext' not in history.text and 'payload' not in history.text
+    # No provider access is needed to read a previously saved result.
+    monkeypatch.setattr(resend_module,'inspect',lambda *args:(_ for _ in ()).throw(RuntimeError('EXIT offline')))
+    assert client.get(path+'/history').status_code==200
+    assert len(sent)==1
+
+
+def test_history_logs_unselected_state_without_generating_email(context,monkeypatch):
+    client,path,oid,sent=prepare(context,monkeypatch)
+    with SessionLocal() as db:
+        config=db.get(OrderEmailSettings,1);config.configuration={**config.configuration,'selected_states':[]}
+        order=db.get(Order,oid);order.estado_registro_exit='REGISTRADO';db.commit()
+    history=client.get(path+'/history').json()
+    skipped=next(row for row in history['events'] if row['status']=='SKIPPED')
+    assert 'no está configurado' in skipped['reason']
+    assert skipped['state_label']=='En procesamiento'
+    assert len(history['deliveries'])==1 and sent==[]
+    assert context[0].get(path+'/history').status_code==403
+    with SessionLocal() as db:
+        order=db.get(Order,oid);order.company_code=123456;order.delegation_code='FORBIDDEN';db.commit()
+    assert client.get(path+'/history').status_code==404
+
+
+def test_history_get_is_read_only_and_limit_is_validated(context,monkeypatch):
+    from app.models import AuditEvent
+    client,path,oid,sent=prepare(context,monkeypatch)
+    with SessionLocal() as db:
+        before=len(list(db.scalars(select(AuditEvent).where(AuditEvent.action=='ORDER_EMAIL_LOG'))))
+    for _ in range(3):assert client.get(path+'/history?limit=1').status_code==200
+    assert client.get(path+'/history?limit=101').status_code==422
+    with SessionLocal() as db:
+        assert len(list(db.scalars(select(AuditEvent).where(AuditEvent.action=='ORDER_EMAIL_LOG'))))==before
+    assert sent==[]
