@@ -241,7 +241,13 @@ def fetch_catalog_articles(query: str = "", page: int = 1, page_size: int = 24,
             ) if expression != "NULL")
             config = search_config if search_config is not None else default_search_config()
             plan = config.get('search_plan')
-            if plan is not None:
+            if management:
+                # Find materials to reclassify regardless of their current product type.
+                # Require every typed word, allowing different order and partial words.
+                for term in dict.fromkeys(normalized_query.split()):
+                    conditions.append('('+' OR '.join(f'{expression} COLLATE Latin1_General_CI_AI LIKE %s' for expression in searchable)+')')
+                    parameters.extend([f'%{term}%']*len(searchable))
+            elif plan is not None:
                 synonym = config.get('type_synonym')
                 if synonym is not None:
                     if synonym['codes']:
