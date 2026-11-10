@@ -31,7 +31,7 @@ export default function HomeOrders({load,onNavigate}:{load:(signal:AbortSignal)=
     document.addEventListener("visibilitychange",refresh);
     return ()=>{controller.abort();window.clearInterval(timer);window.removeEventListener("focus",refresh);document.removeEventListener("visibilitychange",refresh);};
   },[load,retry,refreshSeconds]);
-  const recent=(orders??[]).filter(order=>order.origen_pedido==="B2B").sort((a,b)=>(b.web_number||b.number).localeCompare(a.web_number||a.number,"es",{numeric:true})).slice(0,5);
+  const recent=(orders??[]).filter(order=>order.origen_pedido==="B2B"&&order.estado_registro_exit!=="ELIMINADO_EN_EXIT").sort((a,b)=>(b.web_number||b.number).localeCompare(a.web_number||a.number,"es",{numeric:true})).slice(0,5);
   return <>
     <div className="section-heading"><h2>Mis pedidos</h2><span className="count">{orders===null?"…":recent.length}</span></div>
     <p className="small">Tus últimos cinco pedidos WEB.</p>
