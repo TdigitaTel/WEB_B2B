@@ -8,13 +8,13 @@ from . import order_pickups
 from .models import (CustomerOrderEmailSetting, Order, OrderItem, OrderStatusHistory,
                      OrderDeliveryNote, OrderDeliveryNoteLine, OrderPickup, OrderPickupLine,
                      OrderEmailCheckpoint, OrderEmailDelivery, OrderEmailSettings)
-from .order_email_texts import ALIASES, LABELS
+from .order_email_texts import LABELS, STATES, customer_mail_state
 
 
 def snapshot(db, order):
     summary = order_pickups.summary(db, order)
     raw = order.estado_registro_exit
-    state = (summary or {}).get('state') or ALIASES.get(raw, raw)
+    state = customer_mail_state(raw,summary)
     if raw == 'ELIMINADO_EN_EXIT' or order.reconciliation_reason == 'MISSING_EXIT':
         state = raw = 'ELIMINADO_EN_EXIT'
     state = state if state in LABELS else 'EN_GESTION'
@@ -58,7 +58,7 @@ def observe(db, order, baseline=False):
     setting = db.get(OrderEmailSettings, 1)
     config = setting.configuration if setting else {}
     if (baseline or not config.get('automatic_enabled') or order.deleted_at
-            or order.estado_registro_exit == 'BORRADOR' or state not in config.get('selected_states', [])):
+            or order.estado_registro_exit == 'BORRADOR' or state not in STATES or state not in config.get('selected_states', [])):
         return
     db.add(OrderEmailDelivery(order_id=order.id, revision=checkpoint.revision, state=state, payload=payload))
 

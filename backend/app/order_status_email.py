@@ -4,7 +4,7 @@ from html import escape
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
-from .order_email_texts import STATES, MESSAGES, LABELS, ALIASES
+from .order_email_texts import STATES, MESSAGES, LABELS, customer_mail_state
 from .order_email_content import EmailContent
 
 
@@ -32,7 +32,7 @@ def render_status_email(payload, tracking_url, *, demo=False, content=None):
         raise ValueError('El enlace del correo debe ser HTTPS y no contener credenciales')
     summary = payload.get('pickup_summary') or {}
     raw_state = payload.get('state', 'PENDIENTE')
-    state = summary.get('state') or ALIASES.get(raw_state, raw_state)
+    state = customer_mail_state(raw_state,summary)
     # A withdrawn order takes priority. Invoicing must not hide a pending pickup.
     if raw_state == 'ELIMINADO_EN_EXIT':
         state = raw_state

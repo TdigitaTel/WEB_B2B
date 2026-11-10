@@ -25,7 +25,7 @@ from .models import OrderEmailSettings, User
 router = APIRouter(prefix="/api/v1/store/order-email-settings", tags=["Correo de pedidos"])
 operator = require_roles("OPERADOR_TIENDA", "ADMIN")
 from .order_status_email import STATES, example_email
-from .order_email_texts import LABELS, MESSAGES
+from .order_email_texts import MESSAGES
 from .order_email_content import EmailContent
 
 
@@ -99,7 +99,7 @@ class TestMail(BaseModel):
     @field_validator("preview_state")
     @classmethod
     def valid_state(cls, value):
-        if value not in LABELS:
+        if value not in STATES:
             raise ValueError("Estado no disponible")
         return value
 
@@ -116,13 +116,17 @@ def cipher():
 
 def configuration(db):
     row = db.get(OrderEmailSettings, 1)
-    return row, MailConfiguration(**(row.configuration if row else {}))
+    saved=dict(row.configuration or {}) if row else {}
+    # Retire the former operational-deletion option without breaking saved SMTP settings.
+    if 'selected_states' in saved:
+        saved['selected_states']=[state for state in saved['selected_states'] if state!='ELIMINADO_EN_EXIT']
+    return row, MailConfiguration(**saved)
 
 
 def public_settings(row, data):
     return {**data.model_dump(), "password_configured": bool(row and row.password_ciphertext),
             "available_states": STATES, "recipient_source": "CUSTOMER_RECORD",
-            "automatic_dispatch_available": True, "content_states": LABELS, "content_suggestions": MESSAGES}
+            "automatic_dispatch_available": True, "content_states": STATES, "content_suggestions": {state:MESSAGES[state] for state in STATES}}
 
 
 @router.get("")
@@ -164,7 +168,7 @@ def save_settings(data: MailSave, response: Response, db: Session = Depends(get_
 def preview_mail(response: Response, state: str = Query(default="ENTREGADO_PARCIAL"),
                  db: Session = Depends(get_db), user: User = Depends(operator)):
     response.headers["Cache-Control"] = "no-store"
-    if state not in LABELS:
+    if state not in STATES:
         raise HTTPException(422, "Estado no disponible")
     _, config = configuration(db)
     return example_email(state, config.portal_url, content=config.content)
@@ -178,7 +182,7 @@ class PreviewDraft(BaseModel):
     @field_validator("state")
     @classmethod
     def valid_state(cls, value):
-        if value not in LABELS:
+        if value not in STATES:
             raise ValueError("Estado no disponible")
         return value
 
