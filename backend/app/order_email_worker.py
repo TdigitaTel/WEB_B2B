@@ -31,11 +31,11 @@ def deliver(db, job, contact_reader=None, transport=None, *, manual=False):
     row, config = configuration(db)
     order = db.get(Order, job.order_id)
     if ((not config.automatic_enabled and not manual) or job.state not in config.selected_states or not order
-            or order.deleted_at or order.estado_registro_exit == 'BORRADOR'):
+            or order.deleted_at or order.reconciliation_reason == 'MISSING_EXIT' or order.estado_registro_exit == 'BORRADOR'):
         job.status = 'CANCELLED'; db.commit(); return
-    # Superseded pending messages are not useful. Never announce an obsolete state.
+    # The initial receipt remains valid after processing starts; other stale states do not.
     checkpoint = db.get(order_email_events.OrderEmailCheckpoint, order.id)
-    if checkpoint and job.revision < checkpoint.revision:
+    if checkpoint and job.revision < checkpoint.revision and job.state != 'PENDIENTE':
         job.status = 'SUPERSEDED'; db.commit(); return
     selected = preferences(db, order.customer_code)
     if not any(selected.values()):

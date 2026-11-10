@@ -157,3 +157,22 @@ def test_library_response_redacts_password_encoded_auth_and_addresses():
     for secret in [password,encoded,username,'receiver@example.test','private-token']:
         assert secret not in value
     assert len(log['response'])<=1500
+
+
+def test_available_and_editor_states_match_workflow_and_upgrade_saved_configuration():
+    from app.order_email_texts import STATES
+    expected={'PENDIENTE','EN_PREPARACION','PENDIENTE_RECOGIDA_PARCIAL','PENDIENTE_RECOGIDA_TOTAL','ENTREGADO_PARCIAL','ENTREGADO_TOTAL','FACTURADO'}
+    with SessionLocal() as db:
+        saved=mail.MailConfiguration(smtp_host='smtp.example.test',username='b2b@example.test').model_dump()
+        saved['selected_states']=list(expected)+['ELIMINADO_EN_EXIT']
+        db.add(OrderEmailSettings(id=1,configuration=saved,password_ciphertext='preserved-cipher'));db.commit()
+    result=login().get(PATH)
+    assert result.status_code==200,result.text
+    data=result.json()
+    assert set(data['available_states'])==set(data['content_states'])==set(data['content_suggestions'])==expected
+    assert data['available_states']['PENDIENTE']=='Pendiente'
+    assert data['available_states']['EN_PREPARACION']=='En procesamiento'
+    assert set(data['selected_states'])==expected
+    assert data['smtp_host']=='smtp.example.test' and data['password_configured'] is True
+    assert 'ELIMINADO_EN_EXIT' not in STATES
+    assert login().get(PATH+'/preview?state=ELIMINADO_EN_EXIT').status_code==422

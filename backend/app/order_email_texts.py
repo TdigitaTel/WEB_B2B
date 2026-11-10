@@ -1,10 +1,10 @@
 """Editable starter suggestions; never required customer copy."""
 STATES = {
-    'PENDIENTE': 'Pedido recibido', 'EN_PREPARACION': 'En preparación',
+    'PENDIENTE': 'Pendiente', 'EN_PREPARACION': 'En procesamiento',
     'PENDIENTE_RECOGIDA_PARCIAL': 'Pendiente de recogida parcial',
     'PENDIENTE_RECOGIDA_TOTAL': 'Pendiente de recogida total',
     'ENTREGADO_PARCIAL': 'Entregado parcial', 'ENTREGADO_TOTAL': 'Entregado total',
-    'FACTURADO': 'Facturado', 'ELIMINADO_EN_EXIT': 'No se va a atender',
+    'FACTURADO': 'Facturado',
 }
 MESSAGES = {
     'PENDIENTE': 'Hemos recibido tu pedido. Te avisaremos cuando haya materiales disponibles para recoger.',
@@ -20,11 +20,19 @@ MESSAGES = {
     'PENDIENTE_RECOGIDA': 'Hay materiales disponibles para recoger. Consulta el seguimiento para ver el detalle.',
     'EN_GESTION': 'Estamos gestionando tu pedido. Te avisaremos cuando haya novedades.',
 }
-LABELS = {**STATES, 'REVISAR_ENTREGA_HISTORICA': 'Entrega en revisión',
+LABELS = {**STATES, 'ELIMINADO_EN_EXIT': 'No se va a atender', 'REVISAR_ENTREGA_HISTORICA': 'Entrega en revisión',
           'SIN_MATERIALES_ACTIVOS': 'Sin materiales activos', 'EN_GESTION': 'En gestión',
           'PENDIENTE_RECOGIDA': 'Pendiente de recogida'}
 ALIASES = {'REGISTRADO': 'EN_PREPARACION', 'EN_PROCESO': 'EN_PREPARACION',
-           'EN_PROCESAMIENTO': 'EN_PREPARACION', 'BLOQUEADO': 'EN_GESTION',
+           'EN_PROCESAMIENTO': 'EN_PREPARACION', 'BLOQUEADO': 'EN_PREPARACION',
            'ATENDIDO': 'PENDIENTE_RECOGIDA', 'PENDIENTE_RECOJO': 'PENDIENTE_RECOGIDA',
            'ENTREGADO': 'ENTREGADO_TOTAL'}
 
+
+
+def customer_mail_state(raw, summary):
+    """An empty preparation ledger does not mean the pending order was processed."""
+    if raw == 'ELIMINADO_EN_EXIT':return raw
+    preparation = (summary or {}).get('state')
+    if raw == 'PENDIENTE' and preparation in {None,'EN_PREPARACION'}:return 'PENDIENTE'
+    return preparation or ALIASES.get(raw,raw)
