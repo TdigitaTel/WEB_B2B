@@ -69,15 +69,14 @@ def test_empty_home_does_not_fetch_exit_or_fill_with_store_orders(case):
     assert calls==[] and status_calls==[]
 
 
-def test_missing_exit_keeps_original_web_order_with_explicit_state(case,monkeypatch):
+def test_missing_exit_is_hidden_at_home_but_original_record_is_preserved(case,monkeypatch):
     client,code,uid,*_=case
     monkeypatch.setattr(order_reconciliation,'fetch_existing_exit_order_keys',lambda keys:set())
     rows=client.get('/api/v1/orders?recent_web=true').json()
-    assert len(rows)==5
-    missing=next(row for row in rows if row['web_number']==f'WEB-{7000+uid}-0000005')
-    assert missing['estado_registro_exit']=='ELIMINADO_EN_EXIT'
+    # Closed orders retain their history; confirmed missing pending orders are hidden.
+    assert [row['web_number'] for row in rows]==[f'WEB-{7000+uid}-{i:07d}' for i in [6,3,2]]
     with SessionLocal() as db:
-        order=db.scalar(select(Order).where(Order.public_id==missing['id']))
+        order=db.scalar(select(Order).where(Order.customer_code==code,Order.order_number==f'WEB-{7000+uid}-0000005'))
         assert order.deleted_at is None and order.reconciliation_reason=='MISSING_EXIT'
 
 
@@ -96,3 +95,23 @@ def test_live_exit_update_keeps_web_number_and_never_imports_unlinked_order(case
     assert rows[0]['estado_registro_exit']=='REGISTRADO'
     with SessionLocal() as db:
         assert not db.scalars(select(Order).where(Order.customer_code==code,Order.company_code==99)).all()
+
+
+def test_failed_existence_check_does_not_hide_pending_home_orders(case,monkeypatch):
+    client,code,uid,*_=case
+    def unavailable(keys):raise RuntimeError('EXIT unavailable')
+    monkeypatch.setattr(order_reconciliation,'fetch_existing_exit_order_keys',unavailable)
+    rows=client.get('/api/v1/orders?recent_web=true').json()
+    assert [row['web_number'] for row in rows]==[f'WEB-{7000+uid}-{i:07d}' for i in [6,5,4,3,2]]
+    with SessionLocal() as db:
+        assert all(row.reconciliation_reason is None for row in db.scalars(select(Order).where(Order.customer_code==code)))
+
+
+def test_reappearing_exit_order_returns_to_home(case,monkeypatch):
+    client,code,uid,*_=case
+    monkeypatch.setattr(order_reconciliation,'fetch_existing_exit_order_keys',lambda keys:set())
+    first=client.get('/api/v1/orders?recent_web=true').json()
+    assert not any(row['web_number'].endswith('0000005') for row in first)
+    monkeypatch.setattr(order_reconciliation,'fetch_existing_exit_order_keys',lambda keys:set(keys))
+    restored=client.get('/api/v1/orders?recent_web=true').json()
+    assert len(restored)==5 and any(row['web_number'].endswith('0000005') for row in restored)

@@ -1023,7 +1023,7 @@ def orders(date_from: date | None = None, date_to: date | None = None,
     emitted = {payload['id'] for payload in result}
     hidden = reconcile_orders(db, [row for row in all_local_rows if row.public_id in emitted],
                               all_local_rows, exit_rows, [*deliveries.keys(), *order_pickups.receipt_order_keys(db, all_local_rows)], user, notes_available)
-    result = [payload for payload in result if payload['id'] not in hidden or (recent_web and payload.get('origen_pedido') == 'B2B')]
+    result = [payload for payload in result if payload['id'] not in hidden]
     result = customer_history_without_shadows(result)
     for payload in result:
         key = note_order_key(payload)
@@ -1037,8 +1037,6 @@ def orders(date_from: date | None = None, date_to: date | None = None,
         if local:
             payload['pickup_summary'] = order_pickups.summary(db, local)
             payload['pickup_warning'] = pickup_warnings.get(local.id)
-            if recent_web and local.reconciliation_reason == 'MISSING_EXIT':
-                payload['estado_registro_exit'] = 'ELIMINADO_EN_EXIT'
     db.commit()
     if recent_web:
         by_id = {payload['id']: payload for payload in result if payload.get('origen_pedido') == 'B2B'}

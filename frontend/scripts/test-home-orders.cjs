@@ -36,12 +36,13 @@ const text=()=>document.body.textContent;
  await React.act(async()=>{void tick();});await React.act(async()=>{resolve([]);});assert.match(text(),/Todavía no tienes pedidos WEB/);
  await React.act(async()=>{void tick();});await React.act(async()=>{resolve([{id:'3',number:'WEB-FACTURADO-PARCIAL',origen_pedido:'B2B',store:'Almeiras',estado_registro_exit:'FACTURADO',pickup_summary:{state:'ENTREGADO_PARCIAL',total_materials:2,prepared_materials:1,delivered_materials:1,partial_delivered_materials:0,ready_materials:0,pending_materials:1,prepared_percent:50,delivered_percent:50,prepared_complete:false,legacy_delivery:false,requires_review:false,lines:[]}}]);});assert.match(text(),/WEB-FACTURADO-PARCIAL/);assert.match(text(),/Entregado parcial/,'Invoiced orders with pending material remain visible');
  await React.act(async()=>{void tick();});await React.act(async()=>{resolve([
+  {id:'removed',number:'WEB-2026-9999998',web_number:'WEB-2026-9999998',origen_pedido:'B2B',store:'Almeiras',estado_registro_exit:'ELIMINADO_EN_EXIT'},
   ...[1,7,3,5,2,6,4].map(n=>({id:'web-'+n,number:'2026/AL/'+(100-n),web_number:'WEB-2026-'+String(n).padStart(7,'0'),origen_pedido:'B2B',store:'Almeiras',estado_registro_exit:n===7?'FACTURADO':'ENTREGADO'})),
   {id:'store',number:'2026/AL/99999999',origen_pedido:'EXIT',is_web_order:true,web_number:'WEB-2026-9999999',store:'Almeiras',estado_registro_exit:'PENDIENTE'},
   {id:'unknown',number:'WEB-UNKNOWN',store:'Almeiras',estado_registro_exit:'PENDIENTE'}
  ]);});
  assert.deepEqual([...document.querySelectorAll('.compact-order>b')].map(el=>el.textContent),[7,6,5,4,3].map(n=>'WEB-2026-'+String(n).padStart(7,'0')),'Only five canonical WEB orders, descending by WEB number, including invoiced and delivered');
- assert.equal(document.querySelector('.count').textContent,'5');assert.doesNotMatch(text(),/99999999|WEB-UNKNOWN|WEB-2026-9999999/);
+ assert.equal(document.querySelector('.count').textContent,'5');assert.doesNotMatch(text(),/99999999|WEB-UNKNOWN|WEB-2026-9999999|WEB-2026-9999998/);
  assert.match(text(),/Facturado/);
  await React.act(async()=>{void tick();});const pending=resolve;await React.act(async()=>root.unmount());assert.equal(signal.aborted,true);await React.act(async()=>pending([]));
  console.log('Home orders: loading, independent result, refresh, no overlap, retry, cleanup passed');dom.window.close();
