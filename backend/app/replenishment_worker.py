@@ -1,4 +1,5 @@
 """Persistent, serialized replenishment queue. Run in its own container, never in the API."""
+from copy import deepcopy
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
@@ -11,7 +12,7 @@ from .db import SessionLocal, engine
 from .models import ReplenishmentJob as Job, ReplenishmentBatch as Batch, ReplenishmentScenario as Scenario, ReplenishmentResult as Result
 from .replenishment import RunInput, enrich_source, selected_product_codes
 from .category_visibility import hidden_codes
-from .replenishment_engine import prepare_context, calculate_article, annotate_central, summarize
+from .replenishment_engine import prepare_context, calculate_article, annotate_central, summarize, calculate_all_bases, annotate_all_bases
 from .replenishment_source import list_replenishment_codes, read_replenishment_source
 
 logger=logging.getLogger(__name__)
@@ -63,7 +64,7 @@ def initialize(job_id,token):
         selected=selected_product_codes(db,request.filters)
         codes=list_replenishment_codes(selected,job.article_limit,hidden_codes(db) if selected is None else [])
         job=owned(db,job_id,token)
-        source={'batched':True,'source_articles':len(codes),'articles':[], 'sales':[], 'stocks':[],
+        source={'consumption_bases':(['MEAN','MEDIAN','MODE'] if request.all_consumption_bases else [request.temporary_parameters.get('consumption_basis','MEAN')]),'batched':True,'source_articles':len(codes),'articles':[], 'sales':[], 'stocks':[],
             'captured_at':now().isoformat(),'extraction_started_at':job.started_at.isoformat(),
             'article_limit':job.article_limit,'company':1,'sales_delegations':['00','01','02','04','05'],
             'start':request.filters.date_from.isoformat(),'end':request.filters.date_to.isoformat()}
@@ -101,10 +102,12 @@ def process_batch(job_id,token):
         job=owned(db,job_id,token);enrich_source(db,source)
         job.phase=prefix+f'Calculando y guardando · bloque {number} de {job.total_batches}';db.commit()
     source['calculation_delegations']=delegations
-    context=prepare_context(source,delegations,[],request.temporary_parameters)
-    results=[calculate_article(article,delegation,context) for article in source['articles'] for delegation in delegations]
-    # Sequential runs receive the final joint central check only after all groups finish.
-    annotate_central(results,source)
+    if request.all_consumption_bases:
+        results=calculate_all_bases(source,delegations,[],request.temporary_parameters)
+    else:
+        context=prepare_context(source,delegations,[],request.temporary_parameters)
+        results=[calculate_article(article,delegation,context) for article in source['articles'] for delegation in delegations]
+        annotate_central(results,source)
     summary=summarize(results)
     for result in results:result['source_batch']=number
     with SessionLocal() as db:
@@ -143,7 +146,7 @@ def publish(job_id,token):
             for batch in batches:
                 if batch.source.get('calculation_delegations')!=[last]:continue
                 stored=db.scalars(select(Result).where(Result.scenario_id==scenario.id,Result.sku.in_(batch.codes))).all()
-                payloads=[dict(row.payload) for row in stored];annotate_central(payloads,batch.source)
+                payloads=[deepcopy(row.payload) for row in stored];annotate_all_bases(payloads,batch.source)
                 for row,payload in zip(stored,payloads):row.payload=payload
                 db.flush()
             scenario.summary={**scenario.summary,

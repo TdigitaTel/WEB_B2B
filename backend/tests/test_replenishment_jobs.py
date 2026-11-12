@@ -250,3 +250,83 @@ def test_sequential_delegations_complete_all_batches_before_next_and_joint_cover
         assert status['result']['summary']['alerts']==sum(len(row.payload['recommendations']) for row in all_rows)
     assert rows[0]['central_total_requested']==pytest.approx(sum(row['final_quantity'] for row in rows))
     assert client.get(path+'/results/'+str(rows[0]['id'])).status_code==200
+
+
+def test_all_three_saved_bases_filter_delegation_summaries_sort_detail_and_excel(client,monkeypatch):
+    from datetime import date,timedelta
+    import io
+    from openpyxl import load_workbook
+    from app import replenishment_saved
+    setup_source(monkeypatch,['A','B'])
+    def read(*args):
+        raw=source(['A','B']);raw['end']='2026-04-30'
+        raw['sales']=[{'sku':sku,'delegation':delegation,'day':(date(2026,4,1)+timedelta(days=i)).isoformat(),'sold':value,'returned':0}
+            for sku,values in [('A',[1]*11+[2]*10+[20]*9),('B',[3]*30)]
+            for delegation in ('00','01','02','04','05') for i,value in enumerate(values)]
+        for stock in raw['stocks']:
+            if stock['delegation']!='00':stock['stock']=21
+        return raw
+    monkeypatch.setattr(worker,'read_replenishment_source',read)
+    body=request();body.update(all_consumption_bases=True,sequential_delegations=True)
+    body['filters']['date_to']='2026-04-30';body['temporary_parameters']['use_safety_stock']=False
+    queued=client.post(PREFIX+'/jobs',json=body).json();assert worker.process_one()
+    status=client.get(PREFIX+'/jobs/'+queued['id']).json();assert status['status']=='COMPLETED',status
+    assert status['result']['consumption_bases']==['MEAN','MEDIAN','MODE']
+    path=PREFIX+'/simulations/'+status['result']['id']
+    def forbidden(*args,**kwargs):raise AssertionError('Filtering must read stored calculations only')
+    monkeypatch.setattr(worker,'read_replenishment_source',forbidden)
+    monkeypatch.setattr(replenishment_saved,'rebased_planning_rows',forbidden)
+    for basis,quantity,count,first in [('MEAN',36,2,'A'),('MEDIAN',0,1,'B'),('MODE',0,1,'B')]:
+        params={'consumption_basis':basis,'delegation':'02','sort':'quantity','descending':True}
+        response=client.get(path+'/results',params=params);assert response.status_code==200,response.text
+        data=response.json();assert data['total']==2
+        assert data['summary']['to_replenish']==count
+        assert data['items'][0]['sku']==first
+        assert all(row['delegation']=='02' and row['consumption_basis']==basis for row in data['items'])
+        a=next(row for row in data['items'] if row['sku']=='A')
+        assert a['final_quantity']==quantity
+        assert 'consumption_variants' not in a
+        prepared=client.get(path+'/results',params={**params,'needed_only':True}).json()
+        assert prepared['total']==count and prepared['summary']['to_replenish']==count
+        detail=client.get(path+'/results/'+str(a['id']),params={'consumption_basis':basis})
+        assert detail.status_code==200,detail.text
+        assert detail.json()['daily_reference']==a['daily_reference']
+        assert detail.json()['parameters']['consumption_basis']==basis
+        exported=client.get(path+'/export.xlsx',params={**params,'mode':'expanded'})
+        assert exported.status_code==200,exported.text
+        cells=list(load_workbook(io.BytesIO(exported.content)).active.values);headers=cells[0]
+        assert len(cells)==3 and all(row[headers.index('Delegación')]=='02' for row in cells[1:])
+        assert {row[headers.index('Criterio de consumo')] for row in cells[1:]}=={dict(MEAN='Media',MEDIAN='Mediana',MODE='Moda')[basis]}
+        assert client.post(PREFIX+'/redistribution',json={'consumption_basis':basis}).status_code==200
+    assert client.get(path+'/results',params={'consumption_basis':'INVALID'}).status_code==422
+    # Manual updates retain the other saved views and update joint central coverage.
+    row=client.get(path+'/results',params={'delegation':'02','q':'A'}).json()['items'][0]
+    changed=client.post(path+'/results/'+str(row['id'])+'/adjustments',json={'quantity':5,'reason':'Cantidad revisada','expected_version':1})
+    assert changed.status_code==200,changed.text
+    for basis in ['MEAN','MEDIAN','MODE']:
+        revised=client.get(path+'/results',params={'delegation':'02','q':'A','consumption_basis':basis}).json()['items'][0]
+        assert revised['final_quantity']==5
+
+
+def test_sequential_variant_joint_coverage_persists_when_mean_is_unchanged(client,monkeypatch):
+    from datetime import date,timedelta
+    setup_source(monkeypatch,['SPARSE'])
+    def read(*args):
+        raw=source(['SPARSE']);raw['end']='2026-04-30'
+        raw['sales']=[{'sku':'SPARSE','delegation':delegation,'day':(date(2026,4,1)+timedelta(days=i)).isoformat(),'sold':30,'returned':0}
+            for delegation in ('00','01','02','04','05') for i in range(7)]
+        for stock in raw['stocks']:stock['stock']=1000 if stock['delegation']=='00' else 60
+        return raw
+    monkeypatch.setattr(worker,'read_replenishment_source',read)
+    body=request();body.update(all_consumption_bases=True,sequential_delegations=True)
+    body['filters']['date_to']='2026-04-30';body['temporary_parameters']['use_safety_stock']=False
+    queued=client.post(PREFIX+'/jobs',json=body).json();assert worker.process_one()
+    status=client.get(PREFIX+'/jobs/'+queued['id']).json();assert status['status']=='COMPLETED',status
+    path=PREFIX+'/simulations/'+status['result']['id']+'/results'
+    mean=client.get(path,params={'consumption_basis':'MEAN'}).json()['items']
+    assert all(row['final_quantity']==0 for row in mean)
+    for basis in ['MEDIAN','MODE']:
+        rows=client.get(path,params={'consumption_basis':basis}).json()['items']
+        assert len(rows)==4
+        assert all(row['final_quantity']==180 for row in rows)
+        assert all(row['central_total_requested']==720 for row in rows)

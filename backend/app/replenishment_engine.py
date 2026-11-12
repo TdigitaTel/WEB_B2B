@@ -379,3 +379,32 @@ def summarize(results):
         'without_movement':sum(row.get('no_consumption',row['gross_sales']==0) for row in results),'irregular':sum(row['irregular'] for row in results),
         'alerts':sum(len(row['recommendations']) for row in results),'target_stock':sum(row.get('target_stock',row['maximum_stock']) for row in results),
         'average_coverage_days':mean(coverage) if coverage else None}
+
+
+def selected_basis(row,basis=None):
+    """Select an already saved calculation, never calculate while filtering."""
+    if basis is None or row.get('consumption_basis','MEAN')==basis:
+        return {key:value for key,value in row.items() if key!='consumption_variants'}
+    return row.get('consumption_variants',{}).get(basis)
+
+
+def calculate_all_bases(source,delegations,policies,temporary):
+    calculations={}
+    for basis in BASIS_LABELS:
+        context=prepare_context(source,delegations,policies,{**temporary,'consumption_basis':basis})
+        rows=[calculate_article(article,delegation,context) for article in source['articles'] for delegation in delegations]
+        annotate_central(rows,source)
+        calculations[basis]=rows
+    primary=temporary.get('consumption_basis','MEAN')
+    return [{**row,'consumption_variants':{basis:calculations[basis][i] for basis in BASIS_LABELS if basis!=primary}}
+            for i,row in enumerate(calculations[primary])]
+
+
+def annotate_all_bases(rows,source):
+    for basis in BASIS_LABELS:
+        selected=[(row,selected_basis(row,basis)) for row in rows]
+        selected=[(row,view) for row,view in selected if view is not None]
+        annotate_central([view for _,view in selected],source)
+        for row,view in selected:
+            if row.get('consumption_basis','MEAN')==basis:row.update(view)
+            else:row['consumption_variants'][basis]=view

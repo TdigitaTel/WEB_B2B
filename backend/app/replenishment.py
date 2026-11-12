@@ -1,4 +1,5 @@
 """API de simulación de reposición. Nunca genera outbox ni escribe en EXIT."""
+from copy import deepcopy
 import hashlib
 import io
 import json
@@ -23,7 +24,7 @@ from .models import (AuditEvent, MaterialArea, MaterialFamily, MaterialSubfamily
     ReplenishmentPolicy as Policy, ReplenishmentScenario as Scenario, ReplenishmentResult as Result,
     ReplenishmentAdjustment as Adjustment, ReplenishmentSettings as ModuleSettings,
     ReplenishmentJob as Job, ReplenishmentBatch as Batch, User)
-from .replenishment_engine import Parameters, PRECEDENCE, prepare_context, calculate_article, annotate_central, summarize, rounded_dispatch, quantity_comparison, ConsumptionBasis
+from .replenishment_engine import Parameters, PRECEDENCE, prepare_context, calculate_article, annotate_central, summarize, rounded_dispatch, quantity_comparison, ConsumptionBasis, selected_basis, calculate_all_bases, annotate_all_bases
 from .replenishment_source import DELEGATIONS, MAX_ARTICLES, HARD_MAX_ARTICLES, read_replenishment_source
 
 operator=require_roles('ADMIN','OPERADOR_TIENDA')
@@ -62,6 +63,7 @@ class PolicyInput(BaseModel):
     active:bool=True
 
 class RunInput(BaseModel):
+    all_consumption_bases:bool=False
     sequential_delegations:bool=False
     filters:Filters=Field(default_factory=Filters)
     temporary_parameters:dict=Field(default_factory=dict)
@@ -104,7 +106,7 @@ def audit(db,user,action,entity,metadata):
 def scenario_payload(row):
     return {'id':row.public_id,'name':row.name,'saved':row.saved,'version':row.version,'created_at':row.created_at,
         'captured_at':row.source_snapshot['captured_at'],'extraction_started_at':row.source_snapshot.get('extraction_started_at'),'source_fingerprint':row.source_fingerprint,
-        'filters':row.filters,'temporary_parameters':row.temporary_parameters,'summary':row.summary,
+        'consumption_bases':row.source_snapshot.get('consumption_bases',[row.temporary_parameters.get('consumption_basis','MEAN')]),'filters':row.filters,'temporary_parameters':row.temporary_parameters,'summary':row.summary,
         'article_limit':row.source_snapshot.get('article_limit',5000),'source_articles':row.source_snapshot.get('source_articles',len(row.source_snapshot['articles'])),'read_only_exit':True,
         'source_notes':['Stock transferible Almeiras = stock físico − comprometido − reserva de consumo; no incluye entradas pendientes.',
             'Ventas: empresa 1. La vista de stock se usa con el alcance indicado, sin campo de empresa.',
@@ -259,6 +261,7 @@ def run_simulation(body:RunInput,db:Session=Depends(get_db),user:User=Depends(op
             raise HTTPException(503,'No se pudieron leer las fuentes EXIT indicadas. Revisa el registro de la API y la conexión') from exc
     if len(source['articles'])>1000:
         raise HTTPException(422,'Para más de 1.000 artículos utiliza el cálculo por bloques (/jobs).')
+    source={**source,'consumption_bases':(['MEAN','MEDIAN','MODE'] if body.all_consumption_bases else [body.temporary_parameters.get('consumption_basis','MEAN')])}
     snapshots=[]  # El cálculo simple usa exclusivamente los parámetros visibles enviados.
     fingerprint=hashlib.sha256(json.dumps(source,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
     scenario=Scenario(created_by=user.id,source_snapshot=source,source_fingerprint=fingerprint,filters=filters,
@@ -267,8 +270,11 @@ def run_simulation(body:RunInput,db:Session=Depends(get_db),user:User=Depends(op
     results=[]
     if not body.preview_only:
         try:
-            context=prepare_context(source,body.filters.delegations,snapshots,body.temporary_parameters)
-            results=[calculate_article(article,delegation,context) for article in source['articles'] for delegation in body.filters.delegations]
+            if body.all_consumption_bases:
+                results=calculate_all_bases(source,body.filters.delegations,snapshots,body.temporary_parameters)
+            else:
+                context=prepare_context(source,body.filters.delegations,snapshots,body.temporary_parameters)
+                results=[calculate_article(article,delegation,context) for article in source['articles'] for delegation in body.filters.delegations]
         except ValueError as exc:raise HTTPException(422,f'Parámetros incompatibles al resolver políticas: {exc}') from exc
         annotate_central(results,source);scenario.summary=summarize(results)
         db.add_all([Result(scenario_id=scenario.id,sku=row['sku'],delegation=row['delegation'],payload=row) for row in results])
@@ -279,6 +285,7 @@ def run_simulation(body:RunInput,db:Session=Depends(get_db),user:User=Depends(op
     db.commit();return scenario_payload(scenario)
 
 class ResultFilters(BaseModel):
+    consumption_basis:ConsumptionBasis|None=None
     delegation:Literal['01','02','04','05']|None=None
     q:str=Field(default='',max_length=200)
     alerts_only:bool=False
@@ -291,35 +298,44 @@ class ResultFilters(BaseModel):
     descending:bool=False
 
 
+def basis_expression(payload,basis=None):
+    if basis is None:return payload
+    variant=payload['consumption_variants'][basis]
+    return case((variant['consumption_basis'].as_string()==basis,variant),else_=payload)
+
+
 def filtered_results(scenario_id,filters):
+    payload=basis_expression(Result.payload,filters.consumption_basis)
     q=filters.q;alerts_only=filters.alerts_only;needed_only=filters.needed_only
     central_only=filters.central_only;overstock_only=filters.overstock_only;consumption=filters.consumption
     query=select(Result).where(Result.scenario_id==scenario_id)
+    if filters.consumption_basis:query=query.where(func.coalesce(payload['consumption_basis'].as_string(),'MEAN')==filters.consumption_basis)
     if filters.delegation:query=query.where(Result.delegation==filters.delegation)
     if q:
         query=query.where(or_(func.lower(Result.sku).contains(q.lower(),autoescape=True),
-            func.lower(Result.payload['description'].as_string()).contains(q.lower(),autoescape=True)))
-    if alerts_only:query=query.where(func.json_array_length(Result.payload['recommendations'])>0)
-    if needed_only:query=query.where(Result.payload['final_quantity'].as_float()>0)
-    if central_only:query=query.where(Result.payload['central_can_supply'].as_boolean().is_(True))
-    if overstock_only:query=query.where(Result.payload['overstock'].as_boolean().is_(True))
+            func.lower(payload['description'].as_string()).contains(q.lower(),autoescape=True)))
+    if alerts_only:query=query.where(func.json_array_length(payload['recommendations'])>0)
+    if needed_only:query=query.where(payload['final_quantity'].as_float()>0)
+    if central_only:query=query.where(payload['central_can_supply'].as_boolean().is_(True))
+    if overstock_only:query=query.where(payload['overstock'].as_boolean().is_(True))
     if filters.minimum_monthly_consumption>0:
-        monthly=func.coalesce(Result.payload['monthly_mean'].as_float(),Result.payload['daily_mean'].as_float()*30)
+        monthly=func.coalesce(payload['monthly_mean'].as_float(),payload['daily_mean'].as_float()*30)
         query=query.where(monthly>=filters.minimum_monthly_consumption)
-    if consumption=='WITHOUT':query=query.where(Result.payload['total_demand'].as_float()<=0)
-    if consumption=='WITH':query=query.where(Result.payload['total_demand'].as_float()>0)
+    if consumption=='WITHOUT':query=query.where(payload['total_demand'].as_float()<=0)
+    if consumption=='WITH':query=query.where(payload['total_demand'].as_float()>0)
     return query
 
 
-def ordered_results(query,sort,descending):
-    order={'sku':Result.sku,'quantity':Result.payload['final_quantity'].as_float(),
-        'coverage':Result.payload['coverage_days'].as_float(),'alerts':func.json_array_length(Result.payload['recommendations'])}[sort]
+def ordered_results(query,sort,descending,basis=None):
+    payload=basis_expression(Result.payload,basis)
+    order={'sku':Result.sku,'quantity':payload['final_quantity'].as_float(),
+        'coverage':payload['coverage_days'].as_float(),'alerts':func.json_array_length(payload['recommendations'])}[sort]
     return query.order_by(order.desc() if descending else order.asc(),Result.sku,Result.delegation)
 
 
-def result_summary(db,query,full=False):
+def result_summary(db,query,full=False,basis=None):
     data=query.subquery()
-    payload=data.c.payload
+    payload=basis_expression(data.c.payload,basis)
     count_if=lambda condition:func.coalesce(func.sum(case((condition,1),else_=0)),0)
     columns=[func.count().label('article_delegations'),func.count(func.distinct(data.c.sku)).label('articles_analyzed'),
         count_if(payload['final_quantity'].as_float()>0).label('to_replenish'),
@@ -351,9 +367,9 @@ def results(scenario_id:str,filters:ResultFilters=Depends(),page:int=Query(1,ge=
         page_size:int=Query(50,ge=1,le=100),db:Session=Depends(get_db)):
     scenario=result_scenario(db,scenario_id)
     query=filtered_results(scenario.id,filters)
-    summary=result_summary(db,query)
-    rows=db.scalars(ordered_results(query,filters.sort,filters.descending).offset((page-1)*page_size).limit(page_size)).all()
-    return {'items':[{'id':row.id,**quantity_comparison(row.payload)} for row in rows],'total':summary['article_delegations'],
+    summary=result_summary(db,query,basis=filters.consumption_basis)
+    rows=db.scalars(ordered_results(query,filters.sort,filters.descending,filters.consumption_basis).offset((page-1)*page_size).limit(page_size)).all()
+    return {'items':[{'id':row.id,**quantity_comparison(selected_basis(row.payload,filters.consumption_basis))} for row in rows],'total':summary['article_delegations'],
         'summary':summary,'page':page,'version':scenario.version}
 
 
@@ -373,12 +389,14 @@ def article_context(scenario,result,db):
     return article,context
 
 @router.get('/simulations/{scenario_id}/results/{result_id}')
-def detail(scenario_id:str,result_id:int,db:Session=Depends(get_db)):
+def detail(scenario_id:str,result_id:int,consumption_basis:ConsumptionBasis|None=None,db:Session=Depends(get_db)):
     scenario=scenario_or_404(db,scenario_id);row=result_or_404(db,scenario,result_id)
     article,context=article_context(scenario,row,db)
-    calculated=calculate_article(article,row.delegation,context,row.payload.get('manual_parameters'),True)
+    view=selected_basis(row.payload,consumption_basis)
+    if view is None:raise HTTPException(409,'Este cálculo no incluye el criterio solicitado. Genera un cálculo nuevo.')
+    calculated=calculate_article(article,row.delegation,context,{**view.get('manual_parameters',{}),'consumption_basis':view.get('consumption_basis','MEAN')},True)
     history=db.scalars(select(Adjustment).where(Adjustment.result_id==row.id).order_by(Adjustment.created_at)).all()
-    return {'id':row.id,**quantity_comparison(row.payload),**{key:calculated[key] for key in ('daily_mean','daily_reference','consumption_basis','daily_sales','daily_median','daily_median_frequency','daily_median_dates','daily_mode_occurrences','daily_modes','daily_mode_frequency','positive_consumption_days','weekly_sales')},'scenario_version':scenario.version,
+    return {'id':row.id,**quantity_comparison(view),**{key:calculated[key] for key in ('daily_mean','daily_reference','consumption_basis','daily_sales','daily_median','daily_median_frequency','daily_median_dates','daily_mode_occurrences','daily_modes','daily_mode_frequency','positive_consumption_days','weekly_sales')},'scenario_version':scenario.version,
         'adjustments':[{'created_at':event.created_at,'user_id':event.user_id,'reason':event.reason,'changes':event.changes} for event in history]}
 
 @router.post('/simulations/{scenario_id}/results/{result_id}/recalculate')
@@ -388,7 +406,8 @@ def recalculate(scenario_id:str,result_id:int,body:RecalculateInput,db:Session=D
     article,context=article_context(scenario,row,db)
     try:result=calculate_article(article,row.delegation,context,{**row.payload.get('manual_parameters',{}),**body.parameters},True)
     except ValueError as exc:raise HTTPException(422,str(exc)) from exc
-    other=[dict(item.payload) for item in db.scalars(select(Result).where(Result.scenario_id==scenario.id,Result.sku==row.sku,Result.id!=row.id)).all()]
+    other=[selected_basis(item.payload,result['consumption_basis']) for item in db.scalars(select(Result).where(Result.scenario_id==scenario.id,Result.sku==row.sku,Result.id!=row.id)).all()]
+    other=[item for item in other if item is not None]
     annotate_central([*other,result],context['source'])
     return result
 
@@ -411,9 +430,18 @@ def adjust(scenario_id:str,result_id:int,body:AdjustmentInput,db:Session=Depends
     updated['adjusted_quantity']=0 if body.excluded else body.quantity
     updated['final_quantity']=updated['recommended_quantity'] if updated['adjusted_quantity'] is None else updated['adjusted_quantity']
     updated['manually_excluded']=body.excluded;updated['calculated_quantity']=previous['calculated_quantity']
+    if previous.get('consumption_variants'):
+        variants={}
+        for basis in ('MEAN','MEDIAN','MODE'):
+            if basis==updated['consumption_basis']:continue
+            variant=calculate_article(article,row.delegation,context,{**patch,'consumption_basis':basis})
+            variant.update(manual_parameters={**patch,'consumption_basis':basis},adjusted_quantity=updated['adjusted_quantity'],manually_excluded=body.excluded)
+            if variant['adjusted_quantity'] is not None:variant['final_quantity']=variant['adjusted_quantity']
+            variants[basis]=variant
+        updated['consumption_variants']=variants
     row.payload=updated
     all_rows=db.scalars(select(Result).where(Result.scenario_id==scenario.id,Result.sku==row.sku)).all()
-    payloads=[dict(item.payload) for item in all_rows];annotate_central(payloads,context['source'])
+    payloads=[deepcopy(item.payload) for item in all_rows];annotate_all_bases(payloads,context['source'])
     for item,payload in zip(all_rows,payloads):item.payload=payload
     db.flush()
     scenario.summary=result_summary(db,filtered_results(scenario.id,ResultFilters()),full=True);scenario.version+=1
@@ -424,7 +452,7 @@ def adjust(scenario_id:str,result_id:int,body:AdjustmentInput,db:Session=Depends
 @router.get('/simulations/{scenario_id}/export.xlsx')
 def export(scenario_id:str,filters:ResultFilters=Depends(),db:Session=Depends(get_db),mode:Literal["simple","expanded"]="simple"):
     scenario=result_scenario(db,scenario_id)
-    query=ordered_results(filtered_results(scenario.id,filters),filters.sort,filters.descending)
+    query=ordered_results(filtered_results(scenario.id,filters),filters.sort,filters.descending,filters.consumption_basis)
     rows=db.scalars(query.execution_options(yield_per=500))
     book=Workbook(write_only=True);sheet=book.create_sheet('Reposición')
     sheet.freeze_panes='A2'
@@ -452,7 +480,8 @@ def export(scenario_id:str,filters:ResultFilters=Depends(),db:Session=Depends(ge
     append(sheet,[label for _,label in fields]+extra)
     count=0
     for result in rows:
-        row={**quantity_comparison(result.payload),'monthly_mean':result.payload.get('monthly_mean',result.payload['daily_mean']*30)}
+        view=selected_basis(result.payload,filters.consumption_basis)
+        row={**quantity_comparison(view),'monthly_mean':view.get('monthly_mean',view['daily_mean']*30)}
         row['consumption_basis_label']={'MEAN':'Media','MEDIAN':'Mediana','MODE':'Moda'}.get(row.get('consumption_basis','MEAN'),'Media')
         row['daily_reference']=row.get('daily_reference',row['daily_mean'])
         if row.get('excess_stock') is not None:

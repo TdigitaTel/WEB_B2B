@@ -186,11 +186,16 @@ def calculate_redistribution(db,consumption_basis='MEAN'):
         scenario=scenarios[pointer.scenario_id]
         # Read only the planning fields, not monthly history/recommendations for
         # tens of thousands of materials. The source snapshots remain untouched.
+        from .replenishment import basis_expression
+        payload=basis_expression(Result.payload,consumption_basis)
         columns=[Result.sku,Result.delegation]
-        columns += [Result.payload[key].as_string().label(key) for key in ('description','unit_type')]
-        columns += [Result.payload[key].as_float().label(key) for key in ('stock','incoming','outgoing','maximum_stock','inventory_position','final_quantity','daily_mean','effective_multiple')]
-        columns += [Result.payload['statistic_available'].as_boolean().label('statistic_available')]
-        if consumption_basis!='MEAN' or scenario.temporary_parameters.get('consumption_basis','MEAN')!='MEAN':
+        columns += [payload[key].as_string().label(key) for key in ('description','unit_type')]
+        columns += [payload[key].as_float().label(key) for key in ('stock','incoming','outgoing','maximum_stock','inventory_position','final_quantity','daily_mean','effective_multiple')]
+        columns += [payload['statistic_available'].as_boolean().label('statistic_available')]
+        if consumption_basis in scenario.source_snapshot.get('consumption_bases',[]) and len(scenario.source_snapshot.get('consumption_bases',[]))>1:
+            columns=[column for column in columns if getattr(column,'name',None)!='daily_mean']+[payload['daily_reference'].as_float().label('daily_mean')]
+            rows.extend(dict(row) for row in db.execute(select(*columns).where(Result.scenario_id==scenario.id,Result.delegation==code)).mappings())
+        elif consumption_basis!='MEAN' or scenario.temporary_parameters.get('consumption_basis','MEAN')!='MEAN':
             rows.extend(rebased_planning_rows(db,scenario,code,consumption_basis))
         else:
             rows.extend(dict(row) for row in db.execute(select(*columns).where(Result.scenario_id==scenario.id,Result.delegation==code)).mappings())
