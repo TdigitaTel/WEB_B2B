@@ -222,3 +222,31 @@ def test_article_enumeration_is_bounded_parameterized_and_has_no_sales_reads(mon
     assert calls[0][1]==("A'",) and "A'" not in calls[0][0]
     assert 'TOP 20001' in calls[0][0] and 'Albaran' not in calls[0][0] and 'Stock' not in calls[0][0]
     with pytest.raises(ValueError):source_module.list_replenishment_codes(None,1)
+
+
+def test_sequential_delegations_complete_all_batches_before_next_and_joint_coverage(client,monkeypatch):
+    codes=[f'SEQ-{i:04}' for i in range(1001)]
+    setup_source(monkeypatch,codes)
+    order=[];original=worker.calculate_article
+    def capture(article,delegation,context):
+        order.append(delegation);return original(article,delegation,context)
+    monkeypatch.setattr(worker,'calculate_article',capture)
+    body=request();body['filters']['delegations']=['01','02'];body['sequential_delegations']=True
+    queued=client.post(PREFIX+'/jobs',json=body)
+    assert queued.status_code==202,queued.text
+    assert worker.process_one()
+    status=client.get(PREFIX+'/jobs/'+queued.json()['id']).json()
+    assert status['status']=='COMPLETED',status
+    assert order==['01']*1001+['02']*1001
+    assert status['total_batches']==status['completed_batches']==4
+    assert status['total_articles']==status['processed_articles']==2002
+    assert status['result']['source_articles']==1001
+    assert status['result']['summary']['articles_analyzed']==1001
+    path=PREFIX+'/simulations/'+status['result']['id']
+    rows=client.get(path+'/results',params={'q':codes[0]}).json()['items']
+    assert len(rows)==2
+    with SessionLocal() as db:
+        all_rows=list(db.scalars(select(Result).where(Result.scenario_id==db.scalar(select(Scenario.id).where(Scenario.public_id==status['result']['id'])))))
+        assert status['result']['summary']['alerts']==sum(len(row.payload['recommendations']) for row in all_rows)
+    assert rows[0]['central_total_requested']==pytest.approx(sum(row['final_quantity'] for row in rows))
+    assert client.get(path+'/results/'+str(rows[0]['id'])).status_code==200

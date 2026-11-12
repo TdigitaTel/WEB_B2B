@@ -8,7 +8,11 @@ from statistics import NormalDist, mean, median, pstdev
 from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
+ConsumptionBasis=Literal['MEAN','MEDIAN','MODE']
+BASIS_LABELS={'MEAN':'Media','MEDIAN':'Mediana','MODE':'Moda'}
+
 class Parameters(BaseModel):
+    consumption_basis: ConsumptionBasis = 'MEAN'
     target_mode: Literal['POINT','MAXIMUM'] = 'POINT'
     maximum_days: int | None = Field(None,ge=1,le=1095)
     central_reserve_days: int = Field(7,ge=1,le=365)
@@ -81,10 +85,21 @@ def demand_statistics(article,delegation,source,parameters,sales_index,include_d
     sales_days=sum(value>0 for value in values)
     adi=days/sales_days if sales_days else None
     irregular=bool(sales_days and (adi>1.32 or (average>0 and deviation/average>1)))
-    return {'days':days,'start':start.isoformat(),'end':end.isoformat(),'daily':daily,'demand_values':values,'gross_sales':gross,
+    positive=[value for value in values if value>0]
+    frequencies=Counter(positive);frequency=max(frequencies.values(),default=0)
+    modes=sorted(value for value,count in frequencies.items() if count==frequency) if frequency>1 else []
+    return {'daily_median':median(positive) if positive else None,'daily_modes':modes,'positive_consumption_days':len(positive),
+            'days':days,'start':start.isoformat(),'end':end.isoformat(),'daily':daily,'demand_values':values,'gross_sales':gross,
             'returns':returned,'total_demand':sum(values),'daily_mean':average,'monthly_mean':monthly_mean,'monthly_consumption':monthly,'daily_std':deviation,
             'sales_days':sales_days,'last_sale':last_sale,'irregular':irregular,'anomalous_return_days':anomalous,
             'new_article':bool(created and (end-created).days<30),'created_in_future':bool(created and created>end)}
+
+def consumption_reference(stats,parameters):
+    basis=parameters.get('consumption_basis','MEAN')
+    if basis=='MEAN':return stats['daily_mean'],True
+    if not stats['positive_consumption_days']:return 0,True
+    if basis=='MEDIAN':return stats['daily_median'],True
+    return (max(stats['daily_modes']),True) if stats['daily_modes'] else (0,False)
 
 def prepare_context(source,delegations,policies,temporary=None):
     sales_index={}
@@ -133,13 +148,14 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
     if override:
         parameters=Parameters.model_validate({**parameters,**override}).model_dump();rules=[*rules,'Ajuste del artículo'];origins={**origins,**{key:'Ajuste del artículo' for key in override}}
     stats=demand_statistics(article,delegation,context['source'],parameters,context['sales_index'],include_daily) if override or include_daily else context['stats'][key]
-    avg,std=stats['daily_mean'],stats['daily_std'];horizon=parameters['review_days']+parameters['lead_days']
+    avg,statistic_available=consumption_reference(stats,parameters)
+    std=stats['daily_std'];horizon=parameters['review_days']+parameters['lead_days']
     z=NormalDist().inv_cdf(parameters['service_level']/100)
     safety=z*std*sqrt(parameters['lead_days']) if parameters['use_safety_stock'] else 0;minimum=avg*parameters['lead_days']+safety;maximum=avg*horizon+safety
     method='REVISION_PERIODICA';confidence='ALTA' if stats['sales_days']>=30 and not stats['irregular'] else 'MEDIA'
     recs=[];comparable=None
     sparse=stats['sales_days']<5 or stats['new_article']
-    if sparse and not parameters["simple_formula"]:
+    if sparse and not parameters["simple_formula"] and parameters["consumption_basis"]=="MEAN":
         safety=minimum=maximum=0;confidence='BAJA';method='REVISION_MANUAL'
         policy=parameters['new_policy'] if stats['new_article'] else parameters['no_sales_policy']
         if policy!='NO_REPLENISH':
@@ -151,7 +167,7 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
                     method='MINIMO_ORIENTATIVO_COMPARABLES';break
         recs.append(recommendation('HISTORICO_INSUFICIENTE','Histórico insuficiente: revisar la propuesta orientativa; no representa ventas reales del artículo.',
             {'days':stats['days'],'sales_days':stats['sales_days'],'comparables':comparable},'new_policy' if stats['new_article'] else 'no_sales_policy',policy))
-    elif stats['irregular'] and not parameters['simple_formula'] and parameters['use_safety_stock']:
+    elif stats['irregular'] and not parameters['simple_formula'] and parameters['use_safety_stock'] and parameters['consumption_basis']=='MEAN':
         # Percentil empírico de demanda en ventanas completas del horizonte.
         values=stats['demand_values'];sums=[]
         if len(values)>=horizon:
@@ -202,11 +218,16 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
         quantity=0
         recs.append(recommendation('SIN_CONSUMO_EXCLUIDO','Sin consumo neto en el periodo: se ha excluido de la reposición por la opción seleccionada.',{'total_demand':stats['total_demand']}))
     if not parameters['enabled'] or stats['created_in_future'] or (sparse and (parameters['new_policy'] if stats['new_article'] else parameters['no_sales_policy'])=='NO_REPLENISH'):quantity=0
+    if not statistic_available:
+        quantity=0
+        recs.append(recommendation('SIN_MODA','No hay un consumo positivo repetido: no se propone reposición ni redistribución con moda. Revisa el material o elige otro criterio.',{'positive_days':stats['positive_consumption_days']}))
+    elif parameters['consumption_basis']=='MODE' and len(stats['daily_modes'])>1:
+        recs.append(recommendation('MODA_MULTIPLE','Hay varias modas; se utiliza la mayor para el cálculo.',{'modes':stats['daily_modes'],'selected':avg}))
     if quantity>0 and position is not None and position+quantity>target+1e-8:
         recs.append(recommendation('REDONDEO_SOBRE_MAXIMO','El múltiplo o la cantidad mínima elevan el inventario por encima del objetivo elegido.',
             {'quantity':quantity,'position_after':position+quantity,'target':target,'effective_multiple':dispatch_multiple},'multiple_mode',parameters['multiple_mode']))
-    overstock=bool(position is not None and position>maximum+1e-8)
-    excess=max(0,position-maximum) if position is not None else 0
+    overstock=bool(statistic_available and position is not None and position>maximum+1e-8)
+    excess=max(0,position-maximum) if statistic_available and position is not None else 0
     coverage=position/avg if position is not None and avg>0 else None
     if coverage is not None and coverage>max(90,3*horizon):
         recs.append(recommendation('EXCESO_STOCK',f'El inventario equivale a {coverage:.1f} días de demanda observada.',
@@ -237,7 +258,7 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
             {'quantity':quantity,'position':position,'minimum':minimum,'horizon_demand':avg*horizon}))
     result={**article,'delegation':delegation,'stock':stock['stock'] if stock else None,'incoming':stock['incoming'] if stock else None,
         'outgoing':stock['outgoing'] if stock else None,'inventory_position':position,'gross_sales':stats['gross_sales'],
-        'returns':stats['returns'],'total_demand':stats['total_demand'],'daily_mean':avg,'monthly_mean':stats['monthly_mean'],'monthly_consumption':stats['monthly_consumption'],'daily_std':std,'sales_days':stats['sales_days'],
+        'returns':stats['returns'],'total_demand':stats['total_demand'],'daily_mean':stats['daily_mean'],'daily_reference':avg,'consumption_basis':parameters['consumption_basis'],'statistic_available':statistic_available,'daily_median':stats['daily_median'],'daily_modes':stats['daily_modes'],'positive_consumption_days':stats['positive_consumption_days'],'monthly_mean':stats['monthly_mean'],'monthly_consumption':stats['monthly_consumption'],'daily_std':std,'sales_days':stats['sales_days'],
         'last_sale':stats['last_sale'],'observed_days':stats['days'],'irregular':stats['irregular'],'new_article':stats['new_article'],
         'overstock':overstock,'excess_stock':excess,'no_consumption':stats['total_demand']<=0,'target_mode':parameters['target_mode'],
         'calculation_model':'MAXIMUM_COVERAGE' if parameters['target_mode']=='MAXIMUM' else 'MINIMUM_PLUS_CYCLE_DEMAND','replenishment_point':replenishment_point,'target_stock':target,'expected_cycle_consumption':expected_consumption,'safety_stock':safety,'minimum_stock':minimum,'maximum_stock':maximum,'calculated_quantity':calculated,
@@ -247,7 +268,7 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
         'calculation':{'horizon':horizon,'z':z,'formula':('Stock máximo = stock mínimo + consumo diario × días de cobertura máxima' if parameters['target_mode']=='MAXIMUM' else 'Punto de reposición = stock mínimo + consumo diario × días hasta próxima reposición') + '; cantidad = max(0, objetivo − disponible previsto).',
             'safety_formula':'Sin stock de seguridad (opción seleccionada)' if not parameters['use_safety_stock'] else 'Z × desviación diaria × sqrt(plazo de llegada)' if method=='REVISION_PERIODICA' else 'Modelo alternativo explicado en método y recomendaciones',
             'maximum_formula':'stock mínimo + consumo diario × días de cobertura máxima', 'minimum_formula':'consumo diario × plazo de llegada + stock de seguridad' if parameters['use_safety_stock'] else 'consumo diario × plazo de llegada', 'dispatch_days':parameters['review_days'],'lead_days':parameters['lead_days'],'raw_maximum':raw_maximum,'window_start':stats['start'],'window_end':stats['end']}}
-    result['comparison_eligible']=bool(parameters['enabled'] and not stats['created_in_future'] and not (parameters['exclude_no_consumption'] and stats['total_demand']<=0) and not (sparse and (parameters['new_policy'] if stats['new_article'] else parameters['no_sales_policy'])=='NO_REPLENISH'))
+    result['comparison_eligible']=bool(statistic_available and parameters['enabled'] and not stats['created_in_future'] and not (parameters['exclude_no_consumption'] and stats['total_demand']<=0) and not (sparse and (parameters['new_policy'] if stats['new_article'] else parameters['no_sales_policy'])=='NO_REPLENISH'))
     result=quantity_comparison(result)
     if include_daily:
         # Median/modes describe active consumption days only. Sigma and the
@@ -310,20 +331,21 @@ def annotate_central(results,source):
     for sku,rows in groups.items():
         stock=central.get(sku);total=sum(row['final_quantity'] for row in rows)
         comparison_totals={key:(sum(row[key] for row in rows) if all(row[key] is not None for row in rows) else None) for key in ('quantity_without_multiple','quantity_with_exit_multiple')}
-        stats_cache={};reserve=0;central_avg=0;reserve_days=0;central_std=0
+        stats_cache={};reserve=0;central_avg=0;central_observed_avg=0;reserve_days=0;central_std=0
         for row in rows:
             params=Parameters.model_validate(row['parameters']).model_dump()
             history=params['history_days']
             if history not in stats_cache:
                 stats_cache[history]=demand_statistics(articles[sku],'00',source,params,sales_index)
-            stats=stats_cache[history];avg=stats['daily_mean'];std=stats['daily_std']
+            stats=stats_cache[history];central_observed_avg=max(central_observed_avg,stats['daily_mean']);avg,available_statistic=consumption_reference(stats,params);std=stats['daily_std']
+            if not available_statistic:stats['basis_unavailable']=True
             risk=params['lead_days']+params['central_reserve_days']
             safety=NormalDist().inv_cdf(params['service_level']/100)*std*sqrt(params['lead_days']) if params['use_safety_stock'] else 0
             required=avg*(params['lead_days']+params['central_reserve_days'])+safety
             reserve=max(reserve,required);central_avg=max(central_avg,avg);central_std=max(central_std,std)
             reserve_days=max(reserve_days,params['central_reserve_days'])
         valid_stock=stock is not None and stock['stock']>=0 and stock['outgoing']>=0 and stock['incoming']>=0
-        valid_history=central_sales_known and not any(stats['created_in_future'] for stats in stats_cache.values())
+        valid_history=central_sales_known and not any(stats['created_in_future'] or stats.get('basis_unavailable') for stats in stats_cache.values())
         # PendienteRecibir se muestra, pero no se promete como stock físico transferible.
         physical=max(0,stock['stock']-stock['outgoing']) if valid_stock else None
         available=max(0,physical-reserve) if physical is not None and valid_history else None
@@ -333,8 +355,8 @@ def annotate_central(results,source):
             row.update(central_stock=stock['stock'] if stock else None,central_incoming=stock['incoming'] if stock else None,
                 central_outgoing=stock['outgoing'] if stock else None,
                 central_position=stock['stock']+stock['incoming']-stock['outgoing'] if stock else None,
-                central_physical_available=physical,central_monthly_consumption=central_avg*30 if valid_history else None,
-                central_daily_mean=central_avg if valid_history else None,central_daily_std=central_std if valid_history else None,
+                central_physical_available=physical,central_monthly_consumption=central_observed_avg*30 if valid_history else None,
+                central_daily_mean=central_observed_avg if valid_history else None,central_daily_reference=central_avg if valid_history else None,central_daily_std=central_std if valid_history else None,
                 central_reserve=reserve if valid_history else None,central_reserve_days=reserve_days,
                 central_available=available,central_total_requested=total,central_can_supply=covered and row['final_quantity']>0,
                 central_shortage=max(0,total-available) if available is not None else None)
@@ -350,7 +372,7 @@ def annotate_central(results,source):
                      'central_reserve':row['central_reserve'],'central_monthly_consumption':row['central_monthly_consumption']}))
 
 def summarize(results):
-    coverage=[row.get('target_stock',row['maximum_stock'])/row['daily_mean'] for row in results if row['daily_mean']>0]
+    coverage=[row.get('target_stock',row['maximum_stock'])/row.get('daily_reference',row['daily_mean']) for row in results if row.get('daily_reference',row['daily_mean'])>0]
     return {'articles_analyzed':len({row['sku'] for row in results}),'article_delegations':len(results),
         'to_replenish':sum(row['final_quantity']>0 for row in results),'units_proposed':sum(row['final_quantity'] for row in results),
         'overstock':sum(row.get('overstock',False) for row in results),'central_covered':sum(row.get('central_can_supply',False) for row in results),

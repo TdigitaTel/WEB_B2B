@@ -26,6 +26,7 @@ jobs:
       - run: npm run test:catalog-filters
       - run: npm run test:login-image
       - run: npm run test:replenishment-tabs
+      - run: npm run test:replenishment-safety
       - run: npm run test:replenishment-saved
       - run: npm run test:replenishment-quantities
       - run: npm run test:replenishment-history
