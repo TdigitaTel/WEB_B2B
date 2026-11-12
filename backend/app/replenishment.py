@@ -6,6 +6,7 @@ import json
 import logging
 import math
 from datetime import date, datetime
+from types import SimpleNamespace
 from typing import Literal
 from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -24,7 +25,7 @@ from .models import (AuditEvent, MaterialArea, MaterialFamily, MaterialSubfamily
     ReplenishmentPolicy as Policy, ReplenishmentScenario as Scenario, ReplenishmentResult as Result,
     ReplenishmentAdjustment as Adjustment, ReplenishmentSettings as ModuleSettings,
     ReplenishmentJob as Job, ReplenishmentBatch as Batch, User)
-from .replenishment_engine import Parameters, PRECEDENCE, prepare_context, calculate_article, annotate_central, summarize, rounded_dispatch, quantity_comparison, ConsumptionBasis, selected_basis, calculate_all_bases, annotate_all_bases, consumption_analysis_label
+from .replenishment_engine import Parameters, PRECEDENCE, prepare_context, calculate_article, annotate_central, summarize, rounded_dispatch, quantity_comparison, ConsumptionBasis, selected_basis, calculate_all_bases, annotate_all_bases, consumption_analysis_label, demand_statistics, history_statistics
 from .replenishment_source import DELEGATIONS, MAX_ARTICLES, HARD_MAX_ARTICLES, read_replenishment_source
 
 operator=require_roles('ADMIN','OPERADOR_TIENDA')
@@ -112,6 +113,23 @@ def scenario_payload(row):
             'Ventas: empresa 1. La vista de stock se usa con el alcance indicado, sin campo de empresa.',
             'Ventas del periodo elegido y stock consultado en la extracción; no se reconstruye stock histórico.',
             'El vínculo cabecera/líneas usa número, ejercicio y empresa según el esquema facilitado.']}
+
+def scenario_metadata(db,scenario_id):
+    """Metadata only: never fetch the full EXIT snapshot to restore a saved screen."""
+    fields=('public_id','name','saved','version','created_at','source_fingerprint','filters','temporary_parameters','summary')
+    source=Scenario.source_snapshot
+    row=db.execute(select(*(getattr(Scenario,key) for key in fields),
+        source['captured_at'].as_string().label('captured_at'),
+        source['extraction_started_at'].as_string().label('extraction_started_at'),
+        source['consumption_bases'].label('consumption_bases'),
+        source['article_limit'].as_integer().label('article_limit'),
+        func.coalesce(source['source_articles'].as_integer(),func.json_array_length(source['articles'])).label('source_articles'))
+        .where(Scenario.id==scenario_id)).mappings().one_or_none()
+    if row is None:return None
+    snapshot={key:row[key] for key in ('captured_at','extraction_started_at','consumption_bases','article_limit','source_articles') if row[key] is not None}
+    snapshot['articles']=[]
+    return scenario_payload(SimpleNamespace(**{key:row[key] for key in fields},source_snapshot=snapshot))
+
 
 class SettingsInput(BaseModel):
     article_limit:int=Field(ge=1,le=HARD_MAX_ARTICLES)
@@ -207,7 +225,7 @@ def enrich_source(db,source):
     return source
 
 def job_payload(db,row):
-    result=scenario_payload(db.get(Scenario,row.scenario_id)) if row.status=='COMPLETED' else None
+    result=scenario_metadata(db,row.scenario_id) if row.status=='COMPLETED' else None
     progress=100 if row.status=='COMPLETED' else min(99,int(row.processed_articles*100/max(1,row.total_articles)))
     return {'id':row.public_id,'status':row.status,'phase':row.phase,'progress':progress,
         'total_articles':row.total_articles,'processed_articles':row.processed_articles,
@@ -235,8 +253,8 @@ def enqueue(body:RunInput,db:Session=Depends(get_db),user:User=Depends(operator)
 def current_job(db:Session=Depends(get_db),user:User=Depends(operator)):
     latest=db.scalar(select(Job).where(Job.created_by==user.id).order_by(Job.id.desc()).limit(1))
     completed=db.scalar(select(Job).where(Job.created_by==user.id,Job.status=='COMPLETED').order_by(Job.id.desc()).limit(1))
-    return {'job':job_payload(db,latest) if latest else None,
-        'latest_result':scenario_payload(db.get(Scenario,completed.scenario_id)) if completed else None}
+    job=job_payload(db,latest) if latest else None
+    return {'job':job,'latest_result':(job['result'] if latest and latest.id==completed.id else scenario_metadata(db,completed.scenario_id)) if completed else None}
 
 @router.get('/jobs/{job_id}')
 def read_job(job_id:str,db:Session=Depends(get_db),user:User=Depends(operator)):
@@ -304,8 +322,12 @@ def basis_expression(payload,basis=None):
     return case((variant['consumption_basis'].as_string()==basis,variant),else_=payload)
 
 
+def filter_payload():
+    return func.coalesce(Result.filter_data,Result.payload)
+
+
 def filtered_results(scenario_id,filters):
-    payload=basis_expression(Result.payload,filters.consumption_basis)
+    payload=basis_expression(filter_payload(),filters.consumption_basis)
     q=filters.q;alerts_only=filters.alerts_only;needed_only=filters.needed_only
     central_only=filters.central_only;overstock_only=filters.overstock_only;consumption=filters.consumption
     query=select(Result).where(Result.scenario_id==scenario_id)
@@ -327,15 +349,16 @@ def filtered_results(scenario_id,filters):
 
 
 def ordered_results(query,sort,descending,basis=None):
-    payload=basis_expression(Result.payload,basis)
+    payload=basis_expression(filter_payload(),basis)
     order={'sku':Result.sku,'quantity':payload['final_quantity'].as_float(),
         'coverage':payload['coverage_days'].as_float(),'alerts':func.json_array_length(payload['recommendations'])}[sort]
     return query.order_by(order.desc() if descending else order.asc(),Result.sku,Result.delegation)
 
 
 def result_summary(db,query,full=False,basis=None):
-    data=query.subquery()
-    payload=basis_expression(data.c.payload,basis)
+    # Do not project the full historical payload into the aggregate subquery.
+    data=query.with_only_columns(Result.sku,filter_payload().label("filter_data")).subquery()
+    payload=basis_expression(data.c.filter_data,basis)
     count_if=lambda condition:func.coalesce(func.sum(case((condition,1),else_=0)),0)
     columns=[func.count().label('article_delegations'),func.count(func.distinct(data.c.sku)).label('articles_analyzed'),
         count_if(payload['final_quantity'].as_float()>0).label('to_replenish'),
@@ -391,10 +414,20 @@ def article_context(scenario,result,db):
 @router.get('/simulations/{scenario_id}/results/{result_id}')
 def detail(scenario_id:str,result_id:int,consumption_basis:ConsumptionBasis|None=None,db:Session=Depends(get_db)):
     scenario=scenario_or_404(db,scenario_id);row=result_or_404(db,scenario,result_id)
-    article,context=article_context(scenario,row,db)
     view=selected_basis(row.payload,consumption_basis)
     if view is None:raise HTTPException(409,'Este cálculo no incluye el criterio solicitado. Genera un cálculo nuevo.')
-    calculated=calculate_article(article,row.delegation,context,{**view.get('manual_parameters',{}),'consumption_basis':view.get('consumption_basis','MEAN')},True)
+    source=source_for_result(db,scenario,row)
+    article=next((item for item in source['articles'] if item['sku']==row.sku),None)
+    if not article:raise HTTPException(404,'Artículo ausente en la instantánea')
+    sales_index={}
+    for item in source['sales']:
+        if item['sku']!=row.sku or item['delegation']!=row.delegation:continue
+        key=(row.sku,row.delegation,item['day']);old=sales_index.get(key,(0,0))
+        sales_index[key]=(old[0]+item['sold'],old[1]+item['returned'])
+    stats=demand_statistics(article,row.delegation,source,view['parameters'],sales_index,True)
+    calculated={**view,'daily_reference':view.get('daily_reference',view['daily_mean']),
+        'consumption_basis':view.get('consumption_basis',view['parameters'].get('consumption_basis','MEAN')),
+        **history_statistics(stats),'exceptionality':stats['exceptionality'],'spot_analysis':stats['spot_analysis']}
     history=db.scalars(select(Adjustment).where(Adjustment.result_id==row.id).order_by(Adjustment.created_at)).all()
     return {'id':row.id,**quantity_comparison(view),**{key:calculated[key] for key in ('exceptionality','spot_analysis','daily_mean','daily_reference','consumption_basis','daily_sales','daily_median','daily_median_frequency','daily_median_dates','daily_mode_occurrences','daily_modes','daily_mode_frequency','positive_consumption_days','weekly_sales')},'scenario_version':scenario.version,
         'adjustments':[{'created_at':event.created_at,'user_id':event.user_id,'reason':event.reason,'changes':event.changes} for event in history]}

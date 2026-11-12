@@ -479,7 +479,9 @@ class ReplenishmentResult(Base):
     sku: Mapped[str] = mapped_column(String(50), index=True)
     delegation: Mapped[str] = mapped_column(String(2))
     payload: Mapped[dict] = mapped_column(JSON)
-    __table_args__ = (UniqueConstraint("scenario_id", "sku", "delegation"),)
+    filter_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    __table_args__ = (UniqueConstraint("scenario_id", "sku", "delegation"),
+        Index("ix_replenishment_results_scenario_delegation_sku", "scenario_id", "delegation", "sku"),)
 
 
 class ReplenishmentJob(Base, TimestampMixin):
@@ -670,3 +672,8 @@ class OrderEmailDelivery(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     __table_args__ = (UniqueConstraint("order_id", "revision", name="uq_order_email_revision"),)
+
+
+# Keep the light read projection in the same transaction as manual result changes.
+from .replenishment_read_model import install_events
+install_events(ReplenishmentResult)

@@ -327,27 +327,34 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
     result['comparison_eligible']=bool(statistic_available and parameters['enabled'] and not stats['created_in_future'] and not (parameters['exclude_no_consumption'] and stats['total_demand']<=0) and not (sparse and (parameters['new_policy'] if stats['new_article'] else parameters['no_sales_policy'])=='NO_REPLENISH'))
     result=quantity_comparison(result)
     if include_daily:
-        # Median/modes describe active consumption days only. Sigma and the
-        # weekly evidence still retain zero days over the entire observed window.
-        positive_values=[value for value in stats['demand_values'] if value>0]
-        counts=Counter(positive_values)
-        frequency=max(counts.values(),default=0)
-        weeks={}
-        for item in stats['daily']:
-            day=date.fromisoformat(item['day']);monday=(day-timedelta(days=day.weekday())).isoformat()
-            bucket=weeks.setdefault(monday,{'week_start':monday,'from':item['day'],'to':item['day'],
-                'observed_days':0,'sold':0,'returned':0,'demand':0})
-            bucket['to']=item['day'];bucket['observed_days']+=1
-            for key in ('sold','returned','demand'):bucket[key]+=item[key]
-        median_value=median(positive_values) if positive_values else None
-        modes=sorted(value for value,count in counts.items() if count==frequency) if frequency>1 else []
-        dates_by_value=defaultdict(list)
-        for item in stats['daily']:
-            if item['demand']>0:dates_by_value[item['demand']].append(item['day'])
-        result.update(daily_sales=stats['daily'],daily_median=median_value,
-            daily_median_frequency=counts.get(median_value,0),daily_median_dates=dates_by_value.get(median_value,[]),
-            daily_modes=modes,daily_mode_occurrences=[{'value':value,'count':counts[value],'dates':dates_by_value[value]} for value in modes],
-            daily_mode_frequency=frequency,positive_consumption_days=len(positive_values),weekly_sales=list(weeks.values()))
+        result.update(history_statistics(stats))
+    return result
+
+
+def history_statistics(stats):
+    """Build the graph from one material history; never recalculate a proposal."""
+    result = {}
+    # Median/modes describe active consumption days only. Sigma and the
+    # weekly evidence still retain zero days over the entire observed window.
+    positive_values=[value for value in stats['demand_values'] if value>0]
+    counts=Counter(positive_values)
+    frequency=max(counts.values(),default=0)
+    weeks={}
+    for item in stats['daily']:
+        day=date.fromisoformat(item['day']);monday=(day-timedelta(days=day.weekday())).isoformat()
+        bucket=weeks.setdefault(monday,{'week_start':monday,'from':item['day'],'to':item['day'],
+            'observed_days':0,'sold':0,'returned':0,'demand':0})
+        bucket['to']=item['day'];bucket['observed_days']+=1
+        for key in ('sold','returned','demand'):bucket[key]+=item[key]
+    median_value=median(positive_values) if positive_values else None
+    modes=sorted(value for value,count in counts.items() if count==frequency) if frequency>1 else []
+    dates_by_value=defaultdict(list)
+    for item in stats['daily']:
+        if item['demand']>0:dates_by_value[item['demand']].append(item['day'])
+    result.update(daily_sales=stats['daily'],daily_median=median_value,
+        daily_median_frequency=counts.get(median_value,0),daily_median_dates=dates_by_value.get(median_value,[]),
+        daily_modes=modes,daily_mode_occurrences=[{'value':value,'count':counts[value],'dates':dates_by_value[value]} for value in modes],
+        daily_mode_frequency=frequency,positive_consumption_days=len(positive_values),weekly_sales=list(weeks.values()))
     return result
 
 def quantity_comparison(row):
