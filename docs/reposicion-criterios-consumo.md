@@ -22,3 +22,8 @@ La referencia habitual es la mediana de los días con consumo neto positivo, por
 La tabla identifica los materiales a revisar; el detalle incluye fechas, cantidades, proporción del consumo neto e impacto sobre la media. La media orientativa sin picos elimina las cantidades netas de los días señalados y conserva todos los días, los meses y la normalización mensual original. No altera cantidades, seguridad, criterios guardados ni redistribución. Triángulos rojos identifican esos días en el gráfico semanal; las barras marrones siguen identificando únicamente máximos semanales, que no son necesariamente atípicos.
 
 El histórico disponible está agregado por día: no identifica un pedido individual ni prueba que la operación fuera spot. Una concentración de pedidos, una obra, una promoción o la estacionalidad pueden producir picos válidos. La decisión de excluir una demanda o cambiar la reposición exige revisar su contexto; no se excluye automáticamente.
+
+
+## Carga de resultados sin actualización periódica
+
+Reposición carga el último cálculo una vez al entrar. Solo consulta periódicamente el progreso de un trabajo en cola o en ejecución. Al terminar o fallar, esa consulta se detiene: los resultados cargados no se sustituyen al volver a la ventana, recuperar la conexión o pasar el tiempo. Cambiar filtros, paginar, abrir un cálculo guardado o ejecutar uno nuevo son acciones explícitas que cargan los datos necesarios. La lista de cálculos guardados conserva su botón de actualización manual.
