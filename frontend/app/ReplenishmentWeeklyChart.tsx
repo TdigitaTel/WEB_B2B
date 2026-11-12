@@ -16,14 +16,14 @@ export function monthBands(start:string,end:string){
  }
  return result;
 }
-export default function ReplenishmentWeeklyChart({weeks,start,end,unit,median,medianDates,modes}:{weeks:WeekSale[];start:string;end:string;unit:string;median:number|null;medianDates:string[];modes:Occurrence[]}){
+export default function ReplenishmentWeeklyChart({weeks,start,end,unit,median,medianDates,modes,outliers=[]}:{weeks:WeekSale[];start:string;end:string;unit:string;median:number|null;medianDates:string[];modes:Occurrence[];outliers?:{day:string;demand:number;times_normal:number}[]}){
  const width=Math.max(700,weeks.length*42+90),height=362,left=74,right=18,top=42,plotHeight=170,bottom=top+plotHeight;
  const rangeStart=stamp(start),days=Math.max(1,(stamp(end)-rangeStart)/DAY+1),scale=(width-left-right)/days;
  const x=(date:string)=>left+(stamp(date)-rangeStart)/DAY*scale;
  const peak=Math.max(0,...weeks.map(week=>week.sold)),bands=monthBands(start,end);
  const modeDays=modes.flatMap(mode=>mode.dates.map(date=>({date,value:mode.value})));
  return <div className="repl-weekly-scroll" tabIndex={0} role="region" aria-label="Gráfico semanal y fechas de mediana y moda"><svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img" aria-labelledby="repl-weekly-title repl-weekly-desc">
-  <title id="repl-weekly-title">Ventas semanales y ocurrencias diarias de mediana y moda</title><desc id="repl-weekly-desc">Barras de ventas brutas en {unit}; En marrón se destacan todas las semanas con la mayor venta del periodo; las demás barras son azules. Meses separados por bandas de fondo. Círculos verdes: días del valor de mediana. Rombos violetas: días de cada moda. Las marcas usan consumo neto diario positivo. Las fechas exactas se pueden consultar en las tablas.</desc>
+  <title id="repl-weekly-title">Ventas semanales y ocurrencias diarias de mediana y moda</title><desc id="repl-weekly-desc">Triángulos rojos: consumos diarios atípicos que requieren revisión, sin excluir ventas. Barras de ventas brutas en {unit}; En marrón se destacan todas las semanas con la mayor venta del periodo; las demás barras son azules. Meses separados por bandas de fondo. Círculos verdes: días del valor de mediana. Rombos violetas: días de cada moda. Las marcas usan consumo neto diario positivo. Las fechas exactas se pueden consultar en las tablas.</desc>
   <g className="repl-month-bands">{bands.map((band,i)=>{const from=x(band.from),to=x(band.to),span=to-from;return <g key={band.key} data-month={band.key}>
    <rect x={from} y={27} width={span} height={317} fill={i%2?'#fff6e7':'#edf4fa'}/>
    <line x1={from} y1={27} x2={from} y2={344} stroke="#cad8e1" strokeDasharray="3 3"/>
@@ -36,6 +36,7 @@ export default function ReplenishmentWeeklyChart({weeks,start,end,unit,median,me
    <rect className="repl-week-bar" x={from+gap} y={bottom-h} width={Math.max(1,span-gap*2)} height={h} fill={peak>0&&week.sold===peak?'#b56a13':'#226b98'}><title>{`${peak>0&&week.sold===peak?"Pico semanal · mayor venta del periodo. ":""}${dateLabel(week.from)} — ${dateLabel(week.to)}: ${fmt(week.sold)} ${unit} vendidos; devoluciones: ${fmt(week.returned)}; ${week.observed_days} días${week.observed_days<7?" (semana incompleta)":""}.`}</title></rect>
    <text x={center} y={232} textAnchor="end" transform={`rotate(-40 ${center} 232)`}>{week.from.slice(8)}/{week.from.slice(5,7)}</text>
   </g>})}
+  {outliers.map(row=>{const week=weeks.find(w=>w.from<=row.day&&row.day<=w.to);if(!week)return null;const cx=x(row.day)+scale/2,cy=bottom-(peak?week.sold/peak*plotHeight:0)-9;return <path className="repl-spot-mark" key={row.day} data-date={row.day} d={`M ${cx} ${cy-5} L ${cx+5} ${cy+4} L ${cx-5} ${cy+4} Z`} fill="#a93226" stroke="white"><title>{`Posible spot a revisar · ${dateLabel(row.day)} · Consumo neto: ${fmt(row.demand)} ${unit}; ${fmt(row.times_normal)} veces la mediana. No se ha excluido.`}</title></path>})}
   <text x={8} y={298}>Mediana</text><line x1={left} x2={width-right} y1={294} y2={294} stroke="#c4d6cf"/>
   <text x={8} y={332}>Moda</text><line x1={left} x2={width-right} y1={328} y2={328} stroke="#d5cce6"/>
   {median!=null&&medianDates.map(date=><circle className="repl-median-mark" key={date} data-date={date} cx={x(date)+scale/2} cy={294} r={4.5} fill="#18734f" stroke="white" strokeWidth={1}><title>{`Mediana · ${dateLabel(date)} · Consumo: ${fmt(median)} ${unit}/día.`}</title></circle>)}

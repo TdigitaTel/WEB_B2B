@@ -28,3 +28,5 @@
 .repl-basis{border:1px solid #cbdde8;border-radius:8px;padding:12px;margin:12px 0}.repl-basis legend{font-weight:700}.repl-basis>label{display:inline-flex;align-items:center;gap:6px;margin-right:20px}.repl-basis input{width:18px;height:18px;min-height:0;accent-color:#1e638e}.repl-basis p{margin-bottom:0}
 
 .repl-history-legend .repl-sales-key{color:#226b98;font-weight:700}.repl-history-legend .repl-peak-key{color:#b56a13;font-weight:700}
+
+.repl-spot-badge{display:block;margin-top:6px;padding:4px 7px;border:1px solid #d7a79e;border-radius:5px;color:#8e281d;background:#fff2ee;font-size:11px;text-align:left}.repl-spot-analysis{margin:16px 0;padding:14px;border:1px solid #cbdde8;border-radius:8px;background:#f6f9fb}.repl-spot-analysis.flagged{border-color:#d7a79e;background:#fff7f3}.repl-spot-analysis h4{margin-top:0}.repl-history-legend .repl-spot-key{color:#a93226;font-weight:700}
