@@ -24,3 +24,20 @@ export default function SpotIndicator({analysis,exceptionality,onReview}:{analys
  const props={className:`repl-spot-indicator ${state.tone}`,'data-spot-status':status};
  return onReview?<button type="button" {...props} onClick={onReview}>{content}</button>:<span {...props}>{content}</span>;
 }
+
+
+const exceptionalityStates:Record<string,{label:string;tone:string;notice:string|null}>={
+ HIGH:{label:'Alta excepcionalidad',tone:'high',notice:'Revisar consumo excepcional.'},
+ MEDIUM:{label:'Consumo poco frecuente',tone:'medium',notice:'Revisar recurrencia.'},
+ LOW:{label:'Sin señales de excepcionalidad',tone:'low',notice:null},
+ LIMITED_HISTORY:{label:'Periodo de análisis limitado',tone:'unknown',notice:'Histórico limitado.'},
+ NO_CONSUMPTION:{label:'Sin consumo positivo',tone:'unknown',notice:'Sin consumo positivo.'},
+ NOT_ANALYZED:{label:'Excepcionalidad sin analizar',tone:'unknown',notice:'Análisis pendiente.'}
+};
+function exceptionalityState(value?:ConsumptionExceptionality){return exceptionalityStates[value?.level||'NOT_ANALYZED']||exceptionalityStates.NOT_ANALYZED}
+export function exceptionalityNotice(value?:ConsumptionExceptionality){return exceptionalityState(value).notice}
+export function ExceptionalityFlag({value,onReview}:{value?:ConsumptionExceptionality;onReview:()=>void}){
+ const state=exceptionalityState(value);
+ return <button type="button" className={`repl-exceptionality-flag repl-exceptionality-${state.tone}`} data-exceptionality-level={value?.level||'NOT_ANALYZED'} aria-label={`${state.label}. Ver análisis del material`} title={`${state.label}. Ver análisis`} onClick={onReview}><span aria-hidden="true">⚑</span></button>;
+}
+export function ExceptionalityLegend(){return <div className="repl-exceptionality-legend" aria-label="Leyenda de excepcionalidad"><b>Excepcionalidad:</b>{[['high','Alta'],['medium','Revisar recurrencia'],['low','Sin señales'],['unknown','Sin análisis o datos suficientes']].map(([tone,label])=><span key={tone}><span className={`repl-exceptionality-${tone}`} aria-hidden="true">⚑</span> {label}</span>)}</div>}
