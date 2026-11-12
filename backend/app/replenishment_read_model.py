@@ -10,6 +10,7 @@ def filter_projection(payload):
     def compact(row):
         # Keep the existing SQL/legacy null semantics, including alert counts.
         return {**{key: row[key] for key in FIELDS if key in row},
+                'exceptionality_level': (row.get('exceptionality') or {}).get('level','NOT_ANALYZED'),
                 'recommendations': [0] * len(row.get('recommendations', []))}
     return {**compact(payload), 'consumption_variants': {
         basis: compact(row) for basis, row in payload.get('consumption_variants', {}).items()}}
