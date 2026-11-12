@@ -19,7 +19,7 @@ const render=endpoint=>root.render(React.createElement(History,{endpoint,unit:'P
  assert.match(document.querySelector('.repl-history-reading').textContent,/75 %/);
  assert.match(document.querySelector('.repl-history-reading').textContent,/no hay un valor mayoritario/);
  assert.match(document.body.textContent,/2 días con consumo cero excluidos/);
- assert.match(document.querySelector('.repl-history-metrics>div:first-child').textContent,/Spot sin analizar/);
+ assert.match(document.querySelector('.repl-history-metrics>div:first-child').textContent,/Excepcionalidad sin analizar/);
  assert.match(document.body.textContent,/Pico semanal: 20 PZ/);assert.match(document.body.textContent,/criterio elegido: media, mediana o moda/);assert.match(document.body.textContent,/Media diaria de referencia/);assert.match(document.body.textContent,/1,75 PZ/);
  assert.match(document.querySelector('.repl-peak-key').textContent,/Marrón: pico semanal/);
  assert.equal(document.querySelectorAll('svg .repl-week-bar').length,2);
@@ -65,6 +65,19 @@ const render=endpoint=>root.render(React.createElement(History,{endpoint,unit:'P
  data.spot_analysis={...data.spot_analysis,status:'NO_CONSUMPTION'};
  await React.act(async()=>render('/saved/result/no-spot-consumption'));
  assert.match(document.querySelector('.repl-history-metrics>div:first-child').textContent,/Sin consumo para analizar spot/);
+ data.spot_analysis={...data.spot_analysis,status:'SINGLE_CONSUMPTION',positive_days:1,single_consumption:{day:'2026-04-04',quantity:30}};
+ await React.act(async()=>render('/saved/result/single-consumption'));
+ assert.match(document.querySelector('.repl-history-metrics>div:first-child').textContent,/Consumo único · revisar/);
+ assert.match(document.querySelector('[aria-label="Análisis de posibles consumos spot"]').textContent,/30 PZ/);
+ assert.match(document.querySelector('[aria-label="Análisis de posibles consumos spot"]').textContent,/no excluye consumos automáticamente/);
+ data.exceptionality={level:'HIGH',reasons:['CONCENTRATION','LOW_FREQUENCY'],observed_days:366,positive_days:2,consumption_day_percent:2/366*100,top3_share_percent:100,top_days:[{day:'2026-04-01',quantity:30},{day:'2026-04-04',quantity:30}],largest_quantity:30,largest_date:'2026-04-01',outlier_days:0};
+ await React.act(async()=>render('/saved/result/exceptionality'));
+ assert.equal(document.querySelector('.repl-history-metrics [data-exceptionality-level]').dataset.exceptionalityLevel,'HIGH');
+ assert.match(document.querySelector('[aria-label="Indicador de excepcionalidad"]').textContent,/2 de 366 días/);
+ assert.match(document.querySelector('[aria-label="Indicador de excepcionalidad"]').textContent,/100 %/);
+ assert.match(document.querySelector('[aria-label="Indicador de excepcionalidad"]').textContent,/01\/04\/2026/);
+ assert.match(document.querySelector('[aria-label="Indicador de excepcionalidad"]').textContent,/no descarta ventas ni cambia las propuestas automáticamente/);
+ delete data.exceptionality;
  delete data.spot_analysis;
  data.daily_modes=[];data.weekly_sales.forEach(w=>w.sold=0);data.daily_median=null;data.positive_consumption_days=0;
  await React.act(async()=>render('/saved/result/46'));

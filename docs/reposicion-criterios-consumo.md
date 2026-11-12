@@ -24,4 +24,13 @@ La tabla identifica los materiales a revisar; el detalle incluye fechas, cantida
 El histórico disponible está agregado por día: no identifica un pedido individual ni prueba que la operación fuera spot. Una concentración de pedidos, una obra, una promoción o la estacionalidad pueden producir picos válidos. La decisión de excluir una demanda o cambiar la reposición exige revisar su contexto; no se excluye automáticamente.
 
 
-El estado del análisis spot se muestra siempre junto al consumo medio mensual del listado y dentro de la tarjeta de media diaria del detalle. El aviso de posible spot se destaca en ámbar e indica la proporción de consumo afectada. La falta de análisis de un cálculo anterior se identifica expresamente como «Spot sin analizar», diferenciada de «Sin picos atípicos detectados». No se recalcula automáticamente al mostrar la marca.
+El estado del análisis spot se muestra siempre junto al consumo medio mensual del listado y dentro de la tarjeta de media diaria del detalle. El aviso de posible spot se destaca en ámbar e indica la proporción de consumo afectada. La falta de análisis de un cálculo anterior se identifica expresamente como «Excepcionalidad sin analizar», diferenciada de «Sin picos atípicos detectados». No se recalcula automáticamente al mostrar la marca.
+
+
+## Indicador de excepcionalidad por material/delegación
+
+El indicador identifica rareza con uno, dos o más días de consumo. Usa frecuencia (días positivos / días observados), concentración (porcentaje del consumo neto en los 3 mayores días) y picos atípicos. Con periodos de al menos 30 días, marca alta excepcionalidad si la concentración alcanza el 80 % o hay picos; marca consumo poco frecuente si hay consumo en el 10 % de días o menos o menos de 8 días positivos. Con menos de 30 días observados se señala interpretación limitada. Sin consumo se indica expresamente; ausencia de señales no garantiza recurrencia.
+
+Estos umbrales son reglas orientativas de gestión, no una probabilidad estadística ni confirmación de una compra spot. La concentración permite identificar un material consumido solo una o dos veces aunque no haya muestra suficiente para el método de cuartiles. Un día puede agrupar varios pedidos. El indicador conserva la media, la seguridad y las cantidades calculadas: no excluye ni bloquea automáticamente por el mero número de días.
+
+La columna «Excepcionalidad» aparece junto al consumo promedio. Excel simplificado y ampliado incluyen estado y motivos, días de consumo, frecuencia, concentración en los tres mayores días, mayor cantidad diaria y fecha. El detalle muestra las fechas y cantidades de esos días. Los cálculos anteriores necesitan una ejecución nueva para almacenar el indicador completo; abrir el detalle puede obtenerlo de la instantánea histórica sin leer EXIT.
