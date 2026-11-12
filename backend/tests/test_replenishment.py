@@ -940,3 +940,47 @@ def test_detail_builds_graph_without_recalculating_proposal(monkeypatch):
         assert detail.json()['daily_reference']==row['daily_reference']
         assert sum(week['sold'] for week in detail.json()['weekly_sales'])==490
         assert len(detail.json()['daily_sales'])==30
+
+
+@pytest.mark.parametrize('mode',['simple','expanded'])
+def test_flag_selection_consumption_range_and_export_use_saved_results(monkeypatch,mode):
+    import app.replenishment as module
+    from app.db import SessionLocal
+    from app.models import ReplenishmentResult as Result
+    from sqlalchemy import select, update
+    raw=source_for(('HIGH','MEDIUM','LOW','GRAY'),values=[0]*30,stock=0)
+    raw['sales']=[{'sku':sku,'delegation':'02','day':f'2026-04-{day:02d}','sold':quantity,'returned':0}
+        for sku,values in [('HIGH',[30]+[0]*29),('MEDIUM',[1]*4+[0]*26),('LOW',[1]*30),('GRAY',[0]*30)]
+        for day,quantity in enumerate(values,1) if quantity]
+    monkeypatch.setattr(module,'read_replenishment_source',lambda *a:raw)
+    client=login();prefix='/api/v1/store/replenishment/simulations'
+    created=client.post(prefix,json={'all_consumption_bases':True,'filters':{'date_from':raw['start'],'date_to':raw['end'],'delegations':['02']},'temporary_parameters':{'simple_formula':True}})
+    assert created.status_code==201,created.text
+    path=prefix+'/'+created.json()['id']
+    # Old saved projections must be filterable without recalculation or backfill.
+    with SessionLocal() as db:
+        for row in db.scalars(select(Result).where(Result.scenario_id==created.json()['id'])):
+            projection=dict(row.filter_data);projection.pop('exceptionality_level',None)
+            projection['consumption_variants']={key:{k:v for k,v in value.items() if k!='exceptionality_level'} for key,value in projection['consumption_variants'].items()}
+            db.execute(update(Result).where(Result.id==row.id).values(filter_data=projection))
+        db.commit()
+    monkeypatch.setattr(module,'read_replenishment_source',lambda *a:pytest.fail('Filtering must not read EXIT'))
+    for basis in ('MEAN','MEDIAN','MODE'):
+        for flags,expected in [('HIGH',{'HIGH'}),('MEDIUM',{'MEDIUM'}),('LOW',{'LOW'}),('UNKNOWN',{'GRAY'}),('HIGH,MEDIUM',{'HIGH','MEDIUM'}),('HIGH,MEDIUM,LOW,UNKNOWN',{'HIGH','MEDIUM','LOW','GRAY'}),('',{'HIGH','MEDIUM','LOW','GRAY'})]:
+            response=client.get(path+'/results',params={'consumption_basis':basis,'exceptionality_flags':flags})
+            assert response.status_code==200,response.text
+            result=response.json()
+            assert {row['sku'] for row in result['items']}==expected
+            assert result['summary']['articles_analyzed']==len(expected)
+    params={'exceptionality_flags':'HIGH,LOW','minimum_monthly_consumption':30,'maximum_monthly_consumption':30}
+    assert client.get(path+'/results',params=params).json()['total']==2
+    params={'exceptionality_flags':'HIGH,MEDIUM','minimum_monthly_consumption':1,'maximum_monthly_consumption':4}
+    assert {row['sku'] for row in client.get(path+'/results',params=params).json()['items']}=={'MEDIUM'}
+    exported=client.get(path+'/export.xlsx',params={**params,'mode':mode})
+    assert exported.status_code==200,exported.text
+    sheet=load_workbook(io.BytesIO(exported.content)).active
+    assert sheet.max_row==2 and sheet['A2'].value=='MEDIUM'
+    assert client.get(path+'/results',params={'maximum_monthly_consumption':0}).json()['items'][0]['sku']=='GRAY'
+    for endpoint in ('/results','/export.xlsx'):
+        for invalid in ({'maximum_monthly_consumption':-1},{'minimum_monthly_consumption':5,'maximum_monthly_consumption':4},{'exceptionality_flags':'INVALID'}):
+            assert client.get(path+endpoint,params=invalid).status_code==422

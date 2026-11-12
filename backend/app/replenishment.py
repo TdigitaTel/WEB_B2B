@@ -312,6 +312,8 @@ class ResultFilters(BaseModel):
     overstock_only:bool=False
     consumption:Literal['ALL','WITH','WITHOUT']='ALL'
     minimum_monthly_consumption:float=Field(0,ge=0,le=1e9,allow_inf_nan=False)
+    maximum_monthly_consumption:float|None=Field(None,ge=0,le=1e9,allow_inf_nan=False)
+    exceptionality_flags:str=Field('',max_length=100,pattern=r'^(?:(?:HIGH|MEDIUM|LOW|UNKNOWN)(?:,(?:HIGH|MEDIUM|LOW|UNKNOWN))*)?$')
     sort:Literal['sku','quantity','coverage','alerts']='sku'
     descending:bool=False
 
@@ -327,6 +329,8 @@ def filter_payload():
 
 
 def filtered_results(scenario_id,filters):
+    if filters.maximum_monthly_consumption is not None and filters.maximum_monthly_consumption<filters.minimum_monthly_consumption:
+        raise HTTPException(422,'El consumo mensual máximo debe ser mayor o igual que el mínimo.')
     payload=basis_expression(filter_payload(),filters.consumption_basis)
     q=filters.q;alerts_only=filters.alerts_only;needed_only=filters.needed_only
     central_only=filters.central_only;overstock_only=filters.overstock_only;consumption=filters.consumption
@@ -340,9 +344,18 @@ def filtered_results(scenario_id,filters):
     if needed_only:query=query.where(payload['final_quantity'].as_float()>0)
     if central_only:query=query.where(payload['central_can_supply'].as_boolean().is_(True))
     if overstock_only:query=query.where(payload['overstock'].as_boolean().is_(True))
-    if filters.minimum_monthly_consumption>0:
+    if filters.minimum_monthly_consumption>0 or filters.maximum_monthly_consumption is not None:
         monthly=func.coalesce(payload['monthly_mean'].as_float(),payload['daily_mean'].as_float()*30)
         query=query.where(monthly>=filters.minimum_monthly_consumption)
+        if filters.maximum_monthly_consumption is not None:query=query.where(monthly<=filters.maximum_monthly_consumption)
+    if filters.exceptionality_flags:
+        # Older saved projections lack this small field: read only their stored level.
+        original=basis_expression(Result.payload,filters.consumption_basis)
+        level=func.coalesce(payload['exceptionality_level'].as_string(),original['exceptionality']['level'].as_string(),'NOT_ANALYZED')
+        flags=set(filters.exceptionality_flags.split(','))
+        conditions=[level.in_(sorted(flags-{'UNKNOWN'}))] if flags-{'UNKNOWN'} else []
+        if 'UNKNOWN' in flags:conditions.append(level.not_in(['HIGH','MEDIUM','LOW']))
+        query=query.where(or_(*conditions))
     if consumption=='WITHOUT':query=query.where(payload['total_demand'].as_float()<=0)
     if consumption=='WITH':query=query.where(payload['total_demand'].as_float()>0)
     return query
