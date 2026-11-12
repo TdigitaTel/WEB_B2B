@@ -30,3 +30,7 @@
 .repl-history-legend .repl-sales-key{color:#226b98;font-weight:700}.repl-history-legend .repl-peak-key{color:#b56a13;font-weight:700}
 
 .repl-spot-badge{display:block;margin-top:6px;padding:4px 7px;border:1px solid #d7a79e;border-radius:5px;color:#8e281d;background:#fff2ee;font-size:11px;text-align:left}.repl-spot-analysis{margin:16px 0;padding:14px;border:1px solid #cbdde8;border-radius:8px;background:#f6f9fb}.repl-spot-analysis.flagged{border-color:#d7a79e;background:#fff7f3}.repl-spot-analysis h4{margin-top:0}.repl-history-legend .repl-spot-key{color:#a93226;font-weight:700}
+
+.repl-spot-indicator{display:block;width:100%;margin-top:8px;padding:8px 10px;border:1px solid #bdcdd7;border-radius:6px;background:#f2f6f8;color:#3d596b;font-size:12px;line-height:1.4;text-align:left;white-space:normal}.repl-spot-indicator.warning{background:#fff1df;border:2px solid #b56a13;color:#763c08}.repl-spot-indicator.pending{background:#eef3fa;border-color:#a8bdd2;color:#334f71}.repl-spot-indicator b,.repl-spot-indicator small{display:block}.repl-spot-indicator small{font-size:11px;margin-top:3px}.repl-spot-review{text-decoration:underline}.repl-history-metrics .repl-spot-indicator{font-weight:400}
+
+.repl-consumption-analysis{min-width:220px;max-width:320px}.repl-consumption-analysis .repl-spot-indicator{margin-top:0}

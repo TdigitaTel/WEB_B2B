@@ -391,7 +391,7 @@ def test_filtered_summary_and_export_all_pages_with_exit_control_characters(monk
     assert book.sheetnames==['Reposición']
     headers=[cell.value for cell in sheet[1]]
     assert 'Disponible previsto' in headers and 'Posición' not in headers
-    assert 'Seguridad' not in headers and len(headers)==21
+    assert 'Seguridad' not in headers and len(headers)==27
     assert sheet.max_row==56 and sheet['A2'].value=='00054'
     assert sheet['A56'].value=='00000' and sheet['A56'].data_type=='s'
     assert sheet['B56'].value=='=Material de EXIT' and sheet['B56'].data_type=='s'
@@ -827,3 +827,62 @@ def test_spot_baseline_preserves_partial_month_normalization_and_selected_histor
     assert limited['spot_analysis']['status']=='INSUFFICIENT'
     assert limited['spot_analysis']['positive_days']==6
     assert limited['spot_analysis']['outliers']==[]
+
+
+@pytest.mark.parametrize('mode',['simple','expanded'])
+def test_single_consumption_91463e_is_marked_and_exported_without_automatic_exclusion(monkeypatch,mode):
+    import app.replenishment as module
+    raw=source_for(('91463E',),values=[30]+[0]*29,stock=0)
+    raw['articles'][0]['exit_multiple']=12
+    monkeypatch.setattr(module,'read_replenishment_source',lambda *a:raw)
+    client=login();prefix='/api/v1/store/replenishment/simulations'
+    response=client.post(prefix,json={'all_consumption_bases':True,'filters':{'date_from':raw['start'],'date_to':raw['end'],'delegations':['02']},'temporary_parameters':{'simple_formula':True,'use_safety_stock':False}})
+    assert response.status_code==201,response.text
+    path=prefix+'/'+response.json()['id']
+    for basis in ('MEAN','MEDIAN','MODE'):
+        row=client.get(path+'/results',params={'consumption_basis':basis}).json()['items'][0]
+        assert row['sku']=='91463E' and row['total_demand']==30
+        assert row['monthly_mean']==30
+        assert row['spot_analysis']['status']=='SINGLE_CONSUMPTION'
+        assert row['spot_analysis']['single_consumption']=={'day':'2026-04-01','quantity':30}
+        assert row['exceptionality']['level']=='HIGH'
+        assert row['exceptionality']['positive_days']==1
+        assert row['exceptionality']['top3_share_percent']==100
+        assert row['final_quantity']==dict(MEAN=8,MEDIAN=240,MODE=0)[basis]
+        exported=client.get(path+'/export.xlsx',params={'mode':mode,'consumption_basis':basis})
+        assert exported.status_code==200,exported.text
+        sheet=load_workbook(io.BytesIO(exported.content)).active;headers=[cell.value for cell in sheet[1]]
+        index=headers.index('Excepcionalidad')
+        assert headers[index-1] in ('Consumo mensual','Consumo mensual medio')
+        text=sheet.cell(2,index+1).value
+        assert 'Alta excepcionalidad' in text and '1 de 30 días' in text and '100.0 %' in text
+        assert sheet.cell(2,headers.index('Mayor consumo diario')+1).value==30
+        assert sheet.cell(2,headers.index('Fecha mayor consumo')+1).value=='2026-04-01'
+    # The rule governs automatic proposals; an explicit operator decision remains possible.
+    revised=client.post(path+'/results/'+str(row['id'])+'/adjustments',json={'quantity':12,'reason':'Necesidad comprobada manualmente','expected_version':1})
+    assert revised.status_code==200,revised.text
+    assert revised.json()['result']['quantity_without_multiple']==12
+
+
+@pytest.mark.parametrize('values,level,positive,top_share',[
+    ([30]+[0]*365,'HIGH',1,100),
+    ([30,30]+[0]*364,'HIGH',2,100),
+    ([30,30,30]+[0]*363,'HIGH',3,100),
+    ([10]*4+[0]*362,'MEDIUM',4,75),
+    ([10]*30,'LOW',30,10),
+    ([10]*20+[200]+[0]*9,'HIGH',21,55),
+    ([30]+[0]*6,'LIMITED_HISTORY',1,100),
+    ([0]*30,'NO_CONSUMPTION',0,0),
+])
+def test_exceptionality_detects_one_two_many_days_concentration_and_frequency(values,level,positive,top_share):
+    result=calculate(source_for(values=values))
+    info=result['exceptionality']
+    assert info['level']==level
+    assert info['positive_days']==positive and info['observed_days']==len(values)
+    assert info['top3_share_percent']==pytest.approx(top_share)
+    assert info['consumption_day_percent']==pytest.approx(positive/len(values)*100)
+    if positive:assert info['largest_quantity']==max(values)
+    if level=='HIGH':assert 'CONCENTRATION' in info['reasons'] or 'OUTLIERS' in info['reasons']
+    if positive==4:assert 'LOW_FREQUENCY' in info['reasons']
+    # The diagnostic never removes original quantities.
+    assert result['total_demand']==sum(values)
