@@ -63,17 +63,17 @@ def publish_calculations(db,scenario):
 
 
 def calculation_list(db):
-    from .replenishment import scenario_payload, ResultFilters, filtered_results, result_summary
+    from .replenishment import scenario_metadata, ResultFilters, filtered_results, result_summary
     current=current_calculations(db);items=[]
     for code in DELEGATIONS:
         if code not in current:continue
-        scenario=db.get(Scenario,current[code].scenario_id)
-        job=db.scalar(select(Job).where(Job.scenario_id==scenario.id))
-        payload=scenario_payload(scenario)
+        sid=current[code].scenario_id
+        payload=scenario_metadata(db,sid)
+        calculated_at=db.scalar(select(Job.finished_at).where(Job.scenario_id==sid))
         payload.update(delegation=code,delegation_name=DELEGATIONS[code],
-            calculated_at=job.finished_at if job else scenario.created_at,
-            filters={**scenario.filters,'delegations':[code]},
-            summary=result_summary(db,filtered_results(scenario.id,ResultFilters(delegation=code))))
+            calculated_at=calculated_at or payload['created_at'],
+            filters={**payload['filters'],'delegations':[code]},
+            summary=result_summary(db,filtered_results(sid,ResultFilters(delegation=code))))
         items.append(payload)
     return {'items':items,'missing_delegations':[{'code':code,'name':DELEGATIONS[code]} for code in DELEGATIONS if code not in current]}
 

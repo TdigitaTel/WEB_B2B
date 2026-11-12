@@ -886,3 +886,57 @@ def test_exceptionality_detects_one_two_many_days_concentration_and_frequency(va
     if positive==4:assert 'LOW_FREQUENCY' in info['reasons']
     # The diagnostic never removes original quantities.
     assert result['total_demand']==sum(values)
+
+
+def test_saved_read_projection_migration_and_manual_adjustment(monkeypatch):
+    from sqlalchemy import select, update, null
+    from app.db import SessionLocal, engine
+    from app.models import ReplenishmentResult as Result
+    from app.replenishment_read_model import migrate
+    import app.replenishment as module
+    raw=source_for(values=[10]*20+[200]+[0]*9)
+    monkeypatch.setattr(module,'read_replenishment_source',lambda *args:raw)
+    client=login();prefix='/api/v1/store/replenishment/simulations'
+    response=client.post(prefix,json={'all_consumption_bases':True,'filters':{'date_from':raw['start'],'date_to':raw['end'],'delegations':['02']},'temporary_parameters':{'simple_formula':True}})
+    assert response.status_code==201,response.text
+    path=prefix+'/'+response.json()['id']
+    before={basis:client.get(path+'/results',params={'consumption_basis':basis}).json() for basis in ('MEAN','MEDIAN','MODE')}
+    rid=before['MEAN']['items'][0]['id']
+    with SessionLocal() as db:
+        row=db.get(Result,rid);original=row.payload
+        assert row.filter_data is not None
+        assert 'monthly_consumption' not in row.filter_data
+        # Simulate an existing installation, including missing projections.
+        db.execute(update(Result).where(Result.id==rid).values(filter_data=null()));db.commit()
+    monkeypatch.setattr(module,'read_replenishment_source',lambda *args:pytest.fail('Read must not contact EXIT'))
+    migrate(engine);migrate(engine)
+    with SessionLocal() as db:
+        assert db.get(Result,rid).payload==original
+    for basis in before:
+        assert client.get(path+'/results',params={'consumption_basis':basis}).json()==before[basis]
+    adjusted=client.post(path+f'/results/{rid}/adjustments',json={'quantity':0,'reason':'Sin necesidad confirmada','expected_version':1})
+    assert adjusted.status_code==200,adjusted.text
+    for basis in before:
+        result=client.get(path+'/results',params={'consumption_basis':basis,'needed_only':True}).json()
+        assert result['total']==0 and result['summary']['to_replenish']==0
+
+
+def test_detail_builds_graph_without_recalculating_proposal(monkeypatch):
+    import app.replenishment as module
+    raw=source_for(('FAST','OTHER'),values=[10]*29+[200])
+    monkeypatch.setattr(module,'read_replenishment_source',lambda *args:raw)
+    client=login();prefix='/api/v1/store/replenishment/simulations'
+    created=client.post(prefix,json={'all_consumption_bases':True,'filters':{'date_from':raw['start'],'date_to':raw['end'],'delegations':['02']},'temporary_parameters':{'simple_formula':True}})
+    assert created.status_code==201,created.text
+    path=prefix+'/'+created.json()['id']
+    monkeypatch.setattr(module,'calculate_article',lambda *a,**k:pytest.fail('Opening detail must not recalculate a proposal'))
+    monkeypatch.setattr(module,'prepare_context',lambda *a,**k:pytest.fail('Opening detail must not compute all articles/delegations'))
+    monkeypatch.setattr(module,'read_replenishment_source',lambda *a,**k:pytest.fail('Opening detail must not read EXIT'))
+    for basis in ('MEAN','MEDIAN','MODE'):
+        row=client.get(path+'/results',params={'consumption_basis':basis,'q':'FAST'}).json()['items'][0]
+        detail=client.get(path+f"/results/{row['id']}",params={'consumption_basis':basis})
+        assert detail.status_code==200,detail.text
+        assert detail.json()['final_quantity']==row['final_quantity']
+        assert detail.json()['daily_reference']==row['daily_reference']
+        assert sum(week['sold'] for week in detail.json()['weekly_sales'])==490
+        assert len(detail.json()['daily_sales'])==30

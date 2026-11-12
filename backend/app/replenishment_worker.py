@@ -14,6 +14,7 @@ from .replenishment import RunInput, enrich_source, selected_product_codes
 from .category_visibility import hidden_codes
 from .replenishment_engine import prepare_context, calculate_article, annotate_central, summarize, calculate_all_bases, annotate_all_bases
 from .replenishment_source import list_replenishment_codes, read_replenishment_source
+from .replenishment_read_model import filter_projection
 
 logger=logging.getLogger(__name__)
 BATCH_SIZE=1000
@@ -114,7 +115,7 @@ def process_batch(job_id,token):
         job=owned(db,job_id,token)
         batch=db.get(Batch,batch_id)
         if batch.fingerprint is not None:raise LostClaim()
-        db.execute(insert(Result),[{'scenario_id':job.scenario_id,'sku':row['sku'],'delegation':row['delegation'],'payload':row} for row in results])
+        db.execute(insert(Result),[{'scenario_id':job.scenario_id,'sku':row['sku'],'delegation':row['delegation'],'payload':row,'filter_data':filter_projection(row)} for row in results])
         batch.source=source;batch.fingerprint=digest(source)
         scenario=db.get(Scenario,job.scenario_id)
         previous=scenario.summary
