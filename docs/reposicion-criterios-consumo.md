@@ -34,3 +34,7 @@ El indicador identifica rareza con uno, dos o más días de consumo. Usa frecuen
 Estos umbrales son reglas orientativas de gestión, no una probabilidad estadística ni confirmación de una compra spot. La concentración permite identificar un material consumido solo una o dos veces aunque no haya muestra suficiente para el método de cuartiles. Un día puede agrupar varios pedidos. El indicador conserva la media, la seguridad y las cantidades calculadas: no excluye ni bloquea automáticamente por el mero número de días.
 
 La columna «Excepcionalidad» aparece junto al consumo promedio. Excel simplificado y ampliado incluyen estado y motivos, días de consumo, frecuencia, concentración en los tres mayores días, mayor cantidad diaria y fecha. El detalle muestra las fechas y cantidades de esos días. Los cálculos anteriores necesitan una ejecución nueva para almacenar el indicador completo; abrir el detalle puede obtenerlo de la instantánea histórica sin leer EXIT.
+
+## Carga de resultados sin actualización periódica
+
+Reposición carga el último cálculo una vez al entrar. Solo consulta periódicamente el progreso de un trabajo en cola o en ejecución. Al terminar o fallar, esa consulta se detiene: los resultados cargados no se sustituyen al volver a la ventana, recuperar la conexión o pasar el tiempo. Cambiar filtros, paginar, abrir un cálculo guardado o ejecutar uno nuevo son acciones explícitas que cargan los datos necesarios. La lista de cálculos guardados conserva su botón de actualización manual.
