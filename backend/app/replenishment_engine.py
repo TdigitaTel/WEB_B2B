@@ -58,34 +58,6 @@ def resolve_parameters(article,delegation,policies,temporary=None):
         result.update(temporary);applied.append('Ajuste temporal');origins.update({name:'Ajuste temporal' for name in temporary})
     return Parameters.model_validate(result).model_dump(),applied,origins
 
-def spot_analysis(values,start,monthly,daily_mean):
-    """Heuristic on positive daily NET demand, never an automatic exclusion.
-
-    Quartiles use linear interpolation at (n-1)*p. Tukey's upper inner fence
-    is combined with a conservative 3x-median guard and 8-positive-day minimum.
-    """
-    positive=sorted(value for value in values if value>0)
-    count=len(positive);normal=median(positive) if count else None
-    def quantile(p):
-        position=(count-1)*p;lower=int(position);fraction=position-lower
-        return positive[lower]+fraction*(positive[min(lower+1,count-1)]-positive[lower])
-    q1,q3=(quantile(.25),quantile(.75)) if count else (None,None)
-    threshold=max(3*normal,q3+1.5*(q3-q1)) if count else None
-    eligible=count>=8
-    flagged=[{'day':(start+timedelta(days=i)).isoformat(),'demand':value,'times_normal':value/normal}
-             for i,value in enumerate(values) if eligible and value>threshold]
-    excluded_by_month=defaultdict(float)
-    for row in flagged:excluded_by_month[row['day'][:7]]+=row['demand']
-    baseline=mean((max(0,row['consumption']-excluded_by_month[row['month']])/row['observed_days']*row['calendar_days'])
-                  for row in monthly)/30 if monthly else 0
-    quantity=sum(row['demand'] for row in flagged);total=sum(values)
-    return {'status':'NO_CONSUMPTION' if not count else 'INSUFFICIENT' if not eligible else 'POSSIBLE_SPOT' if flagged else 'NO_OUTLIERS',
-        'positive_days':count,'minimum_positive_days':8,'normal_daily_median':normal,'q1':q1,'q3':q3,'upper_threshold':threshold,
-        'outliers':flagged,'flagged_quantity':quantity,'flagged_share_percent':quantity/total*100 if total else 0,
-        'daily_mean':daily_mean,'daily_mean_without_peaks':baseline,
-        'mean_uplift_percent':(daily_mean-baseline)/baseline*100 if baseline>0 else None}
-
-
 def demand_statistics(article,delegation,source,parameters,sales_index,include_daily=False):
     end=date.fromisoformat(source['end']);start=date.fromisoformat(source['start'])
     if parameters['history_days']:start=max(start,end-timedelta(days=parameters['history_days']-1))
@@ -116,8 +88,7 @@ def demand_statistics(article,delegation,source,parameters,sales_index,include_d
     positive=[value for value in values if value>0]
     frequencies=Counter(positive);frequency=max(frequencies.values(),default=0)
     modes=sorted(value for value,count in frequencies.items() if count==frequency) if frequency>1 else []
-    analysis=spot_analysis(values,start,monthly,average)
-    return {'spot_analysis':analysis,'daily_median':median(positive) if positive else None,'daily_modes':modes,'positive_consumption_days':len(positive),
+    return {'daily_median':median(positive) if positive else None,'daily_modes':modes,'positive_consumption_days':len(positive),
             'days':days,'start':start.isoformat(),'end':end.isoformat(),'daily':daily,'demand_values':values,'gross_sales':gross,
             'returns':returned,'total_demand':sum(values),'daily_mean':average,'monthly_mean':monthly_mean,'monthly_consumption':monthly,'daily_std':deviation,
             'sales_days':sales_days,'last_sale':last_sale,'irregular':irregular,'anomalous_return_days':anomalous,
@@ -183,9 +154,6 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
     safety=z*std*sqrt(parameters['lead_days']) if parameters['use_safety_stock'] else 0;minimum=avg*parameters['lead_days']+safety;maximum=avg*horizon+safety
     method='REVISION_PERIODICA';confidence='ALTA' if stats['sales_days']>=30 and not stats['irregular'] else 'MEDIA'
     recs=[];comparable=None
-    analysis=stats['spot_analysis']
-    if analysis['status']=='POSSIBLE_SPOT':
-        recs.append(recommendation('POSIBLE_SPOT','Hay consumos diarios atípicos que elevan la media. Revisa si son ventas puntuales antes de reponer; no se ha excluido ninguna cantidad.',{'days':len(analysis['outliers']),'share_percent':analysis['flagged_share_percent'],'daily_mean_without_peaks':analysis['daily_mean_without_peaks']}))
     sparse=stats['sales_days']<5 or stats['new_article']
     if sparse and not parameters["simple_formula"] and parameters["consumption_basis"]=="MEAN":
         safety=minimum=maximum=0;confidence='BAJA';method='REVISION_MANUAL'
@@ -290,7 +258,7 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
             {'quantity':quantity,'position':position,'minimum':minimum,'horizon_demand':avg*horizon}))
     result={**article,'delegation':delegation,'stock':stock['stock'] if stock else None,'incoming':stock['incoming'] if stock else None,
         'outgoing':stock['outgoing'] if stock else None,'inventory_position':position,'gross_sales':stats['gross_sales'],
-        'returns':stats['returns'],'total_demand':stats['total_demand'],'daily_mean':stats['daily_mean'],'daily_reference':avg,'spot_analysis':analysis,'consumption_basis':parameters['consumption_basis'],'statistic_available':statistic_available,'daily_median':stats['daily_median'],'daily_modes':stats['daily_modes'],'positive_consumption_days':stats['positive_consumption_days'],'monthly_mean':stats['monthly_mean'],'monthly_consumption':stats['monthly_consumption'],'daily_std':std,'sales_days':stats['sales_days'],
+        'returns':stats['returns'],'total_demand':stats['total_demand'],'daily_mean':stats['daily_mean'],'daily_reference':avg,'consumption_basis':parameters['consumption_basis'],'statistic_available':statistic_available,'daily_median':stats['daily_median'],'daily_modes':stats['daily_modes'],'positive_consumption_days':stats['positive_consumption_days'],'monthly_mean':stats['monthly_mean'],'monthly_consumption':stats['monthly_consumption'],'daily_std':std,'sales_days':stats['sales_days'],
         'last_sale':stats['last_sale'],'observed_days':stats['days'],'irregular':stats['irregular'],'new_article':stats['new_article'],
         'overstock':overstock,'excess_stock':excess,'no_consumption':stats['total_demand']<=0,'target_mode':parameters['target_mode'],
         'calculation_model':'MAXIMUM_COVERAGE' if parameters['target_mode']=='MAXIMUM' else 'MINIMUM_PLUS_CYCLE_DEMAND','replenishment_point':replenishment_point,'target_stock':target,'expected_cycle_consumption':expected_consumption,'safety_stock':safety,'minimum_stock':minimum,'maximum_stock':maximum,'calculated_quantity':calculated,
