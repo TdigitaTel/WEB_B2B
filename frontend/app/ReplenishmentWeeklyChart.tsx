@@ -23,7 +23,7 @@ export default function ReplenishmentWeeklyChart({weeks,start,end,unit,median,me
  const peak=Math.max(0,...weeks.map(week=>week.sold)),bands=monthBands(start,end);
  const modeDays=modes.flatMap(mode=>mode.dates.map(date=>({date,value:mode.value})));
  return <div className="repl-weekly-scroll" tabIndex={0} role="region" aria-label="Gráfico semanal y fechas de mediana y moda"><svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img" aria-labelledby="repl-weekly-title repl-weekly-desc">
-  <title id="repl-weekly-title">Ventas semanales y ocurrencias diarias de mediana y moda</title><desc id="repl-weekly-desc">Barras de ventas brutas en {unit}; picos en naranja. Meses separados por bandas de fondo. Círculos verdes: días del valor de mediana. Rombos violetas: días de cada moda. Las marcas usan consumo neto diario positivo. Las fechas exactas se pueden consultar en las tablas.</desc>
+  <title id="repl-weekly-title">Ventas semanales y ocurrencias diarias de mediana y moda</title><desc id="repl-weekly-desc">Barras de ventas brutas en {unit}; En marrón se destacan todas las semanas con la mayor venta del periodo; las demás barras son azules. Meses separados por bandas de fondo. Círculos verdes: días del valor de mediana. Rombos violetas: días de cada moda. Las marcas usan consumo neto diario positivo. Las fechas exactas se pueden consultar en las tablas.</desc>
   <g className="repl-month-bands">{bands.map((band,i)=>{const from=x(band.from),to=x(band.to),span=to-from;return <g key={band.key} data-month={band.key}>
    <rect x={from} y={27} width={span} height={317} fill={i%2?'#fff6e7':'#edf4fa'}/>
    <line x1={from} y1={27} x2={from} y2={344} stroke="#cad8e1" strokeDasharray="3 3"/>
@@ -33,7 +33,7 @@ export default function ReplenishmentWeeklyChart({weeks,start,end,unit,median,me
   </g>})}</g>
   {[0,.5,1].map(ratio=><g key={ratio}><line x1={left} y1={top+plotHeight*(1-ratio)} x2={width-right} y2={top+plotHeight*(1-ratio)} stroke="#c5d6e1"/><text x={left-9} y={top+4+plotHeight*(1-ratio)} textAnchor="end">{fmt(peak*ratio)}</text></g>)}
   {weeks.map(week=>{const from=x(week.from),span=week.observed_days*scale,gap=Math.min(4,span*.15),h=peak?week.sold/peak*plotHeight:0,center=from+span/2;return <g key={week.week_start}>
-   <rect className="repl-week-bar" x={from+gap} y={bottom-h} width={Math.max(1,span-gap*2)} height={h} fill={peak>0&&week.sold===peak?'#b56a13':'#226b98'}><title>{`${dateLabel(week.from)} — ${dateLabel(week.to)}: ${fmt(week.sold)} ${unit} vendidos; devoluciones: ${fmt(week.returned)}; ${week.observed_days} días${week.observed_days<7?" (semana incompleta)":""}.`}</title></rect>
+   <rect className="repl-week-bar" x={from+gap} y={bottom-h} width={Math.max(1,span-gap*2)} height={h} fill={peak>0&&week.sold===peak?'#b56a13':'#226b98'}><title>{`${peak>0&&week.sold===peak?"Pico semanal · mayor venta del periodo. ":""}${dateLabel(week.from)} — ${dateLabel(week.to)}: ${fmt(week.sold)} ${unit} vendidos; devoluciones: ${fmt(week.returned)}; ${week.observed_days} días${week.observed_days<7?" (semana incompleta)":""}.`}</title></rect>
    <text x={center} y={232} textAnchor="end" transform={`rotate(-40 ${center} 232)`}>{week.from.slice(8)}/{week.from.slice(5,7)}</text>
   </g>})}
   <text x={8} y={298}>Mediana</text><line x1={left} x2={width-right} y1={294} y2={294} stroke="#c4d6cf"/>
