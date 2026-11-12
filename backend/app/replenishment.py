@@ -23,7 +23,7 @@ from .models import (AuditEvent, MaterialArea, MaterialFamily, MaterialSubfamily
     ReplenishmentPolicy as Policy, ReplenishmentScenario as Scenario, ReplenishmentResult as Result,
     ReplenishmentAdjustment as Adjustment, ReplenishmentSettings as ModuleSettings,
     ReplenishmentJob as Job, ReplenishmentBatch as Batch, User)
-from .replenishment_engine import Parameters, PRECEDENCE, prepare_context, calculate_article, annotate_central, summarize, rounded_dispatch, quantity_comparison
+from .replenishment_engine import Parameters, PRECEDENCE, prepare_context, calculate_article, annotate_central, summarize, rounded_dispatch, quantity_comparison, ConsumptionBasis
 from .replenishment_source import DELEGATIONS, MAX_ARTICLES, HARD_MAX_ARTICLES, read_replenishment_source
 
 operator=require_roles('ADMIN','OPERADOR_TIENDA')
@@ -62,6 +62,7 @@ class PolicyInput(BaseModel):
     active:bool=True
 
 class RunInput(BaseModel):
+    sequential_delegations:bool=False
     filters:Filters=Field(default_factory=Filters)
     temporary_parameters:dict=Field(default_factory=dict)
     source_id:str|None=None
@@ -210,7 +211,7 @@ def job_payload(db,row):
         'total_articles':row.total_articles,'processed_articles':row.processed_articles,
         'total_batches':row.total_batches,'completed_batches':row.completed_batches,'batch_size':1000,
         'started_at':row.started_at,'finished_at':row.finished_at,'error':row.error,'result':result,
-        'filters':row.request['filters'],'temporary_parameters':row.request['temporary_parameters']}
+        'sequential_delegations':row.request.get('sequential_delegations',False),'filters':row.request['filters'],'temporary_parameters':row.request['temporary_parameters']}
 
 @router.post('/jobs',status_code=202)
 def enqueue(body:RunInput,db:Session=Depends(get_db),user:User=Depends(operator)):
@@ -325,12 +326,13 @@ def result_summary(db,query,full=False):
         count_if(payload['central_can_supply'].as_boolean().is_(True)).label('central_covered'),
         count_if(payload['overstock'].as_boolean().is_(True)).label('overstock'),
         count_if(payload['total_demand'].as_float()<=0).label('without_movement')]
+    reference=func.coalesce(payload['daily_reference'].as_float(),payload['daily_mean'].as_float())
     if full:columns.extend([
         func.coalesce(func.sum(payload['final_quantity'].as_float()),0).label('units_proposed'),
         count_if(payload['irregular'].as_boolean().is_(True)).label('irregular'),
         func.coalesce(func.sum(func.json_array_length(payload['recommendations'])),0).label('alerts'),
         func.coalesce(func.sum(payload['target_stock'].as_float()),0).label('target_stock'),
-        func.coalesce(func.avg(case((payload['daily_mean'].as_float()>0,payload['target_stock'].as_float()/func.nullif(payload['daily_mean'].as_float(),0)),else_=None)),0).label('average_coverage_days')])
+        func.coalesce(func.avg(case((reference>0,payload['target_stock'].as_float()/func.nullif(reference,0)),else_=None)),0).label('average_coverage_days')])
     row=db.execute(select(*columns)).mappings().one()
     return dict(row)
 
@@ -376,7 +378,7 @@ def detail(scenario_id:str,result_id:int,db:Session=Depends(get_db)):
     article,context=article_context(scenario,row,db)
     calculated=calculate_article(article,row.delegation,context,row.payload.get('manual_parameters'),True)
     history=db.scalars(select(Adjustment).where(Adjustment.result_id==row.id).order_by(Adjustment.created_at)).all()
-    return {'id':row.id,**quantity_comparison(row.payload),**{key:calculated[key] for key in ('daily_sales','daily_median','daily_median_frequency','daily_median_dates','daily_mode_occurrences','daily_modes','daily_mode_frequency','positive_consumption_days','weekly_sales')},'scenario_version':scenario.version,
+    return {'id':row.id,**quantity_comparison(row.payload),**{key:calculated[key] for key in ('daily_mean','daily_reference','consumption_basis','daily_sales','daily_median','daily_median_frequency','daily_median_dates','daily_mode_occurrences','daily_modes','daily_mode_frequency','positive_consumption_days','weekly_sales')},'scenario_version':scenario.version,
         'adjustments':[{'created_at':event.created_at,'user_id':event.user_id,'reason':event.reason,'changes':event.changes} for event in history]}
 
 @router.post('/simulations/{scenario_id}/results/{result_id}/recalculate')
@@ -434,7 +436,7 @@ def export(scenario_id:str,filters:ResultFilters=Depends(),db:Session=Depends(ge
                 cell=WriteOnlyCell(sheet,value=value);cell.data_type='s';cells.append(cell)
             else:cells.append(value)
         sheet.append(cells)
-    fields=[('sku','Código'),('description','Descripción'),('delegation','Delegación'),('unit_type','Tipo unidad'),('family','Familia'),('target_mode','Objetivo elegido'),
+    fields=[('sku','Código'),('description','Descripción'),('consumption_basis_label','Criterio de consumo'),('daily_reference','Base diaria utilizada'),('delegation','Delegación'),('unit_type','Tipo unidad'),('family','Familia'),('target_mode','Objetivo elegido'),
         ('central_stock','Stock Almeiras'),('central_outgoing','Comprometido Almeiras'),('central_incoming','Pendiente recibir Almeiras'),('central_monthly_consumption','Consumo mensual Almeiras'),('central_reserve','Reserva Almeiras'),('central_available','Disponible para despacho Almeiras'),('central_total_requested','Propuesta conjunta'),('central_can_supply','Almeiras cubre propuesta conjunta'),('overstock','Sobrestock'),('excess_stock','Exceso previsto'),('no_consumption','Sin consumo'),('stock','Stock'),('incoming','Pendiente recibir'),('outgoing','Pendiente servir'),('inventory_position','Disponible previsto'),('monthly_mean','Consumo mensual medio'),
         ('safety_stock','Seguridad'),('minimum_stock','Mínimo'),('maximum_stock','Stock máximo'),('expected_cycle_consumption','Consumo hasta próxima reposición'),('replenishment_point','Punto de reposición'),('target_stock','Objetivo aplicado'),('calculated_quantity','Cantidad calculada'),
         ('exit_multiple','Múltiplo EXIT'),('effective_multiple','Múltiplo aplicado'),('quantity_before_rounding','Cantidad antes de agrupar'),('recommended_quantity','Cantidad recomendada'),('adjusted_quantity','Ajuste manual'),('quantity_without_multiple','A reponer sin agrupación'),('quantity_with_exit_multiple','A reponer con múltiplos EXIT'),('central_total_without_multiple','Propuesta conjunta sin agrupación'),('central_total_with_exit_multiple','Propuesta conjunta con múltiplos EXIT'),('central_covers_without_multiple','Almeiras cubre sin agrupación'),('central_covers_with_exit_multiple','Almeiras cubre con múltiplos EXIT'),('final_quantity','Cantidad final'),('method','Método'),('confidence','Confianza')]
@@ -443,7 +445,7 @@ def export(scenario_id:str,filters:ResultFilters=Depends(),db:Session=Depends(ge
             ('stock','Stock'),('incoming','Por recibir'),('outgoing','Por servir'),
             ('inventory_position','Disponible previsto'),('unit_type','Unidad'),('monthly_mean','Consumo mensual'),
             ('minimum_stock','Mínimo'),('replenishment_point','Punto reposición'),
-            ('maximum_stock','Stock máximo'),('quantity_without_multiple','A reponer sin agrupación'),('quantity_with_exit_multiple','A reponer con múltiplos EXIT'),('exit_multiple','Múltiplo EXIT'),
+            ('maximum_stock','Stock máximo'),('consumption_basis_label','Criterio de consumo'),('daily_reference','Base diaria utilizada'),('quantity_without_multiple','A reponer sin agrupación'),('quantity_with_exit_multiple','A reponer con múltiplos EXIT'),('exit_multiple','Múltiplo EXIT'),
             ('central_available','Disponible para despacho'),('central_status','Cobertura Almeiras sin agrupación'),('central_exit_status','Cobertura Almeiras con múltiplos EXIT'),
             ('notices','Avisos')]
     extra=['Reglas aplicadas','Recomendaciones'] if mode=='expanded' else []
@@ -451,6 +453,11 @@ def export(scenario_id:str,filters:ResultFilters=Depends(),db:Session=Depends(ge
     count=0
     for result in rows:
         row={**quantity_comparison(result.payload),'monthly_mean':result.payload.get('monthly_mean',result.payload['daily_mean']*30)}
+        row['consumption_basis_label']={'MEAN':'Media','MEDIAN':'Mediana','MODE':'Moda'}.get(row.get('consumption_basis','MEAN'),'Media')
+        row['daily_reference']=row.get('daily_reference',row['daily_mean'])
+        if row.get('excess_stock') is not None:
+            from decimal import Decimal, ROUND_HALF_UP
+            row['excess_stock']=int(Decimal(str(row['excess_stock'])).quantize(Decimal('1'),rounding=ROUND_HALF_UP))
         for suffix,key in [('without_multiple','central_status'),('with_exit_multiple','central_exit_status')]:
             quantity=row['quantity_'+suffix]
             covered=row.get('central_covers_'+suffix)
@@ -482,15 +489,19 @@ def saved_calculations(db:Session=Depends(get_db)):
     data=calculation_list(db);db.commit();return data
 
 
+class RedistributionInput(BaseModel):
+    consumption_basis:ConsumptionBasis='MEAN'
+
+
 @router.post('/redistribution')
-def calculate_saved_redistribution(db:Session=Depends(get_db),user:User=Depends(operator)):
+def calculate_saved_redistribution(body:RedistributionInput|None=None,db:Session=Depends(get_db),user:User=Depends(operator)):
     from .replenishment_saved import calculate_redistribution
-    data=calculate_redistribution(db)
+    data=calculate_redistribution(db,body.consumption_basis if body else 'MEAN')
     audit(db,user,'REPLENISHMENT_REDISTRIBUTION_PROPOSED','CURRENT',{'summary':data['summary'],'calculations':data['calculations']})
     db.commit();return data
 
 
-class RedistributionExportInput(BaseModel):
+class RedistributionExportInput(RedistributionInput):
     fingerprint:str=Field(pattern=r'^[a-f0-9]{64}$')
 
 
@@ -498,7 +509,7 @@ class RedistributionExportInput(BaseModel):
 def export_redistribution(body:RedistributionExportInput,db:Session=Depends(get_db),user:User=Depends(operator)):
     from .replenishment_saved import calculate_redistribution
     from .replenishment_redistribution_export import workbook_bytes
-    proposal=calculate_redistribution(db)
+    proposal=calculate_redistribution(db,body.consumption_basis)
     if proposal['fingerprint']!=body.fingerprint:
         raise HTTPException(409,'Los cálculos han cambiado desde que se generó la propuesta. Vuelve a calcular la redistribución antes de exportarla.')
     data=workbook_bytes(proposal)

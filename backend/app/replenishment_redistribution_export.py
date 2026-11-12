@@ -22,7 +22,9 @@ def workbook_bytes(proposal):
             for value in values:
                 if isinstance(value,str):
                     cell=WriteOnlyCell(page,value=ILLEGAL_CHARACTERS_RE.sub('',value));cell.data_type='s'
-                else:cell=WriteOnlyCell(page,value=value)
+                else:
+                    cell=WriteOnlyCell(page,value=value)
+                    if len(cells)<len(headers) and headers[len(cells)]=='Sobrestock transferible en origen':cell.number_format='0'
                 if heading:cell.font=Font(bold=True,color='FFFFFF');cell.fill=PatternFill('solid',fgColor='1D608A')
                 cells.append(cell)
             page.append(cells)
@@ -46,7 +48,7 @@ def workbook_bytes(proposal):
     summary=proposal['summary']
     sheet('Resumen',['Dato','Valor'],[
         ['Exportado el (Europe/Madrid)',datetime.now(ZoneInfo('Europe/Madrid')).isoformat()],
-        ['Referencia de la propuesta',proposal['fingerprint']],['Materiales con movimientos',summary['materials']],
+        ['Referencia de la propuesta',proposal['fingerprint']],['Criterio de consumo',proposal.get('consumption_basis_label','Media')],['Materiales con movimientos',summary['materials']],
         ['Movimientos entre delegaciones',summary['transfers']],['Devoluciones a Almeiras',summary['returns_to_central']],
         ['Necesidades sin cubrir',summary['unmet_needs']],['Materiales excluidos',summary['excluded_materials']],
         ['Alcance','Propuesta completa; la búsqueda de pantalla no limita el Excel. No se ejecutan traslados ni reservas en EXIT.'],

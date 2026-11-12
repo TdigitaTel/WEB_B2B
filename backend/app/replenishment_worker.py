@@ -6,7 +6,7 @@ import json
 import logging
 import time
 import uuid
-from sqlalchemy import insert, select, text
+from sqlalchemy import insert, select, text, func
 from .db import SessionLocal, engine
 from .models import ReplenishmentJob as Job, ReplenishmentBatch as Batch, ReplenishmentScenario as Scenario, ReplenishmentResult as Result
 from .replenishment import RunInput, enrich_source, selected_product_codes
@@ -71,9 +71,13 @@ def initialize(job_id,token):
             filters=request.filters.model_dump(mode='json'),policies_snapshot=[],
             temporary_parameters=request.temporary_parameters,summary={})
         db.add(scenario);db.flush();job.scenario_id=scenario.id
-        job.total_articles=len(codes);job.total_batches=(len(codes)+BATCH_SIZE-1)//BATCH_SIZE
-        db.add_all([Batch(job_id=job.id,number=index//BATCH_SIZE+1,codes=codes[index:index+BATCH_SIZE])
-                    for index in range(0,len(codes),BATCH_SIZE)])
+        groups=[[code] for code in request.filters.delegations] if request.sequential_delegations else [request.filters.delegations]
+        job.total_articles=len(codes)*len(groups);job.total_batches=((len(codes)+BATCH_SIZE-1)//BATCH_SIZE)*len(groups)
+        pending=[]
+        for delegations in groups:
+            for index in range(0,len(codes),BATCH_SIZE):
+                pending.append(Batch(job_id=job.id,number=len(pending)+1,codes=codes[index:index+BATCH_SIZE],source={'calculation_delegations':delegations}))
+        db.add_all(pending)
         job.phase=f'Preparados {len(codes):,} artículos en {job.total_batches} bloques';db.commit()
 
 
@@ -85,7 +89,9 @@ def process_batch(job_id,token):
         if batch.attempts>=3:
             raise ValueError('El proceso se interrumpió tres veces en el mismo bloque. Revisa la memoria y los registros del proceso de reposición antes de repetir el cálculo.')
         request=RunInput.model_validate(job.request)
-        batch.attempts+=1;job.phase=f'Consultando EXIT · bloque {batch.number} de {job.total_batches}'
+        delegations=(batch.source or {}).get('calculation_delegations',request.filters.delegations)
+        prefix=('Delegación '+delegations[0]+' · ') if len(delegations)==1 else ''
+        batch.attempts+=1;job.phase=prefix+f'Consultando EXIT · bloque {batch.number} de {job.total_batches}'
         batch_id=batch.id;codes=list(batch.codes);number=batch.number;db.commit()
         # End the DB session before expensive I/O/CPU work: the website keeps its connection pool.
     source=read_replenishment_source(request.filters.date_from,request.filters.date_to,codes,BATCH_SIZE)
@@ -93,10 +99,11 @@ def process_batch(job_id,token):
         raise ValueError('La selección de artículos cambió en EXIT durante el cálculo. Vuelve a calcular para obtener un conjunto completo.')
     with SessionLocal() as db:
         job=owned(db,job_id,token);enrich_source(db,source)
-        job.phase=f'Calculando y guardando · bloque {number} de {job.total_batches}';db.commit()
-    context=prepare_context(source,request.filters.delegations,[],request.temporary_parameters)
-    results=[calculate_article(article,delegation,context) for article in source['articles'] for delegation in request.filters.delegations]
-    # All delegations for an article stay together: central coverage remains a joint check.
+        job.phase=prefix+f'Calculando y guardando · bloque {number} de {job.total_batches}';db.commit()
+    source['calculation_delegations']=delegations
+    context=prepare_context(source,delegations,[],request.temporary_parameters)
+    results=[calculate_article(article,delegation,context) for article in source['articles'] for delegation in delegations]
+    # Sequential runs receive the final joint central check only after all groups finish.
     annotate_central(results,source)
     summary=summarize(results)
     for result in results:result['source_batch']=number
@@ -109,12 +116,12 @@ def process_batch(job_id,token):
         scenario=db.get(Scenario,job.scenario_id)
         previous=scenario.summary
         merged={key:previous.get(key,0)+value for key,value in summary.items() if key!='average_coverage_days'}
-        merged['_coverage_count']=previous.get('_coverage_count',0)+sum(row['daily_mean']>0 for row in results)
-        merged['_coverage_sum']=previous.get('_coverage_sum',0)+sum(row['target_stock']/row['daily_mean'] for row in results if row['daily_mean']>0)
+        merged['_coverage_count']=previous.get('_coverage_count',0)+sum(row.get('daily_reference',row['daily_mean'])>0 for row in results)
+        merged['_coverage_sum']=previous.get('_coverage_sum',0)+sum(row['target_stock']/row.get('daily_reference',row['daily_mean']) for row in results if row.get('daily_reference',row['daily_mean'])>0)
         scenario.summary=merged
         scenario.source_snapshot={**scenario.source_snapshot,'captured_at':source['captured_at']}
         job.processed_articles+=len(codes);job.completed_batches+=1
-        job.phase=f'Guardados {job.processed_articles:,} de {job.total_articles:,} artículos'
+        job.phase=prefix+f'Guardados {job.processed_articles:,} de {job.total_articles:,} artículos'
         # Sources, results and progress are atomic per batch. A restart never duplicates a committed batch.
         db.commit()
     return True
@@ -129,8 +136,22 @@ def publish(job_id,token):
         fingerprints=db.scalars(select(Batch.fingerprint).where(Batch.job_id==job.id).order_by(Batch.number)).all()
         if len(fingerprints)!=job.total_batches or any(value is None for value in fingerprints):
             raise ValueError('Faltan bloques de origen; el cálculo no puede publicarse.')
+        if job.request.get('sequential_delegations'):
+            # Recheck joint Almeiras coverage once all delegation loops have finished.
+            last=job.request['filters']['delegations'][-1]
+            batches=db.scalars(select(Batch).where(Batch.job_id==job.id).order_by(Batch.number).execution_options(yield_per=1))
+            for batch in batches:
+                if batch.source.get('calculation_delegations')!=[last]:continue
+                stored=db.scalars(select(Result).where(Result.scenario_id==scenario.id,Result.sku.in_(batch.codes))).all()
+                payloads=[dict(row.payload) for row in stored];annotate_central(payloads,batch.source)
+                for row,payload in zip(stored,payloads):row.payload=payload
+                db.flush()
+            scenario.summary={**scenario.summary,
+                'central_covered':db.scalar(select(func.count()).select_from(Result).where(Result.scenario_id==scenario.id,Result.payload['central_can_supply'].as_boolean().is_(True))),
+                'alerts':db.scalar(select(func.coalesce(func.sum(func.json_array_length(Result.payload['recommendations'])),0)).where(Result.scenario_id==scenario.id))}
         summary=dict(scenario.summary)
         count=summary.pop('_coverage_count',0);coverage=summary.pop('_coverage_sum',0)
+        summary['articles_analyzed']=scenario.source_snapshot['source_articles']
         summary['average_coverage_days']=coverage/count if count else None
         scenario.summary=summary;scenario.source_fingerprint=digest(fingerprints)
         job.status='COMPLETED';job.phase='Cálculo completo y publicado';job.finished_at=now();job.error=None

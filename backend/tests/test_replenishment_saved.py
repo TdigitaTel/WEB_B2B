@@ -172,3 +172,36 @@ def test_redistribution_excel_with_empty_movements_and_missing_calculations(clie
     from app.main import app
     customer=TestClient(app);customer.post('/api/v1/auth/login',json={'email':'compras001@cliente.test','password':'123456'})
     assert customer.post(PREFIX+'/redistribution/export.xlsx',json={'fingerprint':proposal['fingerprint']}).status_code==403
+
+
+def test_redistribution_compares_statistics_from_saved_sources_without_overwriting(client,monkeypatch):
+    from datetime import date,timedelta
+    import io
+    from openpyxl import load_workbook
+    setup_source(monkeypatch,['STAT'])
+    raw=source(['STAT']);raw['start']='2026-04-01';raw['end']='2026-04-30'
+    values=[1]*11+[2]*10+[20]*9
+    raw['sales']=[{'sku':'STAT','delegation':delegation,'day':(date(2026,4,1)+timedelta(days=i)).isoformat(),'sold':value,'returned':0} for delegation in ['01','02','04','05'] for i,value in enumerate(values)]
+    for stock in raw['stocks']:stock['stock']=500 if stock['delegation']=='01' else 0
+    monkeypatch.setattr(worker,'read_replenishment_source',lambda *a:raw)
+    body=request();body['filters']['date_to']='2026-04-30';body['temporary_parameters']['use_safety_stock']=False
+    queued=client.post(PREFIX+'/jobs',json=body).json();assert worker.process_one()
+    with SessionLocal() as db:before=[dict(row.payload) for row in db.scalars(select(Result).order_by(Result.id))]
+    proposals={}
+    for basis in ['MEAN','MEDIAN','MODE']:
+        result=client.post(PREFIX+'/redistribution',json={'consumption_basis':basis})
+        assert result.status_code==200,result.text
+        proposal=result.json();assert proposal['consumption_basis']==basis
+        assert not proposal['material_warnings']
+        proposals[basis]=proposal
+    returns={key:sum(move['quantity'] for move in value['movements'] if move['kind']=='RETURN_CENTRAL') for key,value in proposals.items()}
+    assert returns['MEAN']<returns['MEDIAN']<returns['MODE']
+    assert len({proposal['fingerprint'] for proposal in proposals.values()})==3
+    chosen=proposals['MEDIAN']
+    exported=client.post(PREFIX+'/redistribution/export.xlsx',json={'fingerprint':chosen['fingerprint'],'consumption_basis':'MEDIAN'})
+    assert exported.status_code==200,exported.text
+    summary=dict(load_workbook(io.BytesIO(exported.content))['Resumen'].iter_rows(min_row=2,values_only=True))
+    assert summary['Criterio de consumo']=='Mediana'
+    assert client.post(PREFIX+'/redistribution/export.xlsx',json={'fingerprint':chosen['fingerprint'],'consumption_basis':'MEAN'}).status_code==409
+    with SessionLocal() as db:assert [row.payload for row in db.scalars(select(Result).order_by(Result.id))]==before
+    assert client.post(PREFIX+'/redistribution',json={'consumption_basis':'INVALID'}).status_code==422

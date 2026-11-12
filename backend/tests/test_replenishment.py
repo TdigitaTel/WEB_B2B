@@ -391,7 +391,7 @@ def test_filtered_summary_and_export_all_pages_with_exit_control_characters(monk
     assert book.sheetnames==['Reposición']
     headers=[cell.value for cell in sheet[1]]
     assert 'Disponible previsto' in headers and 'Posición' not in headers
-    assert 'Seguridad' not in headers and len(headers)==19
+    assert 'Seguridad' not in headers and len(headers)==21
     assert sheet.max_row==56 and sheet['A2'].value=='00054'
     assert sheet['A56'].value=='00000' and sheet['A56'].data_type=='s'
     assert sheet['B56'].value=='=Material de EXIT' and sheet['B56'].data_type=='s'
@@ -733,3 +733,51 @@ def test_excel_exports_both_proposals_and_invalid_exit_multiple(monkeypatch,mode
     data={row[0]:row for row in sheet.iter_rows(min_row=2,values_only=True)}
     assert data['VALID'][base]==78 and data['VALID'][grouped]==84
     assert data['INVALID'][base]==78 and data['INVALID'][grouped]=='Revisar múltiplo EXIT'
+
+
+@pytest.mark.parametrize('basis,reference,quantity',[('MEAN',211/30,57),('MEDIAN',2,16),('MODE',1,8)])
+def test_optional_consumption_basis_controls_all_targets(basis,reference,quantity):
+    raw=source_for(values=[1]*11+[2]*10+[20]*9,stock=0)
+    params={'simple_formula':True,'multiple_mode':'NONE','use_safety_stock':False,'maximum_days':30,'consumption_basis':basis}
+    row=calculate(raw,params)
+    assert row['daily_reference']==pytest.approx(reference)
+    assert row['daily_mean']==pytest.approx(211/30)
+    assert row['minimum_stock']==pytest.approx(reference)
+    assert row['replenishment_point']==pytest.approx(reference*8)
+    assert row['maximum_stock']==pytest.approx(reference*31)
+    assert row['final_quantity']==quantity
+    assert row['statistic_available'] is True
+    raw['sales'] += [{**sale,'delegation':'00'} for sale in list(raw['sales'])]
+    annotate_central([row],raw)
+    assert row['central_reserve']==pytest.approx(reference*8)
+    assert row['central_daily_mean']==pytest.approx(211/30)
+
+
+def test_mode_ties_and_no_repeated_positive_demand_do_not_fall_back_to_mean():
+    params={'simple_formula':True,'multiple_mode':'NONE','use_safety_stock':False,'consumption_basis':'MODE'}
+    tied=calculate(source_for(values=[1,2,3]*10,stock=0),params)
+    assert tied['daily_reference']==3
+    assert any(note['code']=='MODA_MULTIPLE' for note in tied['recommendations'])
+    absent=calculate(source_for(values=list(range(1,31)),stock=50),params)
+    assert absent['statistic_available'] is False
+    assert absent['final_quantity']==absent['quantity_without_multiple']==absent['quantity_with_exit_multiple']==0
+    assert absent['overstock'] is False
+    assert any(note['code']=='SIN_MODA' for note in absent['recommendations'])
+    empty=calculate(source_for(values=[0]*30),params)
+    assert empty['final_quantity']==0 and empty['statistic_available'] is True
+
+
+@pytest.mark.parametrize('mode',['simple','expanded'])
+def test_export_keeps_selected_basis_and_zero_decimal_excess(monkeypatch,mode):
+    import app.replenishment as module
+    raw=source_for(values=[1]*11+[2]*10+[20]*9,stock=100.25)
+    monkeypatch.setattr(module,'read_replenishment_source',lambda *args:raw)
+    client=login();prefix='/api/v1/store/replenishment/simulations'
+    result=client.post(prefix,json={'filters':{'date_from':raw['start'],'date_to':raw['end'],'delegations':['02']},'temporary_parameters':{'simple_formula':True,'maximum_days':30,'use_safety_stock':False,'consumption_basis':'MEDIAN'}})
+    assert result.status_code==201,result.text
+    exported=client.get(prefix+'/'+result.json()['id']+'/export.xlsx',params={'mode':mode})
+    book=load_workbook(io.BytesIO(exported.content));sheet=book.active
+    headers=[cell.value for cell in sheet[1]];values=[cell.value for cell in sheet[2]]
+    assert values[headers.index('Criterio de consumo')]=='Mediana'
+    assert values[headers.index('Base diaria utilizada')]==2
+    if mode=='expanded':assert values[headers.index('Exceso previsto')]==38
