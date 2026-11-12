@@ -26,10 +26,11 @@ async function view(name){await React.act(async()=>[...document.querySelectorAll
  await React.act(async()=>toggle().click());await save();assert.deepEqual(saved,[true]);assert.equal(toggle().checked,true);
  assert.equal(detail.open,true);assert.equal(detail.querySelectorAll('img').length,2);
  for(const image of detail.querySelectorAll('img')){assert.equal(image.getAttribute('loading'),'lazy');assert.match(image.src,/\/products\/by-sku\//)}
+ assert.match(detail.textContent,/Editar entregas previstas/,'WEB detail retains its own planning editor');
  assert.doesNotMatch(detail.textContent,/Sin confirmar/);assert.match(detail.textContent,/Tienda/);
  await React.act(async()=>detail.querySelector('img').dispatchEvent(new Event('error',{bubbles:true})));
  assert.ok(detail.querySelector('.thumbnail-placeholder'));assert.match(detail.textContent,/Accesorios/);
- for(const name of ['Activos Kardex','Atendidos','Activos SGA']){await view(name);assert.equal(document.querySelector('.ops-image-toggle'),null);assert.equal(document.querySelectorAll('.dispatch-line img').length,0,'Photos are restricted to WEB orders')}
+ for(const name of ['Activos Kardex','Atendidos','Activos SGA']){await view(name);assert.ok(document.querySelector('.dispatch-zones'),name+' renders its management cards');assert.ok(![...document.querySelectorAll('.ops-page button')].some(button=>button.textContent==='Editar entregas previstas'),name+' must not offer the line delivery editor');assert.equal(document.querySelector('.ops-image-toggle'),null);assert.equal(document.querySelectorAll('.dispatch-line img').length,0,'Photos are restricted to WEB orders')}
  await view('Pedidos WEB');assert.equal(toggle().checked,true,'Changing view retains saved preference');
  fail=true;await React.act(async()=>toggle().click());await save();assert.equal(document.querySelectorAll('.operator-web-order img').length,2,'A failed save does not change the active preference');assert.match(document.querySelector('[role=alert]').textContent,/No se pudo guardar/);
  fail=false;await save();assert.equal(toggle().checked,false);assert.equal(document.querySelectorAll('.operator-web-order img').length,0);
