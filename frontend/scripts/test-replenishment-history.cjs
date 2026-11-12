@@ -19,6 +19,7 @@ const render=endpoint=>root.render(React.createElement(History,{endpoint,unit:'P
  assert.match(document.querySelector('.repl-history-reading').textContent,/75 %/);
  assert.match(document.querySelector('.repl-history-reading').textContent,/no hay un valor mayoritario/);
  assert.match(document.body.textContent,/2 días con consumo cero excluidos/);
+ assert.match(document.querySelector('.repl-history-metrics>div:first-child').textContent,/Spot sin analizar/);
  assert.match(document.body.textContent,/Pico semanal: 20 PZ/);assert.match(document.body.textContent,/criterio elegido: media, mediana o moda/);assert.match(document.body.textContent,/Media diaria de referencia/);assert.match(document.body.textContent,/1,75 PZ/);
  assert.match(document.querySelector('.repl-peak-key').textContent,/Marrón: pico semanal/);
  assert.equal(document.querySelectorAll('svg .repl-week-bar').length,2);
@@ -48,6 +49,8 @@ const render=endpoint=>root.render(React.createElement(History,{endpoint,unit:'P
  data.spot_analysis={status:'POSSIBLE_SPOT',positive_days:20,minimum_positive_days:8,normal_daily_median:10,q1:10,q3:10,upper_threshold:30,outliers:[{day:'2026-04-04',demand:200,times_normal:20}],flagged_quantity:200,flagged_share_percent:51.28,daily_mean:13,daily_mean_without_peaks:6.333,mean_uplift_percent:105.26};
  await React.act(async()=>render('/saved/result/spot'));
  const spot=document.querySelector('[aria-label="Análisis de posibles consumos spot"]');
+ assert.match(document.querySelector('.repl-history-metrics>div:first-child').textContent,/Posible spot · revisar/);
+ assert.equal(document.querySelector('.repl-history-metrics .repl-spot-indicator').dataset.spotStatus,'POSSIBLE_SPOT');
  assert.match(spot.textContent,/Posible consumo spot: revisar antes de reponer/);assert.match(spot.textContent,/Cantidad habitual de referencia: 10 PZ/);
  assert.match(spot.textContent,/51,28 %/);assert.match(spot.textContent,/6,333 PZ/);assert.match(spot.textContent,/04\/04\/2026/);
  assert.match(spot.textContent,/no cambia las propuestas guardadas/);assert.match(document.querySelector('.repl-spot-key').textContent,/Consumo diario atípico/);
@@ -55,6 +58,13 @@ const render=endpoint=>root.render(React.createElement(History,{endpoint,unit:'P
  data.spot_analysis={...data.spot_analysis,status:'INSUFFICIENT',positive_days:3,outliers:[]};
  await React.act(async()=>render('/saved/result/sparse'));
  assert.match(document.querySelector('[aria-label="Análisis de posibles consumos spot"]').textContent,/se requieren al menos 8/);assert.equal(document.querySelectorAll('.repl-spot-mark').length,0);
+ assert.match(document.querySelector('.repl-history-metrics>div:first-child').textContent,/Histórico insuficiente/);
+ data.spot_analysis={...data.spot_analysis,status:'NO_OUTLIERS'};
+ await React.act(async()=>render('/saved/result/no-peaks'));
+ assert.match(document.querySelector('.repl-history-metrics>div:first-child').textContent,/Sin picos atípicos detectados/);
+ data.spot_analysis={...data.spot_analysis,status:'NO_CONSUMPTION'};
+ await React.act(async()=>render('/saved/result/no-spot-consumption'));
+ assert.match(document.querySelector('.repl-history-metrics>div:first-child').textContent,/Sin consumo para analizar spot/);
  delete data.spot_analysis;
  data.daily_modes=[];data.weekly_sales.forEach(w=>w.sold=0);data.daily_median=null;data.positive_consumption_days=0;
  await React.act(async()=>render('/saved/result/46'));
