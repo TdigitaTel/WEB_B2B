@@ -6,7 +6,7 @@ for(const ext of ['.ts','.tsx'])require.extensions[ext]=(m,f)=>m._compile(ts.tra
 const React=require('react'),{createRoot}=require('react-dom/client'),History=require('../app/ReplenishmentHistory.tsx').default,{monthBands}=require('../app/ReplenishmentWeeklyChart.tsx');
 let fail=false,calls=[];
 const daily=[1,1,2,2,4,4,0,0].map((demand,i)=>({day:`2026-04-${String(i+1).padStart(2,'0')}`,sold:demand,returned:0,demand}));
-const data={daily_sales:daily,daily_median:2,daily_median_frequency:2,daily_median_dates:['2026-04-03','2026-04-04'],daily_modes:[1,2,4],daily_mode_occurrences:[1,2,4].map(value=>({value,count:2,dates:daily.filter(d=>d.demand===value).map(d=>d.day)})),daily_mode_frequency:2,positive_consumption_days:6,observed_days:8,calculation:{window_start:'2026-04-01',window_end:'2026-04-08'},weekly_sales:[{week_start:'2026-03-30',from:'2026-04-01',to:'2026-04-05',observed_days:5,sold:20,returned:10,demand:10},{week_start:'2026-04-06',from:'2026-04-06',to:'2026-04-08',observed_days:3,sold:4,returned:0,demand:4}]};
+const data={daily_mean:1.75,daily_sales:daily,daily_median:2,daily_median_frequency:2,daily_median_dates:['2026-04-03','2026-04-04'],daily_modes:[1,2,4],daily_mode_occurrences:[1,2,4].map(value=>({value,count:2,dates:daily.filter(d=>d.demand===value).map(d=>d.day)})),daily_mode_frequency:2,positive_consumption_days:6,observed_days:8,calculation:{window_start:'2026-04-01',window_end:'2026-04-08'},weekly_sales:[{week_start:'2026-03-30',from:'2026-04-01',to:'2026-04-05',observed_days:5,sold:20,returned:10,demand:10},{week_start:'2026-04-06',from:'2026-04-06',to:'2026-04-08',observed_days:3,sold:4,returned:0,demand:4}]};
 global.fetch=async(url,options)=>{calls.push([url,options]);return {ok:!fail,status:fail?500:200,json:async()=>fail?{detail:{message:'internal'}}:data}};
 const root=createRoot(document.getElementById('root'));
 const render=endpoint=>root.render(React.createElement(History,{endpoint,unit:'PZ'}));
@@ -19,7 +19,7 @@ const render=endpoint=>root.render(React.createElement(History,{endpoint,unit:'P
  assert.match(document.querySelector('.repl-history-reading').textContent,/75 %/);
  assert.match(document.querySelector('.repl-history-reading').textContent,/no hay un valor mayoritario/);
  assert.match(document.body.textContent,/2 días con consumo cero excluidos/);
- assert.match(document.body.textContent,/Pico semanal: 20 PZ/);assert.match(document.body.textContent,/no modifican la reposición/);
+ assert.match(document.body.textContent,/Pico semanal: 20 PZ/);assert.match(document.body.textContent,/criterio elegido: media, mediana o moda/);assert.match(document.body.textContent,/Media diaria de referencia/);assert.match(document.body.textContent,/1,75 PZ/);
  assert.equal(document.querySelectorAll('svg .repl-week-bar').length,2);
  assert.equal(document.querySelectorAll('svg .repl-week-bar[fill="#b56a13"]').length,1);
  assert.match(document.querySelector('svg .repl-week-bar title').textContent,/semana incompleta/);

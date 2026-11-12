@@ -106,6 +106,8 @@ def redistribution(rows):
             warnings.append({'sku':sku,'reason':'Falta el cálculo de este material en alguna delegación.'});continue
         if len({r.get('unit_type','') for r in group})!=1:
             warnings.append({'sku':sku,'reason':'Las unidades del material no coinciden entre delegaciones.'});continue
+        if any(row.get('statistic_available') is False for row in group):
+            warnings.append({'sku':sku,'reason':'No hay moda positiva repetida en alguna delegación; material excluido con este criterio.'});continue
         fields=('stock','incoming','outgoing','maximum_stock','inventory_position','final_quantity')
         if any(number(r.get(key)) is None or (key in ('stock','incoming','outgoing','maximum_stock','final_quantity') and number(r[key])<0) for r in group for key in fields):
             warnings.append({'sku':sku,'reason':'Stock, pendientes u objetivos ausentes o negativos; revisar antes de mover.'});continue
@@ -146,7 +148,34 @@ def redistribution(rows):
                    'returns_to_central':sum(m['kind']=='RETURN_CENTRAL' for m in moves),'unmet_needs':len(unmet),'excluded_materials':len(warnings)}}
 
 
-def calculate_redistribution(db):
+def rebased_planning_rows(db,scenario,delegation,basis):
+    """Recalculate from immutable saved sources, not live EXIT. Bound memory per source batch."""
+    from .replenishment_engine import prepare_context,calculate_article
+    batch_numbers=list(db.scalars(select(Result.payload['source_batch'].as_integer()).where(
+        Result.scenario_id==scenario.id,Result.delegation==delegation).distinct()))
+    output=[]
+    for number in batch_numbers:
+        query=select(Result).where(Result.scenario_id==scenario.id,Result.delegation==delegation)
+        if number is None:query=query.where(Result.payload['source_batch'].as_integer().is_(None))
+        else:query=query.where(Result.payload['source_batch'].as_integer()==number)
+        source=(db.scalar(select(Batch.source).join(Job,Job.id==Batch.job_id).where(Job.scenario_id==scenario.id,Batch.number==number))
+                if scenario.source_snapshot.get('batched') else scenario.source_snapshot)
+        if not source:raise HTTPException(409,'Falta la instantánea del histórico. Recalcula la delegación antes de usar otro criterio.')
+        articles={article['sku']:article for article in source['articles']}
+        params={**scenario.temporary_parameters,'consumption_basis':basis}
+        context=prepare_context(source,[delegation],scenario.policies_snapshot,params)
+        for stored in db.scalars(query):
+            old=stored.payload
+            if stored.sku not in articles:raise HTTPException(409,'Falta un material en la instantánea. Recalcula la delegación.')
+            row=calculate_article(articles[stored.sku],delegation,context,{**old.get('manual_parameters',{}),'consumption_basis':basis})
+            if old.get('adjusted_quantity') is not None:row['final_quantity']=old['adjusted_quantity']
+            if old.get('manually_excluded'):row['final_quantity']=0
+            output.append({key:row.get(key) for key in ('sku','delegation','description','unit_type','stock','incoming','outgoing','maximum_stock','inventory_position','final_quantity','effective_multiple','statistic_available')}|
+                          {'daily_mean':row['daily_reference']})
+    return output
+
+
+def calculate_redistribution(db,consumption_basis='MEAN'):
     current=current_calculations(db)
     missing=[{'code':d,'name':name} for d,name in DELEGATIONS.items() if d not in current]
     if missing:raise HTTPException(409,{'message':'Faltan cálculos guardados. Calcula todas las delegaciones antes de redistribuir.','missing_delegations':missing})
@@ -160,12 +189,16 @@ def calculate_redistribution(db):
         columns=[Result.sku,Result.delegation]
         columns += [Result.payload[key].as_string().label(key) for key in ('description','unit_type')]
         columns += [Result.payload[key].as_float().label(key) for key in ('stock','incoming','outgoing','maximum_stock','inventory_position','final_quantity','daily_mean','effective_multiple')]
-        rows.extend(dict(row) for row in db.execute(select(*columns).where(Result.scenario_id==scenario.id,Result.delegation==code)).mappings())
+        columns += [Result.payload['statistic_available'].as_boolean().label('statistic_available')]
+        if consumption_basis!='MEAN' or scenario.temporary_parameters.get('consumption_basis','MEAN')!='MEAN':
+            rows.extend(rebased_planning_rows(db,scenario,code,consumption_basis))
+        else:
+            rows.extend(dict(row) for row in db.execute(select(*columns).where(Result.scenario_id==scenario.id,Result.delegation==code)).mappings())
         ranges.add((scenario.filters['date_from'],scenario.filters['date_to']))
         calculations.append({'delegation':code,'name':DELEGATIONS[code],'scenario_id':scenario.public_id,
             'captured_at':scenario.source_snapshot['captured_at'],'date_from':scenario.filters['date_from'],'date_to':scenario.filters['date_to']})
     result=redistribution(rows)
     proposal={**result,'calculations':calculations,'warnings':(['Los cálculos utilizan periodos de ventas diferentes. Revisa las fechas antes de aplicar la propuesta.'] if len(ranges)>1 else []),
-        'read_only_exit':True}
+        'read_only_exit':True,'consumption_basis':consumption_basis,'consumption_basis_label':{'MEAN':'Media','MEDIAN':'Mediana','MODE':'Moda'}[consumption_basis]}
     proposal['fingerprint']=hashlib.sha256(json.dumps(proposal,sort_keys=True,ensure_ascii=False,separators=(',',':')).encode()).hexdigest()
     return proposal

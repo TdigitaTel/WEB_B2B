@@ -27,7 +27,15 @@ const button=text=>[...document.querySelectorAll('button')].find(b=>b.textConten
  assert.equal(downloaded,'redistribucion.xlsx');
  const exported=calls.find(c=>c[0].endsWith('/export.xlsx'));assert.equal(exported[1].method,'POST');assert.equal(JSON.parse(exported[1].body).fingerprint,plan.fingerprint);
  assert.equal(calls.find(c=>c[0].endsWith('/redistribution'))[1].method,'POST');
- const input=document.querySelector('input');await React.act(async()=>{const setter=Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype,'value').set;setter.call(input,'no-match');input.dispatchEvent(new Event('input',{bubbles:true}));});
+ assert.equal(JSON.parse(exported[1].body).consumption_basis,'MEAN');
+ assert.equal(document.querySelector('input[value=MEAN]').checked,true);
+ await React.act(async()=>document.querySelector('input[value=MEDIAN]').click());
+ assert.ok(!button('Exportar redistribución a Excel'));
+ await React.act(async()=>button('Calcular redistribución').click());
+ assert.equal(JSON.parse(calls.filter(c=>c[0].endsWith('/redistribution')).at(-1)[1].body).consumption_basis,'MEDIAN');
+ await React.act(async()=>button('Exportar redistribución a Excel').click());
+ assert.equal(JSON.parse(calls.filter(c=>c[0].endsWith('/export.xlsx')).at(-1)[1].body).consumption_basis,'MEDIAN');
+ const input=document.querySelector('input:not([type=radio])');await React.act(async()=>{const setter=Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype,'value').set;setter.call(input,'no-match');input.dispatchEvent(new Event('input',{bubbles:true}));});
  stale=true;await React.act(async()=>button('Exportar redistribución a Excel').click());
  assert.match(document.querySelector('[role=alert]').textContent,/Vuelve a calcular/);assert.ok(!button('Exportar redistribución a Excel'));
  await React.act(async()=>render('2'));assert.ok(!document.body.textContent.includes('Propuesta de redistribución'));
