@@ -25,6 +25,7 @@
     "test:operator-order-images": "node scripts/test-operator-order-images.cjs",
     "test:settings-menu": "node scripts/test-settings-menu.cjs",
     "test:operation-filter": "node scripts/test-operation-filter.cjs",
+    "test:replenishment-result-filters": "node scripts/test-replenishment-result-filters.cjs",
     "test:replenishment-tabs": "node scripts/test-replenishment-tabs.cjs",
     "test:replenishment-safety": "node scripts/test-replenishment-safety.cjs",
     "test:replenishment-saved": "node scripts/test-replenishment-saved.cjs",
