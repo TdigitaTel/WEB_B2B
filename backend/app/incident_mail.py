@@ -5,7 +5,6 @@ from email.utils import formataddr
 from sqlalchemy import select
 from .models import LogisticsIncident as Incident,IncidentEmail as Mail,User
 from .order_email_settings import configuration,cipher,send_message,smtp_diagnostic
-from .operator_permissions import permissions_for
 
 
 def now():return datetime.now(timezone.utc)
@@ -17,10 +16,8 @@ def deliver(db,job,transport=None):
         job.status='SUPERSEDED';job.updated_at=now();db.commit();return
     if not recipient or not recipient.active:
         job.status='NOT_CONFIGURED';job.diagnostic={'response':'El responsable ya no tiene acceso activo'};job.updated_at=now();db.commit();return
-    permissions=permissions_for(recipient,db)
-    kind=row.workflow['steps'][row.stage_index]['kind'] if row.stage_index>=0 else 'CONFIRM'
-    if not (permissions.get('incident_create') if kind=='CONFIRM' else permissions.get('incident_work') and (kind!='APPROVE' or permissions.get('incident_approve'))):
-        job.status='NOT_CONFIGURED';job.diagnostic={'response':'El responsable ya no tiene permiso para esta etapa'};job.updated_at=now();db.commit();return
+    if recipient.role not in {'ADMIN','OPERADOR_TIENDA'}:
+        job.status='NOT_CONFIGURED';job.diagnostic={'response':'El responsable ya no es un operador activo'};job.updated_at=now();db.commit();return
     saved,config=configuration(db)
     if not saved or not saved.password_ciphertext or not config.smtp_host or not config.username or not job.recipient:
         job.status='NOT_CONFIGURED';job.diagnostic={'response':'Configura el SMTP y el correo del responsable antes de reenviar'};job.updated_at=now();db.commit();return
