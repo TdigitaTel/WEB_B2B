@@ -677,3 +677,19 @@ class OrderEmailDelivery(Base):
 # Keep the light read projection in the same transaction as manual result changes.
 from .replenishment_read_model import install_events
 install_events(ReplenishmentResult)
+
+
+class HomeBannerSettings(Base):
+    __tablename__ = 'home_banner_settings'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    interval_seconds: Mapped[int] = mapped_column(Integer, default=7)
+    revision: Mapped[str] = mapped_column(String(36), default=public_uuid)
+
+
+class HomeBannerSlide(Base):
+    __tablename__ = 'home_banner_slides'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=public_uuid)
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    alt: Mapped[str] = mapped_column(String(200), default='Información de Bermúdez Ulloa')
+    image_data: Mapped[bytes | None] = mapped_column(LargeBinary)

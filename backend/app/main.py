@@ -90,6 +90,8 @@ from .replenishment import router as replenishment_router
 app.include_router(replenishment_router)
 from .login_appearance import router as login_appearance_router
 app.include_router(login_appearance_router)
+from .home_banner import router as home_banner_router
+app.include_router(home_banner_router)
 from .sales_order_series import router as sales_order_series_router, resolve_active_series
 app.include_router(sales_order_series_router)
 logger = logging.getLogger(__name__)
