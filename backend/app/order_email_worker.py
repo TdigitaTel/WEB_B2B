@@ -130,6 +130,8 @@ def run_once():
                 (OrderEmailDelivery.next_attempt_at.is_(None)) | (OrderEmailDelivery.next_attempt_at<=now())
             ).order_by(OrderEmailDelivery.id).limit(25)))
             for job in jobs:deliver(db,job)
+            from .incident_mail import run_pending
+            run_pending(db)
 
 
 def main():

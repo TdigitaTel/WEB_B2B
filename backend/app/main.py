@@ -88,6 +88,8 @@ from .price_visibility import protect_payload
 app.include_router(subusers_router)
 from .replenishment import router as replenishment_router
 app.include_router(replenishment_router)
+from .incidents import router as incidents_router
+app.include_router(incidents_router)
 from .login_appearance import router as login_appearance_router
 app.include_router(login_appearance_router)
 from .home_banner import router as home_banner_router

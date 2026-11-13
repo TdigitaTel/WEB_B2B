@@ -42,12 +42,12 @@ import HomeBanner from "./HomeBanner";
 import HomeBannerSettings from "./HomeBannerSettings";
 import "./settings.css";
 import SettingsMenu from "./SettingsMenu";
-import Replenishment from "./Replenishment";
+import ReplenishmentWorkspace from "./ReplenishmentWorkspace";
 
 type View = "operator-access" | "replenishment" | "pickup-settings" | "home" | "catalog" | "orders" | "documents" | "ops" | "category-visibility" | "customer-access" | "account";
 type User = { operator_permissions?:Record<string,boolean>; access_code?:string; contact_phone?:string; can_view_prices?:boolean; can_view_delivery_notes?:boolean; can_view_invoices?:boolean; can_manage_preferences?:boolean; own_orders_only?:boolean; is_subuser?:boolean; can_manage_subusers?:boolean; login_name?:string; principal_user_name?:string; id: string; name: string; email: string; role: string; idle_timeout_seconds: number; must_change_password: boolean; show_delivery_note_images?:boolean; show_order_images?:boolean };
 const operatorViewModules:Record<string,string>={ops:'orders',replenishment:'replenishment','pickup-settings':'settings','customer-access':'customers','category-visibility':'categories','operator-access':'users'};
-function operatorViewAllowed(user:User,view:string){return !operatorViewModules[view]||user.operator_permissions?.[operatorViewModules[view]]!==false}
+function operatorViewAllowed(user:User,view:string){if(view==='replenishment'&&Object.entries(user.operator_permissions||{}).some(([key,value])=>key.startsWith('incident_')&&value))return true;return !operatorViewModules[view]||user.operator_permissions?.[operatorViewModules[view]]!==false}
 function operatorStart(user:User):View{return (Object.keys(operatorViewModules).find(view=>operatorViewAllowed(user,view))||'account') as View}
 
 type AccountCustomer = { email1?:string;email2?:string;web?:string;order_email_recipients?:{email1_enabled:boolean;email2_enabled:boolean}; trade_name: string; legal_name: string; erp_id: string; tax_id: string; email: string; phone: string; billing_address: string; price_list: string; discount_pct: number };
@@ -185,7 +185,7 @@ export default function Page() {
     try {
       const account = await api<{ user: User; customer: typeof customer }>("/api/v1/account");
       setUser(account.user); setCustomer(account.customer);
-      if (account.user.role === "OPERADOR_TIENDA" || account.user.role === "ADMIN") setView(operatorStart(account.user));
+      if (account.user.role === "OPERADOR_TIENDA" || account.user.role === "ADMIN") setView(window.location.hash.startsWith("#incident=")&&operatorViewAllowed(account.user,"replenishment")?"replenishment":operatorStart(account.user));
     } catch { setUser(null); }
     finally { setLoading(false); }
   }, []);
@@ -368,6 +368,7 @@ export default function Page() {
     setUser(result.user);setLoading(true);await loadAccount();
   }
 
+  useEffect(()=>{const openIncident=()=>{if(user&&(user.role==='ADMIN'||user.role==='OPERADOR_TIENDA')&&operatorViewAllowed(user,'replenishment')&&window.location.hash.startsWith('#incident='))setView('replenishment')};openIncident();window.addEventListener('hashchange',openIncident);return()=>window.removeEventListener('hashchange',openIncident)},[user?.id]);
   async function logout() { try { await api("/api/v1/auth/logout", { method: "POST" }); } finally { window.dispatchEvent(new Event("session-expired")); location.replace(location.pathname); } }
 
   async function addProduct(productId: string, quantity = 1) {
@@ -447,7 +448,7 @@ export default function Page() {
     {view === "documents" && <Documents initialNote={selectedDeliveryNote} initialOrderId={selectedDeliveryOrder} canViewNotes={user.can_view_delivery_notes!==false} canViewInvoices={user.can_view_invoices!==false} canViewPrices={user.can_view_prices!==false} showImages={!!user.show_delivery_note_images} notes={deliveryNotes} invoices={invoices} />}
     {view === "account" && (isOperator?<div className="page account-page"><h1>Mi cuenta</h1><PasswordSettings/></div>:<Account user={user} customer={customer} onPreferences={preferences=>setUser(previous=>previous?{...previous,...preferences}:previous)} onCatalogPrice={withoutTax=>{setProducts(old=>old.map(product=>({...product,highlight_price_without_tax:withoutTax})));setFavoriteProducts(old=>old.map(product=>({...product,highlight_price_without_tax:withoutTax})));setSuggestions([])}} />)}
 
-    {view === "replenishment" && isOperator && operatorViewAllowed(user,"replenishment") && <Replenishment />}
+    {view === "replenishment" && isOperator && operatorViewAllowed(user,"replenishment") && <ReplenishmentWorkspace permissions={user.operator_permissions} />}
     {view === "ops" && isOperator && operatorViewAllowed(user,"ops") && <Operations orders={opsOrders} onRefresh={refreshOperations} showImages={!!user.show_order_images}  />}
     {view === "pickup-settings" && isOperator && operatorViewAllowed(user,"pickup-settings") && <PickupParameters showImages={!!user.show_order_images} onImagesChange={async value=>{const result=await api<{show_order_images:boolean;show_delivery_note_images:boolean}>("/api/v1/account/preferences",{method:"PATCH",body:JSON.stringify({show_order_images:value,show_delivery_note_images:!!user.show_delivery_note_images})});setUser(previous=>previous?{...previous,...result}:previous)}} />}
     {view === "operator-access" && isOperator && operatorViewAllowed(user,"operator-access") && <OperatorAccess />}
