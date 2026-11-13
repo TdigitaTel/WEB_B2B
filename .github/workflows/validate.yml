@@ -24,6 +24,7 @@ jobs:
       - run: npm ci
       - run: npm run test:home-orders
       - run: npm run test:home-banner
+      - run: npm run test:incidents
       - run: npm run test:catalog-filters
       - run: npm run test:login-image
       - run: npm run test:replenishment-snapshot
