@@ -22,7 +22,7 @@ from .order_email_settings import email_address
 
 router=APIRouter(prefix='/api/v1/store/incidents',tags=['incidents'])
 operator=require_roles('ADMIN','OPERADOR_TIENDA')
-PERMISSIONS=('incident_create','incident_work','incident_supervise','incident_approve','incident_config')
+PERMISSIONS=('incident_access','incident_supervise','incident_config')
 LABELS={'SALE':'Venta / despacho','PURCHASE':'Compra / recepción','REPLENISHMENT':'Reposición','INVENTORY':'Toma de inventario','TRANSFER':'Intercambio entre delegaciones'}
 
 def now():return datetime.now(timezone.utc)
@@ -40,9 +40,17 @@ def scope_ids(user,db):
 def allowed_origin(user,db,reference):
     company,code=reference.split(':',1)
     return can_operate_delegation(user,db,int(company),code)
+def managed_processes(user,db):
+    if user.role=='ADMIN':return None
+    if not permissions_for(user,db).get('incident_supervise'):return set()
+    access=db.get(OperatorAccess,user.id)
+    if not access:return set()
+    configured=set(db.scalars(select(Type.code)))
+    if access.permissions.get('incident_all_processes') is True:return configured
+    return configured.intersection(access.permissions.get('incident_process_codes',[]))
 def supervises(user,db,row):
-    scope=scope_ids(user,db)
-    return permissions_for(user,db).get('incident_supervise') and (scope is None or row.delegation_id in scope or row.destination_id in scope)
+    codes=managed_processes(user,db)
+    return codes is None or row.type_code in codes
 def can_see(user,db,row):
     return row.creator_id==user.id or row.assignee_id==user.id or supervises(user,db,row)
 def load(incident_id,user,db,lock=False):
@@ -72,15 +80,12 @@ def active_target(db,target,kind='WORK'):
     if not target:return None
     user=db.get(User,target['user_id'])
     if not user or not user.active or user.role not in {'ADMIN','OPERADOR_TIENDA'}:return None
-    permissions=permissions_for(user,db)
-    if not permissions.get('incident_work'):return None
-    if kind=='APPROVE' and not permissions.get('incident_approve'):return None
     return user
 
 def resolve(db,row,step):
     if step['kind']=='CONFIRM':
         user=db.get(User,row.creator_id)
-        if not user or not user.active or not permissions_for(user,db).get('incident_create'):fail('El solicitante ya no puede confirmar; un supervisor debe revisar la asignación',409)
+        if not user or not user.active or user.role not in {'ADMIN','OPERADOR_TIENDA'}:fail('El solicitante ya no puede confirmar; un supervisor debe revisar la asignación',409)
         return user,user.email
     reference=row.destination_id if step['scope']=='DESTINATION' else row.delegation_id
     target=step.get('general') if step['scope']=='GENERAL' else step.get('delegations',{}).get(reference)
@@ -88,7 +93,6 @@ def resolve(db,row,step):
     if not account:
         target=step.get('substitute');account=active_target(db,target,step['kind'])
     if not account:fail(f'Configura un responsable habilitado para «{step["name"]}» y la delegación correspondiente',409)
-    if step['scope']!='GENERAL' and reference and not allowed_origin(account,db,reference):fail(f'El responsable de «{step["name"]}» no tiene acceso a esa delegación',409)
     return account,target['email']
 
 def event(db,row,user,action,**detail):
@@ -141,9 +145,8 @@ def detail(row,db,user):
     mails=[{'id':entry.id,'stage':entry.stage,'status':entry.status,'attempts':entry.attempts,'diagnostic':entry.diagnostic,'created_at':entry.created_at,'updated_at':entry.updated_at} for entry in db.scalars(select(Mail).where(Mail.incident_id==row.id).order_by(Mail.id))]
     p=permissions_for(user,db);supervisor=supervises(user,db,row)
     current=row.workflow['steps'][row.stage_index] if row.stage_index>=0 else None
-    work=(row.assignee_id==user.id or supervisor) and (p.get('incident_work') or current and current['kind']=='CONFIRM' and row.creator_id==user.id)
-    if current and current['kind']=='APPROVE':work=work and p.get('incident_approve')
-    if current and current['kind']=='CONFIRM':work=row.assignee_id==user.id and row.creator_id==user.id and p.get('incident_create')
+    work=row.assignee_id==user.id or supervisor
+    if current and current['kind']=='CONFIRM':work=row.assignee_id==user.id and row.creator_id==user.id
     return {**summary(row,db),'lines':row.lines,'workflow':row.workflow,'file_mode':file_mode(row),'files':files,
         'events':[{'id':entry.id,'action':entry.action,'actor':names.get(entry.actor_id),'detail':entry.detail,'created_at':entry.created_at} for entry in events],
         'emails':mails,'can_submit':row.status=='DRAFT' and row.creator_id==user.id and p.get('incident_create',False),
@@ -156,9 +159,8 @@ def options(user:User=Depends(operator),db:Session=Depends(get_db)):
     people=[]
     if p.get('incident_config') or p.get('incident_supervise'):
         for account in db.scalars(select(User).where(User.active.is_(True),User.role.in_(['ADMIN','OPERADOR_TIENDA'])).order_by(User.full_name)):
-            perms=permissions_for(account,db)
-            if perms.get('incident_work'):people.append({'id':account.id,'name':account.full_name,'email':account.email,'can_approve':perms.get('incident_approve',False),'delegations':scope_ids(account,db)})
-    return {'permissions':p,'user_id':user.id,'types':type_rows(db),'users':people,
+            people.append({'id':account.id,'name':account.full_name,'email':account.email})
+    return {'permissions':p,'user_id':user.id,'types':[item for item in type_rows(db) if p.get('incident_config') or item['revision']>0],'users':people,
         'delegations':[{'id':key,'name':row.name} for key,row in delegations.items() if scope is None or key in scope],
         'destinations':[{'id':key,'name':row.name} for key,row in delegations.items()]}
 
@@ -175,7 +177,7 @@ def save_type(code:str,body:SaveType,user:User=Depends(operator),db:Session=Depe
         if step.scope=='DESTINATION' and cfg.kind!='TRANSFER':fail('Destino solo está disponible para intercambios')
         targets=[*step.delegations.values(),*([step.general] if step.general else []),*([step.substitute] if step.substitute else [])]
         for target in targets:
-            if not active_target(db,target.model_dump(),step.kind):fail('El responsable necesita acceso a atención de incidencias y, si corresponde, a autorización')
+            if not active_target(db,target.model_dump(),step.kind):fail('El responsable debe ser un usuario web activo')
         if cfg.active and step.kind!='CONFIRM' and not (step.general if step.scope=='GENERAL' else step.delegations or step.substitute):fail('Configura responsables antes de activar el flujo')
     from sqlalchemy.dialects.postgresql import insert as pg_insert
     from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -282,11 +284,10 @@ def create(body:CreateIncident,user:User=Depends(operator),db:Session=Depends(ge
 
 @router.get('')
 def listing(box:str=Query('MINE',pattern='^(MINE|ASSIGNED|ALL)$'),status:str=Query('ACTIVE',pattern='^(ACTIVE|DRAFT|OPEN|CLOSED|REJECTED|ALL)$'),q:str=Query('',max_length=160),delegation_id:str=Query('',max_length=80),type_code:str=Query('',max_length=40),page:int=Query(1,ge=1),user:User=Depends(operator),db:Session=Depends(get_db)):
-    any_access(user,db);p=permissions_for(user,db);scope=scope_ids(user,db)
+    any_access(user,db);codes=managed_processes(user,db)
     conditions=[Incident.creator_id==user.id,Incident.assignee_id==user.id]
-    if p.get('incident_supervise'):
-        if scope is None:conditions.append(Incident.id.is_not(None))
-        else:conditions.append(or_(Incident.delegation_id.in_(scope),Incident.destination_id.in_(scope)))
+    if codes is None:conditions.append(Incident.id.is_not(None))
+    elif codes:conditions.append(Incident.type_code.in_(codes))
     query=select(Incident).where(or_(*conditions))
     if box=='MINE':query=query.where(Incident.creator_id==user.id)
     elif box=='ASSIGNED':query=query.where(Incident.assignee_id==user.id,Incident.status=='OPEN')
@@ -324,12 +325,9 @@ def action(incident_id:str,body:Action,user:User=Depends(operator),db:Session=De
         if step['kind']=='CONFIRM' and body.user_id!=row.creator_id:fail('La confirmación final corresponde al solicitante')
         target={'user_id':body.user_id,'email':body.email}
         account=active_target(db,target,step['kind'])
-        if not account:fail('El nuevo responsable no tiene los permisos necesarios')
+        if not account:fail('Selecciona un usuario web activo como responsable')
         try:address=email_address(body.email)
         except ValueError:fail('Indica un correo válido')
-        if step['scope']!='GENERAL':
-            reference=row.destination_id if step['scope']=='DESTINATION' else row.delegation_id
-            if not allowed_origin(account,db,reference):fail('El nuevo responsable no tiene acceso a esa delegación')
         row.assignee_id=account.id;row.assignment_version+=1;row.entered_at=now();row.due_at=now()+timedelta(hours=step['hours']);queue_mail(db,row,address,account.id,step['name']);event(db,row,user,'REASSIGNED',assignee_id=account.id,assignee_name=account.full_name,note=body.note)
     elif name=='RESEND_EMAIL':
         if not (allowed['can_work'] or allowed['can_reassign'] or allowed['can_submit']):fail('No puedes reenviar este aviso',403)

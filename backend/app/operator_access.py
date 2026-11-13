@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from .auth import audit, hash_password, require_roles
 from .config import settings
 from .db import get_db
-from .models import User, OperatorAccess, AuthSession, CustomerQrAccess
+from .models import User, OperatorAccess, AuthSession, CustomerQrAccess, IncidentType
 from .exit_users import fetch_exit_users, fetch_exit_user
 from .operator_permissions import MODULES
 from .delegations import fetch_delegations
@@ -26,13 +26,15 @@ class AccessIn(BaseModel):
     permissions: dict[str, bool]
     delegation_ids: list[str] = Field(default_factory=list, max_length=200)
 
+    incident_all_processes: bool = False
+    incident_process_codes: list[str] = Field(default_factory=list, max_length=200)
+
     @field_validator('permissions')
     @classmethod
     def valid_permissions(cls, value):
-        if set(value) - set(MODULES):
+        legacy={'incident_create','incident_work','incident_approve'}
+        if set(value) - set(MODULES) - legacy:
             raise ValueError('Opción de permisos desconocida')
-        if not any(value.values()):
-            raise ValueError('Selecciona al menos una opción de la web')
         return {key: value.get(key, False) for key in MODULES}
 
 class PasswordIn(BaseModel):
@@ -65,6 +67,8 @@ def user_payload(source, account=None, access=None):
             'company_code': account.company_code if account else None, 'delegation_code': account.delegation_code if account else None,
             'permissions': {key: access.permissions.get(key) is True for key in MODULES} if access else dict.fromkeys(MODULES, False),
             'delegation_ids': access.permissions.get('delegation_ids', []) if access else [],
+            'incident_all_processes': access.permissions.get('incident_all_processes') is True if access else False,
+            'incident_process_codes': access.permissions.get('incident_process_codes', []) if access else [],
             'must_change_password': bool(account and account.must_change_password)}
 
 
@@ -113,12 +117,18 @@ def listing(q: str = Query('', max_length=200), page: int = Query(1, ge=1), enab
         delegations = []
         warning = 'Usuarios cargados. No se pudieron consultar las sedes de EXIT; no se puede guardar la asignación de sede hasta recuperar esa consulta.'
     return {'items': items, 'total': total, 'page_size': size, 'modules': MODULES, 'warning': warning,
+            'incident_processes':[{'code':row.code,'name':row.configuration['name']} for row in db.scalars(select(IncidentType).order_by(IncidentType.code))],
             'delegations': [{'company': d.company, 'code': d.code, 'name': d.name} for d in delegations]}
 
 
 @router.put('')
 def save(data: AccessIn, user: User = Depends(manager), db=Depends(get_db)):
     source = lookup(data.code)
+    configured=set(db.scalars(select(IncidentType.code)))
+    if set(data.incident_process_codes)-configured:
+        raise HTTPException(422,'Selecciona procesos de incidencias ya configurados')
+    if data.permissions.get('incident_supervise') and not (data.incident_all_processes or data.incident_process_codes):
+        raise HTTPException(422,'Selecciona los procesos que podrá gestionar o todos los configurados')
     try:
         stores = fetch_delegations()
         valid_store = any(d.company == data.company_code and d.code == data.delegation_code for d in stores)
@@ -160,9 +170,11 @@ def save(data: AccessIn, user: User = Depends(manager), db=Depends(get_db)):
     account.company_code = data.company_code; account.delegation_code = data.delegation_code
     account.full_name = source['name'][:160] or source['username']
     account.active = data.active
-    access.permissions = {**data.permissions, 'delegation_ids': sorted(set(data.delegation_ids))}
+    access.permissions = {**data.permissions, 'delegation_ids': sorted(set(data.delegation_ids)),
+        'incident_all_processes':data.permissions.get('incident_supervise',False) and data.incident_all_processes,
+        'incident_process_codes':sorted(set(data.incident_process_codes)) if data.permissions.get('incident_supervise') else []}
     revoke(db, account)
-    audit(db, user, 'OPERATOR_ACCESS_SAVED', 'USER', account.public_id, {'exit_code': source['code'], 'active': data.active, 'permissions': data.permissions, 'delegation_ids': data.delegation_ids, 'company': data.company_code, 'delegation': data.delegation_code})
+    audit(db, user, 'OPERATOR_ACCESS_SAVED', 'USER', account.public_id, {'exit_code': source['code'], 'active': data.active, 'permissions': data.permissions, 'incident_all_processes':access.permissions['incident_all_processes'], 'incident_process_codes':access.permissions['incident_process_codes'], 'delegation_ids': data.delegation_ids, 'company': data.company_code, 'delegation': data.delegation_code})
     commit(db)
     return {**user_payload(source, account, access), 'initial_password': password}
 

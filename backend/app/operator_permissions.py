@@ -4,8 +4,7 @@ from .models import OperatorAccess
 
 MODULES = {'orders': 'Pedidos', 'replenishment': 'Reposición', 'settings': 'Parámetros',
            'customers': 'Accesos de clientes', 'categories': 'Categorías e imágenes', 'users': 'Accesos de usuarios', 'all_delegations': 'Operar en todas las delegaciones',
-           'incident_create':'Incidencias · registrar y consultar propias','incident_work':'Incidencias · atender asignadas',
-           'incident_supervise':'Incidencias · supervisar delegaciones','incident_approve':'Incidencias · autorizar ajustes',
+           'incident_supervise':'Incidencias · gestionar procesos autorizados',
            'incident_config':'Incidencias · configurar flujos y responsables'}
 
 
@@ -13,13 +12,13 @@ def permissions_for(user, db):
     if user.role not in {'ADMIN', 'OPERADOR_TIENDA'}:
         return {}
     if user.role == 'ADMIN':
-        return dict.fromkeys(MODULES, True)
+        return {**dict.fromkeys(MODULES, True), 'incident_access':True, 'incident_create':True}
     access = db.get(OperatorAccess, user.id)
     # Compatibilidad mientras se trasladan cuentas existentes; las cuentas nuevas
     # tienen siempre un registro y deniegan por defecto los módulos no asignados.
     if access is None:
-        return {key:not key.startswith('incident_') for key in MODULES}
-    return {key: access.permissions.get(key) is True for key in MODULES}
+        return {**{key:not key.startswith('incident_') for key in MODULES}, 'incident_access':True, 'incident_create':True}
+    return {**{key: access.permissions.get(key) is True for key in MODULES}, 'incident_access':True, 'incident_create':True}
 
 
 def check_operator_path(user, db, path, method):

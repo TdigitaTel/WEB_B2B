@@ -219,3 +219,30 @@ def test_user_query_failure_is_distinct_from_delegation_failure(staff,monkeypatc
     assert response.status_code==503
     assert 'MCUsuarios' in response.json()['detail'] and 'NombreCorto' in response.json()['detail']
     assert 'sedes' not in response.json()['detail']
+
+
+def test_incident_process_management_is_explicit_and_task_only_accounts_are_supported(staff):
+    from app.models import IncidentType
+    from app.incidents import defaults
+    client=manager()
+    with SessionLocal() as db:
+        db.add(IncidentType(code='ACCESS_TEST',revision=1,configuration={**defaults('REPLENISHMENT'),'code':'ACCESS_TEST','name':'Proceso de prueba'}));db.commit()
+    try:
+        listing=client.get('/api/v1/store/operator-access').json()
+        assert 'incident_work' not in listing['modules'] and 'incident_approve' not in listing['modules'] and 'incident_create' not in listing['modules']
+        assert {'code':'ACCESS_TEST','name':'Proceso de prueba'} in listing['incident_processes']
+        base=payload(staff[0],permissions={'incident_supervise':True})
+        assert client.put('/api/v1/store/operator-access',json=base).status_code==422
+        assert client.put('/api/v1/store/operator-access',json={**base,'incident_process_codes':['NOT_CONFIGURED']}).status_code==422
+        response=client.put('/api/v1/store/operator-access',json={**base,'incident_process_codes':['ACCESS_TEST']})
+        assert response.status_code==200,response.text
+        assert response.json()['incident_process_codes']==['ACCESS_TEST'] and not response.json()['incident_all_processes']
+        result=client.put('/api/v1/store/operator-access',json={**base,'incident_all_processes':True})
+        assert result.status_code==200 and result.json()['incident_all_processes']
+        # Removing management clears stored scope; no unrelated option is needed for assigned tasks.
+        result=client.put('/api/v1/store/operator-access',json=payload(staff[0],permissions={},incident_all_processes=True,incident_process_codes=['ACCESS_TEST']))
+        assert result.status_code==200,result.text
+        assert not result.json()['incident_all_processes'] and result.json()['incident_process_codes']==[]
+    finally:
+        with SessionLocal() as db:
+            db.execute(delete(IncidentType).where(IncidentType.code=='ACCESS_TEST'));db.commit()

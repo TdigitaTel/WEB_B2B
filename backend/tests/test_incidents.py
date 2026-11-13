@@ -31,7 +31,7 @@ def setup(monkeypatch):
     accounts=[]
     with SessionLocal() as db:
         for model in (IncidentEmail,IncidentAttachment,IncidentEvent,LogisticsIncident,IncidentType,IncidentSequence):db.execute(delete(model))
-        for prefix,delegation,permissions in [('creator','01',{'incident_create':True}),('worker','01',{'incident_work':True,'incident_approve':True}),('other','02',{'incident_create':True,'incident_work':True})]:
+        for prefix,delegation,permissions in [('creator','01',{}),('worker','01',{}),('other','02',{})]:
             email=f'incident-{prefix}-{uuid4().hex[:8]}@example.test';account=User(email=email,full_name=prefix,role='OPERADOR_TIENDA',password_hash=hash_password('123456'),company_code=1,delegation_code=delegation)
             db.add(account);db.flush();db.add(OperatorAccess(user_id=account.id,exit_code='INC-'+str(account.id),permissions=permissions));accounts.append((account.id,email))
         db.commit()
@@ -127,11 +127,8 @@ def test_inventory_capture_authorization_and_execution_evidence(setup):
     assert row['lines'][0]['stock_source']=='EXIT'
     current=action(creator,row,'SUBMIT').json();current=action(worker,current).json()
     assert current['stage_kind']=='APPROVE'
-    with SessionLocal() as db:
-        access=db.get(OperatorAccess,accounts[1][0]);access.permissions={**access.permissions,'incident_approve':False};db.commit()
-    assert action(worker,current).status_code==403
-    with SessionLocal() as db:
-        access=db.get(OperatorAccess,accounts[1][0]);access.permissions={**access.permissions,'incident_approve':True};db.commit()
+    assert action(other,current).status_code==404  # Unassigned users cannot authorize.
+    # Assignment itself permits authorization, without a second global permission.
     current=action(worker,current).json();assert current['stage_kind']=='EXECUTE'
     assert action(worker,current).status_code==422
     assert action(worker,current,document='AJ-2026-001').status_code==422
@@ -204,7 +201,7 @@ def test_unconfigured_routing_and_configuration_permission(setup):
     assert creator.post(BASE,json=payload).status_code==409
     saved=configure(admin,accounts,scope='DELEGATION')
     assert creator.put(BASE+'/types/REPLENISHMENT',json=saved).status_code==403
-    assert login('operador@bermudez.test').get(BASE+'/options').status_code==403
+    assert login('operador@bermudez.test').get(BASE+'/options').status_code==200
     # An enabled flow may deliberately cover one delegation, but another cannot enter it.
     other_payload={**payload,'delegation_id':'1:02'}
     response=other.post(BASE,json=other_payload);assert response.status_code==201,response.text
@@ -264,3 +261,62 @@ def test_uncertain_mail_is_not_retried_automatically(setup,monkeypatch):
         monkeypatch.setattr(mail,'send_message',lambda *args:pytest.fail('Uncertain delivery must be reviewed, not automatically resent'))
         mail.run_pending(db)
         db.refresh(job);assert job.status=='UNCERTAIN' and job.attempts==1
+
+
+def test_flow_assignment_grants_only_the_assigned_case_across_delegations(setup):
+    admin,(creator,worker,other),accounts=setup
+    saved=configure(admin,accounts,scope='DELEGATION')
+    target={'user_id':accounts[2][0],'email':accounts[2][1]}
+    saved['configuration']['steps'][0]['delegations']={'1:01':target}
+    response=admin.put(BASE+'/types/REPLENISHMENT',json=saved)
+    assert response.status_code==200,response.text
+    row=create(creator);unrelated=create(creator)
+    current=action(creator,row,'SUBMIT').json()
+    assert current['assignee_id']==accounts[2][0]
+    assert other.get(BASE+'/'+row['id']).json()['can_work']
+    assert other.get(BASE+'/'+unrelated['id']).status_code==404
+    assert other.get(BASE+'?box=ASSIGNED').json()['total']==1
+    assert action(worker,current).status_code==404
+    assert action(other,current).status_code==200
+    # The explicit flow assignment does not open stock or other delegation APIs.
+    assert other.get(BASE+'/stock?sku=91463E&delegation_id=1:01').status_code==403
+
+
+def test_management_is_scoped_to_configured_processes_and_can_be_revoked(setup):
+    admin,(creator,worker,other),accounts=setup
+    configure(admin,accounts);configure(admin,accounts,'INVENTORY')
+    row=create(creator);inventory=create(creator,'INVENTORY')
+    current=action(creator,row,'SUBMIT').json()
+    with SessionLocal() as db:
+        access=db.get(OperatorAccess,accounts[2][0])
+        access.permissions={'incident_supervise':True,'incident_process_codes':['REPLENISHMENT']};db.commit()
+    # A process manager can operate across delegations, but only the chosen process.
+    assert other.get(BASE+'?box=ALL').json()['total']==1
+    assert other.get(BASE+'/'+inventory['id']).status_code==404
+    assert other.get(BASE+'/'+row['id']).json()['can_reassign']
+    assert action(other,current,'REASSIGN',user_id=accounts[2][0],email=accounts[2][1]).status_code==200
+    with SessionLocal() as db:
+        access=db.get(OperatorAccess,accounts[2][0]);access.permissions={'incident_supervise':True,'incident_all_processes':True};db.commit()
+    assert other.get(BASE+'?box=ALL').json()['total']==2
+    with SessionLocal() as db:
+        access=db.get(OperatorAccess,accounts[2][0]);access.permissions={'incident_supervise':False,'incident_all_processes':True};db.commit()
+    assert other.get(BASE+'/'+inventory['id']).status_code==404
+    assert other.get(BASE+'/'+row['id']).json()['can_work']  # Assignment still authorizes this case.
+    assert not other.get(BASE+'/'+row['id']).json()['can_reassign']
+
+
+def test_configurers_choose_any_active_operator_without_granting_case_access(setup):
+    admin,(creator,worker,other),accounts=setup
+    with SessionLocal() as db:
+        access=db.get(OperatorAccess,accounts[2][0]);access.permissions={'incident_config':True};db.commit()
+    options=other.get(BASE+'/options').json()
+    assert accounts[1][0] in [person['id'] for person in options['users']]
+    saved=configure(admin,accounts);row=create(creator)
+    assert other.get(BASE+'/'+row['id']).status_code==404
+    assert other.put(BASE+'/types/REPLENISHMENT',json=saved).status_code==200
+    # Disabled users cannot be selected even by a configurer.
+    with SessionLocal() as db:
+        db.get(User,accounts[1][0]).active=False;db.commit()
+    saved=other.get(BASE+'/options').json()['types']
+    saved=next(item for item in saved if item['configuration']['code']=='REPLENISHMENT')
+    assert other.put(BASE+'/types/REPLENISHMENT',json=saved).status_code==422
