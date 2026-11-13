@@ -1,5 +1,7 @@
 export type Target={user_id:number;email:string};
 export type Step={name:string;kind:'WORK'|'APPROVE'|'EXECUTE'|'CONFIRM';scope:'GENERAL'|'DELEGATION'|'ORIGIN'|'DESTINATION';general:Target|null;delegations:Record<string,Target>;substitute:Target|null;hours:number;files:'INHERIT'|'FORBIDDEN'|'OPTIONAL'|'REQUIRED';require_document:boolean};
+export const activityLabels:Record<Step['kind'],string>={WORK:'Registrar',EXECUTE:'Ejecutar',APPROVE:'Autorizar',CONFIRM:'Cerrar'};
+export const activityDescriptions:Record<Step['kind'],string>={WORK:'Registra información, comprobaciones y actuaciones para continuar el proceso.',EXECUTE:'Registra la ejecución de la actuación e indica su documento de referencia.',APPROVE:'Deja constancia de la aprobación necesaria para continuar el proceso.',CONFIRM:'El solicitante confirma la resolución y cierra la incidencia. Es la última actividad del flujo.'};
 export type Flow={code:string;name:string;kind:string;active:boolean;notify:boolean;file_mode:'FORBIDDEN'|'OPTIONAL'|'REQUIRED';max_files:number;max_file_mb:number;extensions:string[];reasons:string[];steps:Step[]};
 export type SavedFlow={revision:number;configuration:Flow};
 export type Person={id:number;name:string;email:string};
