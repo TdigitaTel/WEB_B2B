@@ -24,7 +24,7 @@ def config(db,public=False):
     if public:query=query.where(Slide.enabled.is_(True))
     slides=[{'id':row.id,'alt':row.alt,'enabled':row.enabled,'image_url':f'/api/v1/home-banner/images/{row.id}' if row.has_image else None} for row in db.execute(query)]
     if not settings or (public and not slides):slides=[dict(DEFAULT)]
-    return {'interval_seconds':settings.interval_seconds if settings else 7,'revision':settings.revision if settings else 'initial','slides':slides}
+    return {'interval_seconds':settings.interval_seconds if settings else 5,'revision':settings.revision if settings else 'initial','slides':slides}
 
 
 def lock_settings(db):
@@ -33,7 +33,7 @@ def lock_settings(db):
     from sqlalchemy.dialects.postgresql import insert as pg_insert
     from sqlalchemy.dialects.sqlite import insert as sqlite_insert
     insert=pg_insert if db.bind.dialect.name=='postgresql' else sqlite_insert
-    created=db.execute(insert(Settings).values(id=1,interval_seconds=7,revision=str(uuid.uuid4())).on_conflict_do_nothing(index_elements=['id']).returning(Settings.id)).scalar_one_or_none()
+    created=db.execute(insert(Settings).values(id=1,interval_seconds=5,revision=str(uuid.uuid4())).on_conflict_do_nothing(index_elements=['id']).returning(Settings.id)).scalar_one_or_none()
     row=db.scalar(select(Settings).where(Settings.id==1).with_for_update())
     if created:db.add(Slide(id='original',position=0,enabled=True,alt=DEFAULT['alt']))
     db.flush()
@@ -98,7 +98,7 @@ class SlideInput(BaseModel):
 
 class ConfigInput(BaseModel):
     revision:str=Field(min_length=1,max_length=36)
-    interval_seconds:int=Field(7,ge=3,le=120)
+    interval_seconds:int=Field(5,ge=3,le=120)
     slides:list[SlideInput]
 
 

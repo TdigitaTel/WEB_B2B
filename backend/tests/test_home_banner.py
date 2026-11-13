@@ -35,6 +35,7 @@ def test_banner_permissions_order_visibility_revision_and_separate_images():
     guest=TestClient(app);customer=login('compras001@cliente.test');operator=login()
     initial=guest.get(PUBLIC)
     assert initial.json()['slides'][0]['id']=='original' and 'no-store' in initial.headers['cache-control']
+    assert initial.json()['interval_seconds']==5
     assert guest.get(BASE).status_code==401
     assert customer.get(BASE).status_code==403
     assert customer.post(BASE+'/images',files={'file':('a.png',picture(),'image/png')}).status_code==403
@@ -43,6 +44,7 @@ def test_banner_permissions_order_visibility_revision_and_separate_images():
         response=operator.post(BASE+'/images',files={'file':('a.png',picture(),'image/png')})
         assert response.status_code==201,response.text
     saved=response.json();assert len(saved['slides'])==11
+    assert saved['interval_seconds']==5
     assert all('image_data' not in row for row in saved['slides'])
     image_url=saved['slides'][-1]['image_url']
     image=guest.get(image_url)
