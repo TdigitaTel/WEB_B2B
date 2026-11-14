@@ -186,6 +186,8 @@ def test_stage_required_files_and_transfer_origin_destination(setup):
     cfg['steps'][0]['scope']='ORIGIN';cfg['steps'][0]['general']=None;cfg['steps'][0]['delegations']={'1:01':{'user_id':accounts[1][0],'email':accounts[1][1]}}
     cfg['steps'][1]['scope']='DESTINATION';cfg['steps'][1]['general']=None;cfg['steps'][1]['delegations']={'1:02':{'user_id':accounts[2][0],'email':accounts[2][1]}};cfg['steps'][1]['files']='REQUIRED'
     response=admin.put(BASE+'/types/TRANSFER',json=saved);assert response.status_code==200,response.text
+    with SessionLocal() as db:
+        access=db.get(OperatorAccess,accounts[0][0]);access.permissions={'delegation_ids':['1:02']};db.commit()
     row=create(creator,'TRANSFER');current=action(creator,row,'SUBMIT').json()
     assert current['assignee_id']==accounts[1][0]
     current=action(worker,current).json();assert current['assignee_id']==accounts[2][0]
@@ -263,23 +265,21 @@ def test_uncertain_mail_is_not_retried_automatically(setup,monkeypatch):
         db.refresh(job);assert job.status=='UNCERTAIN' and job.attempts==1
 
 
-def test_flow_assignment_grants_only_the_assigned_case_across_delegations(setup):
+def test_assignment_does_not_override_delegation_permissions(setup):
     admin,(creator,worker,other),accounts=setup
     saved=configure(admin,accounts,scope='DELEGATION')
     target={'user_id':accounts[2][0],'email':accounts[2][1]}
     saved['configuration']['steps'][0]['delegations']={'1:01':target}
-    response=admin.put(BASE+'/types/REPLENISHMENT',json=saved)
-    assert response.status_code==200,response.text
-    row=create(creator);unrelated=create(creator)
+    assert admin.put(BASE+'/types/REPLENISHMENT',json=saved).status_code==422
+    row=create(creator)
     current=action(creator,row,'SUBMIT').json()
-    assert current['assignee_id']==accounts[2][0]
-    assert other.get(BASE+'/'+row['id']).json()['can_work']
-    assert other.get(BASE+'/'+unrelated['id']).status_code==404
-    assert other.get(BASE+'?box=ASSIGNED').json()['total']==1
-    assert action(worker,current).status_code==404
-    assert action(other,current).status_code==200
-    # The explicit flow assignment does not open stock or other delegation APIs.
-    assert other.get(BASE+'/stock?sku=91463E&delegation_id=1:01').status_code==403
+    assert action(admin,current,'REASSIGN',user_id=accounts[2][0],email=accounts[2][1]).status_code==403
+    # An old or stale assignment cannot bypass current scope checks.
+    with SessionLocal() as db:
+        incident=db.get(LogisticsIncident,row['id']);incident.assignee_id=accounts[2][0];db.commit()
+    assert other.get(BASE+'/'+row['id']).status_code==404
+    assert other.get(BASE+'?box=ASSIGNED').json()['total']==0
+    assert action(other,current).status_code==404
 
 
 def test_management_is_scoped_to_configured_processes_and_can_be_revoked(setup):
@@ -290,27 +290,36 @@ def test_management_is_scoped_to_configured_processes_and_can_be_revoked(setup):
     with SessionLocal() as db:
         access=db.get(OperatorAccess,accounts[2][0])
         access.permissions={'incident_supervise':True,'incident_process_codes':['REPLENISHMENT']};db.commit()
-    # A process manager can operate across delegations, but only the chosen process.
+    # Process management does not override delegated scope.
+    assert other.get(BASE+'?box=ALL').json()['total']==0
+    assert other.get(BASE+'/'+row['id']).status_code==404
+    with SessionLocal() as db:
+        access=db.get(OperatorAccess,accounts[2][0]);access.permissions={**access.permissions,'delegation_ids':['1:01']};db.commit()
     assert other.get(BASE+'?box=ALL').json()['total']==1
     assert other.get(BASE+'/'+inventory['id']).status_code==404
     assert other.get(BASE+'/'+row['id']).json()['can_reassign']
     assert action(other,current,'REASSIGN',user_id=accounts[2][0],email=accounts[2][1]).status_code==200
     with SessionLocal() as db:
-        access=db.get(OperatorAccess,accounts[2][0]);access.permissions={'incident_supervise':True,'incident_all_processes':True};db.commit()
+        access=db.get(OperatorAccess,accounts[2][0]);access.permissions={'incident_supervise':True,'incident_all_processes':True,'delegation_ids':['1:01']};db.commit()
     assert other.get(BASE+'?box=ALL').json()['total']==2
     with SessionLocal() as db:
-        access=db.get(OperatorAccess,accounts[2][0]);access.permissions={'incident_supervise':False,'incident_all_processes':True};db.commit()
+        access=db.get(OperatorAccess,accounts[2][0]);access.permissions={'incident_supervise':False,'incident_all_processes':True,'delegation_ids':['1:01']};db.commit()
     assert other.get(BASE+'/'+inventory['id']).status_code==404
     assert other.get(BASE+'/'+row['id']).json()['can_work']  # Assignment still authorizes this case.
     assert not other.get(BASE+'/'+row['id']).json()['can_reassign']
 
 
-def test_configurers_choose_any_active_operator_without_granting_case_access(setup):
+def test_configurers_choose_active_operators_in_their_delegations(setup):
     admin,(creator,worker,other),accounts=setup
     with SessionLocal() as db:
         access=db.get(OperatorAccess,accounts[2][0]);access.permissions={'incident_config':True};db.commit()
     options=other.get(BASE+'/options').json()
-    assert accounts[1][0] in [person['id'] for person in options['users']]
+    assert accounts[1][0] not in [person['id'] for person in options['users']]
+    assert [row['id'] for row in options['delegations']]==['1:02']
+    assert [row['id'] for row in options['destinations']]==['1:02']
+    with SessionLocal() as db:
+        access=db.get(OperatorAccess,accounts[2][0]);access.permissions={**access.permissions,'delegation_ids':['1:01']};db.commit()
+    assert accounts[1][0] in [person['id'] for person in other.get(BASE+'/options').json()['users']]
     saved=configure(admin,accounts);row=create(creator)
     assert other.get(BASE+'/'+row['id']).status_code==404
     assert other.put(BASE+'/types/REPLENISHMENT',json=saved).status_code==200
@@ -320,3 +329,60 @@ def test_configurers_choose_any_active_operator_without_granting_case_access(set
     saved=other.get(BASE+'/options').json()['types']
     saved=next(item for item in saved if item['configuration']['code']=='REPLENISHMENT')
     assert other.put(BASE+'/types/REPLENISHMENT',json=saved).status_code==422
+
+
+def test_scope_revocation_hides_case_files_and_stops_assignment_email(setup):
+    import app.incident_mail as mail
+    admin,(creator,worker,other),accounts=setup
+    configure(admin,accounts)
+    row=create(creator);path=BASE+'/'+row['id']
+    uploaded=creator.post(path+'/files',params={'version':row['version']},files={'file':('a.pdf',b'%PDF-1.4\n%%EOF','application/pdf')}).json()
+    current=action(creator,uploaded,'SUBMIT').json()
+    file_id=uploaded['files'][0]['id']
+    assert worker.get(path+'/files/'+file_id).status_code==200
+    with SessionLocal() as db:
+        user=db.get(User,accounts[1][0]);user.delegation_code='02';db.commit()
+    assert worker.get(path).status_code==404
+    assert worker.get(path+'/files/'+file_id).status_code==404
+    assert action(worker,current).status_code==404
+    assert worker.get(BASE+'?box=ASSIGNED').json()['total']==0
+    with SessionLocal() as db:
+        message=db.scalar(select(IncidentEmail).where(IncidentEmail.incident_id==row['id']))
+        mail.deliver(db,message,lambda *args:pytest.fail('Do not send case data outside configured delegations'))
+        assert message.status=='NOT_CONFIGURED' and 'delegación' in message.diagnostic['response']
+
+
+def test_scoped_flow_edit_hides_and_preserves_other_delegation_assignments(setup):
+    admin,(creator,worker,other),accounts=setup
+    saved=configure(admin,accounts,scope='DELEGATION')
+    for step in saved['configuration']['steps']:
+        if step['kind']!='CONFIRM':step['delegations']['1:02']={'user_id':accounts[2][0],'email':accounts[2][1]}
+    response=admin.put(BASE+'/types/REPLENISHMENT',json=saved);assert response.status_code==200,response.text
+    with SessionLocal() as db:
+        access=db.get(OperatorAccess,accounts[0][0]);access.permissions={'incident_config':True};db.commit()
+    options=creator.get(BASE+'/options').json()
+    flow=next(item for item in options['types'] if item['configuration']['code']=='REPLENISHMENT')
+    assert flow['structure_locked']
+    assert all('1:02' not in step['delegations'] for step in flow['configuration']['steps'])
+    wrong=deepcopy(flow);wrong['configuration']['steps'][0]['delegations']['1:02']={'user_id':accounts[2][0],'email':accounts[2][1]}
+    assert creator.put(BASE+'/types/REPLENISHMENT',json=wrong).status_code==403
+    wrong=deepcopy(flow);wrong['configuration']['name']='Cambiar todo'
+    assert creator.put(BASE+'/types/REPLENISHMENT',json=wrong).status_code==403
+    flow['configuration']['steps'][0]['delegations']['1:01']['email']='delegacion@example.test'
+    result=creator.put(BASE+'/types/REPLENISHMENT',json=flow)
+    assert result.status_code==200,result.text
+    assert '1:02' not in result.json()['configuration']['steps'][0]['delegations']
+    with SessionLocal() as db:
+        cfg=db.get(IncidentType,'REPLENISHMENT').configuration
+        assert cfg['steps'][0]['delegations']['1:02']['user_id']==accounts[2][0]
+        assert cfg['steps'][0]['delegations']['1:01']['email']=='delegacion@example.test'
+
+
+def test_destination_requires_explicit_access_and_all_delegations_remains_explicit(setup):
+    admin,(creator,worker,other),accounts=setup
+    configure(admin,accounts,'TRANSFER')
+    assert creator.post(BASE,json=data('TRANSFER')).status_code==403
+    with SessionLocal() as db:
+        access=db.get(OperatorAccess,accounts[0][0]);access.permissions={'all_delegations':True};db.commit()
+    assert {row['id'] for row in creator.get(BASE+'/options').json()['destinations']}=={'1:00','1:01','1:02'}
+    assert creator.post(BASE,json=data('TRANSFER')).status_code==201
