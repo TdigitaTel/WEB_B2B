@@ -19,6 +19,7 @@ from .delegations import fetch_delegations
 from .erp_db import fetch_catalog_articles,connect_sqlserver
 from .incident_schemas import SaveType,CreateIncident,EditIncident,Action,TypeConfiguration
 from .order_email_settings import email_address
+from .incident_scope import includes,allows_task,task_reference
 
 router=APIRouter(prefix='/api/v1/store/incidents',tags=['incidents'])
 operator=require_roles('ADMIN','OPERADOR_TIENDA')
@@ -50,9 +51,9 @@ def managed_processes(user,db):
     return configured.intersection(access.permissions.get('incident_process_codes',[]))
 def supervises(user,db,row):
     codes=managed_processes(user,db)
-    return codes is None or row.type_code in codes
+    return includes(user,db,row) and (codes is None or row.type_code in codes)
 def can_see(user,db,row):
-    return row.creator_id==user.id or row.assignee_id==user.id or supervises(user,db,row)
+    return includes(user,db,row) and (row.creator_id==user.id or row.assignee_id==user.id or supervises(user,db,row))
 def load(incident_id,user,db,lock=False):
     any_access(user,db)
     query=select(Incident).where(Incident.id==incident_id)
@@ -76,6 +77,17 @@ def type_rows(db):
     saved={row.code:row for row in db.scalars(select(Type).order_by(Type.code))}
     return [{'revision':saved[code].revision if code in saved else 0,'configuration':saved[code].configuration if code in saved else defaults(code)} for code in list(LABELS)+sorted(set(saved)-set(LABELS))]
 
+def scoped_configuration(configuration,scope):
+    value=deepcopy(configuration)
+    if scope is not None:
+        for step in value['steps']:
+            step['delegations']={key:target for key,target in step.get('delegations',{}).items() if key in scope}
+    return value
+
+def scoped_type(item,scope):
+    hidden=scope is not None and any(set(step.get('delegations',{}))-set(scope) for step in item['configuration']['steps'])
+    return {**item,'configuration':scoped_configuration(item['configuration'],scope),'structure_locked':bool(hidden)}
+
 def active_target(db,target,kind='WORK'):
     if not target:return None
     user=db.get(User,target['user_id'])
@@ -85,14 +97,14 @@ def active_target(db,target,kind='WORK'):
 def resolve(db,row,step):
     if step['kind']=='CONFIRM':
         user=db.get(User,row.creator_id)
-        if not user or not user.active or user.role not in {'ADMIN','OPERADOR_TIENDA'}:fail('El solicitante ya no puede confirmar; un supervisor debe revisar la asignación',409)
+        if not user or not user.active or user.role not in {'ADMIN','OPERADOR_TIENDA'} or not allows_task(user,db,row,step):fail('El solicitante ya no puede confirmar; un supervisor debe revisar la asignación',409)
         return user,user.email
     reference=row.destination_id if step['scope']=='DESTINATION' else row.delegation_id
     target=step.get('general') if step['scope']=='GENERAL' else step.get('delegations',{}).get(reference)
     account=active_target(db,target,step['kind'])
-    if not account:
+    if not account or not allows_task(account,db,row,step):
         target=step.get('substitute');account=active_target(db,target,step['kind'])
-    if not account:fail(f'Configura un responsable habilitado para «{step["name"]}» y la delegación correspondiente',409)
+    if not account or not allows_task(account,db,row,step):fail(f'Configura un responsable habilitado para «{step["name"]}» con acceso a la delegación correspondiente',409)
     return account,target['email']
 
 def event(db,row,user,action,**detail):
@@ -145,13 +157,13 @@ def detail(row,db,user):
     mails=[{'id':entry.id,'stage':entry.stage,'status':entry.status,'attempts':entry.attempts,'diagnostic':entry.diagnostic,'created_at':entry.created_at,'updated_at':entry.updated_at} for entry in db.scalars(select(Mail).where(Mail.incident_id==row.id).order_by(Mail.id))]
     p=permissions_for(user,db);supervisor=supervises(user,db,row)
     current=row.workflow['steps'][row.stage_index] if row.stage_index>=0 else None
-    work=row.assignee_id==user.id or supervisor
-    if current and current['kind']=='CONFIRM':work=row.assignee_id==user.id and row.creator_id==user.id
-    return {**summary(row,db),'lines':row.lines,'workflow':row.workflow,'file_mode':file_mode(row),'files':files,
+    work=(row.assignee_id==user.id or supervisor) and bool(current and allows_task(user,db,row,current))
+    if current and current['kind']=='CONFIRM':work=work and row.assignee_id==user.id and row.creator_id==user.id
+    return {**summary(row,db),'lines':row.lines,'workflow':scoped_configuration(row.workflow,scope_ids(user,db)),'file_mode':file_mode(row),'files':files,
         'events':[{'id':entry.id,'action':entry.action,'actor':names.get(entry.actor_id),'detail':entry.detail,'created_at':entry.created_at} for entry in events],
-        'emails':mails,'can_submit':row.status=='DRAFT' and row.creator_id==user.id and p.get('incident_create',False),
-        'can_work':row.status=='OPEN' and bool(work),'can_attach':(row.status=='DRAFT' and row.creator_id==user.id and p.get('incident_create') or row.status=='OPEN' and bool(work)) and file_mode(row)!='FORBIDDEN',
-        'can_reassign':row.status=='OPEN' and bool(supervisor),'can_comment':row.status in {'DRAFT','OPEN'} and (row.creator_id==user.id or bool(work) or bool(supervisor))}
+        'emails':mails,'can_submit':row.status=='DRAFT' and row.creator_id==user.id and allowed_origin(user,db,row.delegation_id) and p.get('incident_create',False),
+        'can_work':row.status=='OPEN' and bool(work),'can_attach':(row.status=='DRAFT' and row.creator_id==user.id and allowed_origin(user,db,row.delegation_id) and p.get('incident_create') or row.status=='OPEN' and bool(work)) and file_mode(row)!='FORBIDDEN',
+        'can_reassign':row.status=='OPEN' and bool(supervisor) and bool(current and allows_task(user,db,row,current)),'can_comment':row.status in {'DRAFT','OPEN'} and (row.creator_id==user.id or bool(work) or bool(supervisor))}
 
 @router.get('/options')
 def options(user:User=Depends(operator),db:Session=Depends(get_db)):
@@ -159,10 +171,12 @@ def options(user:User=Depends(operator),db:Session=Depends(get_db)):
     people=[]
     if p.get('incident_config') or p.get('incident_supervise'):
         for account in db.scalars(select(User).where(User.active.is_(True),User.role.in_(['ADMIN','OPERADOR_TIENDA'])).order_by(User.full_name)):
-            people.append({'id':account.id,'name':account.full_name,'email':account.email})
-    return {'permissions':p,'user_id':user.id,'types':[item for item in type_rows(db) if p.get('incident_config') or item['revision']>0],'users':people,
+            account_scope=scope_ids(account,db)
+            if scope is not None and account_scope is not None and not set(scope).intersection(account_scope):continue
+            people.append({'id':account.id,'name':account.full_name,'email':account.email,'delegations':None if account_scope is None else [key for key in account_scope if scope is None or key in scope]})
+    return {'permissions':p,'user_id':user.id,'types':[scoped_type(item,scope) for item in type_rows(db) if p.get('incident_config') or item['revision']>0],'users':people,
         'delegations':[{'id':key,'name':row.name} for key,row in delegations.items() if scope is None or key in scope],
-        'destinations':[{'id':key,'name':row.name} for key,row in delegations.items()]}
+        'destinations':[{'id':key,'name':row.name} for key,row in delegations.items() if scope is None or key in scope]}
 
 @router.put('/types/{code}')
 def save_type(code:str,body:SaveType,user:User=Depends(operator),db:Session=Depends(get_db)):
@@ -173,11 +187,16 @@ def save_type(code:str,body:SaveType,user:User=Depends(operator),db:Session=Depe
     valid=stores()
     for step in cfg.steps:
         for reference in step.delegations:
-            if reference not in valid:fail('Selecciona delegaciones válidas')
+            if reference not in valid or not allowed_origin(user,db,reference):fail('Selecciona delegaciones autorizadas',403)
+            target=active_target(db,step.delegations[reference].model_dump())
+            if target and not allowed_origin(target,db,reference):fail('El responsable debe tener acceso a la delegación asignada')
         if step.scope=='DESTINATION' and cfg.kind!='TRANSFER':fail('Destino solo está disponible para intercambios')
         targets=[*step.delegations.values(),*([step.general] if step.general else []),*([step.substitute] if step.substitute else [])]
         for target in targets:
-            if not active_target(db,target.model_dump(),step.kind):fail('El responsable debe ser un usuario web activo')
+            account=active_target(db,target.model_dump(),step.kind)
+            if not account:fail('El responsable debe ser un usuario web activo')
+            own_scope=scope_ids(user,db);account_scope=scope_ids(account,db)
+            if own_scope is not None and account_scope is not None and not set(own_scope).intersection(account_scope):fail('El responsable debe compartir una delegación autorizada')
         if cfg.active and step.kind!='CONFIRM' and not (step.general if step.scope=='GENERAL' else step.delegations or step.substitute):fail('Configura responsables antes de activar el flujo')
     from sqlalchemy.dialects.postgresql import insert as pg_insert
     from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -185,8 +204,17 @@ def save_type(code:str,body:SaveType,user:User=Depends(operator),db:Session=Depe
     db.execute(insert(Type).values(code=code,revision=0,configuration=cfg.model_dump()).on_conflict_do_nothing(index_elements=['code']))
     row=db.scalar(select(Type).where(Type.code==code).with_for_update())
     if row.revision!=body.revision:fail('Otro usuario ha cambiado este flujo. Recarga antes de guardar',409)
-    row.configuration=cfg.model_dump();row.revision+=1;audit(db,user,'INCIDENT_FLOW_SAVED','INCIDENT_TYPE',code);db.commit()
-    return {'revision':row.revision,'configuration':row.configuration}
+    saved=cfg.model_dump();scope=scope_ids(user,db)
+    previous=row.configuration
+    hidden=scope is not None and any(set(step.get('delegations',{}))-set(scope) for step in previous.get('steps',[]))
+    if hidden:
+        old_steps=previous['steps'];new_steps=saved['steps']
+        if {key:value for key,value in previous.items() if key!='steps'}!={key:value for key,value in saved.items() if key!='steps'} or len(old_steps)!=len(new_steps) or any({key:value for key,value in old.items() if key!='delegations'}!={key:value for key,value in new.items() if key!='delegations'} for old,new in zip(old_steps,new_steps)):
+            fail('Este flujo incluye otras delegaciones. Solo un configurador con acceso a todas ellas puede cambiar su configuración común',403)
+        for old,new in zip(old_steps,new_steps):
+            new['delegations']={**{key:target for key,target in old.get('delegations',{}).items() if key not in scope},**new['delegations']}
+    row.configuration=saved;row.revision+=1;audit(db,user,'INCIDENT_FLOW_SAVED','INCIDENT_TYPE',code);db.commit()
+    return scoped_type({'revision':row.revision,'configuration':row.configuration},scope)
 
 @router.get('/materials')
 def materials(q:str=Query('',max_length=200),user:User=Depends(operator),db:Session=Depends(get_db)):
@@ -269,7 +297,9 @@ def create(body:CreateIncident,user:User=Depends(operator),db:Session=Depends(ge
     kind=config['kind']
     if body.reason not in config['reasons']:fail('Selecciona un motivo configurado para este tipo')
     if kind!='INVENTORY' and not body.document.strip():fail('Indica el número del documento relacionado')
-    if kind=='TRANSFER' and (body.destination_id not in delegations or body.destination_id==body.delegation_id):fail('Selecciona una delegación de destino diferente')
+    if kind=='TRANSFER':
+        if body.destination_id not in delegations or body.destination_id==body.delegation_id:fail('Selecciona una delegación de destino diferente')
+        if not allowed_origin(user,db,body.destination_id):fail('Delegación de destino no autorizada',403)
     lines=collect_lines(body,config)
     from sqlalchemy.dialects.postgresql import insert as pg_insert
     from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -289,8 +319,11 @@ def listing(box:str=Query('MINE',pattern='^(MINE|ASSIGNED|ALL)$'),status:str=Que
     if codes is None:conditions.append(Incident.id.is_not(None))
     elif codes:conditions.append(Incident.type_code.in_(codes))
     query=select(Incident).where(or_(*conditions))
+    scope=scope_ids(user,db)
+    if scope is not None:query=query.where(or_(Incident.delegation_id.in_(scope),Incident.destination_id.in_(scope)))
     if box=='MINE':query=query.where(Incident.creator_id==user.id)
-    elif box=='ASSIGNED':query=query.where(Incident.assignee_id==user.id,Incident.status=='OPEN')
+    elif box=='ASSIGNED':
+        query=query.where(Incident.assignee_id==user.id,Incident.status=='OPEN')
     if status=='ACTIVE':query=query.where(Incident.status.in_(['DRAFT','OPEN']))
     elif status!='ALL':query=query.where(Incident.status==status)
     if q:query=query.where(or_(Incident.number.contains(q,autoescape=True),Incident.document.contains(q,autoescape=True)))
@@ -326,6 +359,7 @@ def action(incident_id:str,body:Action,user:User=Depends(operator),db:Session=De
         target={'user_id':body.user_id,'email':body.email}
         account=active_target(db,target,step['kind'])
         if not account:fail('Selecciona un usuario web activo como responsable')
+        if not allows_task(account,db,row,step):fail('El responsable no tiene acceso a la delegación de esta actividad',403)
         try:address=email_address(body.email)
         except ValueError:fail('Indica un correo válido')
         row.assignee_id=account.id;row.assignment_version+=1;row.entered_at=now();row.due_at=now()+timedelta(hours=step['hours']);queue_mail(db,row,address,account.id,step['name']);event(db,row,user,'REASSIGNED',assignee_id=account.id,assignee_name=account.full_name,note=body.note)
@@ -412,7 +446,9 @@ def edit(incident_id:str,body:EditIncident,user:User=Depends(operator),db:Sessio
     if body.type_code!=row.type_code or body.delegation_id!=row.delegation_id:fail('El tipo y la delegación de una incidencia registrada no pueden cambiar')
     if body.reason not in row.workflow['reasons']:fail('Selecciona un motivo del flujo registrado')
     if row.workflow['kind']!='INVENTORY' and not body.document.strip():fail('Indica el documento relacionado')
-    if row.workflow['kind']=='TRANSFER' and (body.destination_id not in stores() or body.destination_id==row.delegation_id):fail('Selecciona un destino diferente')
+    if row.workflow['kind']=='TRANSFER':
+        if body.destination_id not in stores() or body.destination_id==row.delegation_id:fail('Selecciona un destino diferente')
+        if not allowed_origin(user,db,body.destination_id):fail('Delegación de destino no autorizada',403)
     if not allowed_origin(user,db,row.delegation_id):fail('Ya no tienes acceso a esa delegación',403)
     previous={'document':row.document,'description':row.description,'reason':row.reason,'priority':row.priority,'needed_on':row.needed_on.isoformat() if row.needed_on else None,'destination_id':row.destination_id,'lines':deepcopy(row.lines)}
     row.document=body.document.strip();row.description=body.description.strip();row.reason=body.reason;row.priority=body.priority;row.needed_on=body.needed_on
