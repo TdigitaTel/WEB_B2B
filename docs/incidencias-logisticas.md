@@ -99,3 +99,16 @@ La ficha de una incidencia y el visor «Flujos en curso» muestran el mismo segu
 Los datos reales se reconstruyen desde el historial persistido. Las nuevas asignaciones, reasignaciones y finalizaciones incluyen el índice de etapa para distinguir nombres repetidos. Para eventos anteriores se admite el nombre solo cuando identifica una única etapa; las fechas o responsables desconocidos se indican como no registrados. No se sustituyen responsables históricos por los de una versión nueva. Al volver a una etapa se conservan sus entradas anteriores en un desplegable. El resto de actuaciones y comentarios sigue disponible en el historial completo.
 
 La carga del visor consulta eventos y usuarios una sola vez por página, sin consultas por cada etapa ni actualización periódica. No se añade migración ni cambia la lógica de asignación, permisos, envío o avance del flujo.
+
+
+## Eliminar una incidencia en curso · exclusivo RPA
+
+La cuenta de acceso **RPA**, activa y vinculada a Accesos de usuarios, dispone de la capacidad `incident_delete`. Se determina en servidor por su identificador de acceso, no por el nombre mostrado ni por una casilla que pueda marcarse para otra cuenta. Un administrador genérico tampoco recibe esta capacidad. La identidad RPA mantiene sus límites de delegaciones y procesos; el permiso no concede acceso a incidencias que no puede consultar.
+
+En la ficha de una incidencia registrada o en atención aparece **Eliminar incidencia · solo RPA**. Es necesario escribir el número exacto y un motivo. Se comprueba también la versión para evitar borrar sobre cambios simultáneos. El registro pasa a **Eliminada**, sale de las bandejas normales, pierde su asignación activa y plazo, y se cancelan los avisos en cola o pendientes de reintento. La exclusión se comprueba en servidor: los enlaces antiguos no permiten a otros usuarios consultar, actuar o descargar archivos de la incidencia eliminada.
+
+Se conserva la incidencia, sus archivos, flujo capturado e historial. El evento de eliminación registra usuario, fecha, motivo, estado, etapa y responsable anteriores. RPA puede consultar **Estado → Eliminadas · solo RPA**, incluyendo las que eliminó mientras estaban asignadas a él, dentro de las delegaciones autorizadas. No se elimina el proceso configurado ni sus versiones, no se reutiliza el número de incidencia y no se modifica EXIT. Una versión con incidencias eliminadas sigue bloqueada porque ya fue utilizada.
+
+La eliminación utiliza el mismo bloqueo que el worker de correo para impedir que comience un envío mientras se elimina. Si hay un envío en curso, se informa y se permite reintentar cuando termine; un aviso marcado como SENDING también bloquea la eliminación hasta que el worker resuelva su estado. Los envíos ya realizados y su resultado permanecen en el historial.
+
+No se requiere migración: el estado eliminado y su evidencia utilizan las tablas existentes. No se ha añadido borrado permanente ni cambios automáticos de configuración.

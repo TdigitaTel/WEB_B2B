@@ -17,12 +17,13 @@ from .models import (User,OperatorAccess,IncidentType as Type,IncidentSequence a
 from .operator_permissions import permissions_for,delegation_scope,can_operate_delegation
 from .delegations import fetch_delegations
 from .erp_db import fetch_catalog_articles,connect_sqlserver
-from .incident_schemas import SaveType,CreateIncident,EditIncident,Action,TypeConfiguration,RenameFlow
+from .incident_schemas import SaveType,CreateIncident,EditIncident,Action,TypeConfiguration,RenameFlow,DeleteIncident
 from .order_email_settings import email_address
 from .incident_scope import includes,allows_task
 from .incident_flow import requester,stock_verification,normalize,document_required
 from . import incident_versions as versions
 from .incident_progress import progress,planned_ids
+from .order_email_worker import delivery_lock
 
 router=APIRouter(prefix='/api/v1/store/incidents',tags=['incidents'])
 operator=require_roles('ADMIN','OPERADOR_TIENDA')
@@ -56,7 +57,8 @@ def supervises(user,db,row):
     codes=managed_processes(user,db)
     return includes(user,db,row) and (codes is None or row.type_code in codes)
 def can_see(user,db,row):
-    return includes(user,db,row) and (row.creator_id==user.id or row.assignee_id==user.id or supervises(user,db,row))
+    deleted_by_me=row.status=='DELETED' and permissions_for(user,db).get('incident_delete',False) and bool(db.scalar(select(Event.id).where(Event.incident_id==row.id,Event.actor_id==user.id,Event.action=='DELETED').limit(1)))
+    return (row.status!='DELETED' or permissions_for(user,db).get('incident_delete',False)) and includes(user,db,row) and (row.creator_id==user.id or row.assignee_id==user.id or supervises(user,db,row) or deleted_by_me)
 def load(incident_id,user,db,lock=False):
     any_access(user,db)
     query=select(Incident).where(Incident.id==incident_id)
@@ -179,7 +181,7 @@ def detail(row,db,user):
     if current and requester(current):work=work and row.assignee_id==user.id and row.creator_id==user.id
     return {**summary(row,db,names,event_rows=events),'lines':row.lines,'workflow':scoped_configuration(row.workflow,scope_ids(user,db)),'file_mode':file_mode(row),'files':files,
         'events':[{'id':entry.id,'action':entry.action,'actor':names.get(entry.actor_id),'detail':entry.detail,'created_at':entry.created_at} for entry in events],
-        'emails':mails,'can_submit':row.status=='DRAFT' and row.creator_id==user.id and allowed_origin(user,db,row.delegation_id) and p.get('incident_create',False),
+        'emails':mails,'can_delete':row.status in {'DRAFT','OPEN'} and p.get('incident_delete',False),'can_submit':row.status=='DRAFT' and row.creator_id==user.id and allowed_origin(user,db,row.delegation_id) and p.get('incident_create',False),
         'can_work':row.status=='OPEN' and bool(work),'can_attach':(row.status=='DRAFT' and row.creator_id==user.id and allowed_origin(user,db,row.delegation_id) and p.get('incident_create') or row.status=='OPEN' and bool(work)) and file_mode(row)!='FORBIDDEN',
         'can_reassign':row.status=='OPEN' and bool(supervisor) and bool(current and allows_task(user,db,row,current)),'can_comment':row.status in {'DRAFT','OPEN'} and (row.creator_id==user.id or bool(work) or bool(supervisor))}
 
@@ -401,12 +403,15 @@ def create(body:CreateIncident,user:User=Depends(operator),db:Session=Depends(ge
     return detail(row,db,user)
 
 @router.get('')
-def listing(box:str=Query('MINE',pattern='^(MINE|ASSIGNED|ALL)$'),status:str=Query('ACTIVE',pattern='^(ACTIVE|DRAFT|OPEN|CLOSED|REJECTED|ALL)$'),q:str=Query('',max_length=160),delegation_id:str=Query('',max_length=80),type_code:str=Query('',max_length=40),page:int=Query(1,ge=1),user:User=Depends(operator),db:Session=Depends(get_db)):
+def listing(box:str=Query('MINE',pattern='^(MINE|ASSIGNED|ALL)$'),status:str=Query('ACTIVE',pattern='^(ACTIVE|DRAFT|OPEN|CLOSED|REJECTED|DELETED|ALL)$'),q:str=Query('',max_length=160),delegation_id:str=Query('',max_length=80),type_code:str=Query('',max_length=40),page:int=Query(1,ge=1),user:User=Depends(operator),db:Session=Depends(get_db)):
     any_access(user,db);codes=managed_processes(user,db)
+    if status=='DELETED':require(user,db,'incident_delete')
     conditions=[Incident.creator_id==user.id,Incident.assignee_id==user.id]
+    if status=='DELETED':conditions.append(select(Event.id).where(Event.incident_id==Incident.id,Event.actor_id==user.id,Event.action=='DELETED').exists())
     if codes is None:conditions.append(Incident.id.is_not(None))
     elif codes:conditions.append(Incident.type_code.in_(codes))
     query=select(Incident).where(or_(*conditions))
+    if status!='DELETED':query=query.where(Incident.status!='DELETED')
     scope=scope_ids(user,db)
     if scope is not None:query=query.where(or_(Incident.delegation_id.in_(scope),Incident.destination_id.in_(scope)))
     if box=='MINE':query=query.where(Incident.creator_id==user.id)
@@ -430,6 +435,27 @@ def listing(box:str=Query('MINE',pattern='^(MINE|ASSIGNED|ALL)$'),status:str=Que
     names=dict(db.execute(select(User.id,User.full_name).where(User.id.in_(ids))).all()) if ids else {}
     flow_names={item.code:item.configuration['name'] for item in db.scalars(select(Type).where(Type.code.in_({row.type_code for row in rows})))}
     return {'items':[summary(row,db,names,flow_names,grouped[row.id]) for row in rows],'total':total,'page_size':30}
+
+@router.delete('/{incident_id}')
+def delete_incident(incident_id:str,body:DeleteIncident,user:User=Depends(operator),db:Session=Depends(get_db)):
+    require(user,db,'incident_delete')
+    # Use the same session-level lock as the SMTP worker: no mail can start while deleting.
+    with delivery_lock() as acquired:
+        if not acquired:fail('Hay un envío de correo en curso. Espera unos segundos y vuelve a eliminar',409)
+        row=load(incident_id,user,db,True)
+        if row.version!=body.version:fail('La incidencia ha cambiado. Actualiza antes de eliminar',409)
+        if row.status not in {'DRAFT','OPEN'}:fail('Solo se pueden eliminar incidencias registradas o en atención',409)
+        if body.confirmation_number!=row.number:fail('Escribe el número exacto de la incidencia para confirmar')
+        if db.scalar(select(Mail.id).where(Mail.incident_id==row.id,Mail.status=='SENDING').limit(1)):
+            fail('Hay un aviso de esta incidencia en envío. Actualiza cuando termine antes de eliminar',409)
+        previous={'status':row.status,'stage_index':row.stage_index,'assignee_id':row.assignee_id,'flow_version':row.workflow.get('_flow_version',1)}
+        row.status='DELETED';row.assignee_id=None;row.due_at=None;row.assignment_version+=1;row.version+=1;row.updated_at=now()
+        for job in db.scalars(select(Mail).where(Mail.incident_id==row.id,Mail.status.in_(['PENDING','RETRY']))):
+            job.status='SUPERSEDED';job.next_attempt_at=None;job.updated_at=now();job.diagnostic={'response':'Aviso cancelado: incidencia eliminada por RPA'}
+        event(db,row,user,'DELETED',note=body.note,previous=previous)
+        db.commit()
+    return {'deleted':True,'id':row.id,'number':row.number}
+
 
 @router.get('/{incident_id}')
 def read(incident_id:str,user:User=Depends(operator),db:Session=Depends(get_db)):return detail(load(incident_id,user,db),db,user)
