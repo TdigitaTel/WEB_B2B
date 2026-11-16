@@ -1,5 +1,6 @@
 import io
 from copy import deepcopy
+from datetime import datetime,timezone,timedelta
 from uuid import uuid4
 import pytest
 from PIL import Image
@@ -8,7 +9,7 @@ from sqlalchemy import select,delete
 from app.main import app
 from app.bootstrap import main as bootstrap
 from app.db import SessionLocal
-from app.models import (User,OperatorAccess,IncidentType,IncidentSequence,LogisticsIncident,IncidentEvent,IncidentAttachment,IncidentEmail,OrderEmailSettings)
+from app.models import (User,OperatorAccess,IncidentType,IncidentSequence,LogisticsIncident,IncidentEvent,IncidentAttachment,IncidentEmail,OrderEmailSettings,IncidentFlowVersion,IncidentFlowChange)
 from app.auth import hash_password
 from app.operator_permissions import MODULES
 
@@ -30,7 +31,7 @@ def setup(monkeypatch):
     monkeypatch.setattr(module,'stock_for',lambda codes,delegation:{code:10 for code in codes})
     accounts=[]
     with SessionLocal() as db:
-        for model in (IncidentEmail,IncidentAttachment,IncidentEvent,LogisticsIncident,IncidentType,IncidentSequence):db.execute(delete(model))
+        for model in (IncidentEmail,IncidentAttachment,IncidentEvent,LogisticsIncident,IncidentFlowChange,IncidentFlowVersion,IncidentType,IncidentSequence):db.execute(delete(model))
         for prefix,delegation,permissions in [('creator','01',{}),('worker','01',{}),('other','02',{})]:
             email=f'incident-{prefix}-{uuid4().hex[:8]}@example.test';account=User(email=email,full_name=prefix,role='OPERADOR_TIENDA',password_hash=hash_password('123456'),company_code=1,delegation_code=delegation)
             db.add(account);db.flush();db.add(OperatorAccess(user_id=account.id,exit_code='INC-'+str(account.id),permissions=permissions));accounts.append((account.id,email))
@@ -38,7 +39,7 @@ def setup(monkeypatch):
     admin=login('admin@bermudez.test');clients=[login(email) for _,email in accounts]
     yield admin,clients,accounts
     with SessionLocal() as db:
-        for model in (IncidentEmail,IncidentAttachment,IncidentEvent,LogisticsIncident,IncidentType,IncidentSequence):db.execute(delete(model))
+        for model in (IncidentEmail,IncidentAttachment,IncidentEvent,LogisticsIncident,IncidentFlowChange,IncidentFlowVersion,IncidentType,IncidentSequence):db.execute(delete(model))
         for user_id,_ in accounts:
             db.get(User,user_id).active=False
         db.commit()
@@ -142,6 +143,7 @@ def test_return_correction_flow_snapshot_and_delegation_routing(setup):
     saved=configure(admin,accounts,scope='DELEGATION')
     row=create(creator)
     saved['configuration']['steps'][0]['name']='Una etapa nueva'
+    saved['new_version']=True;saved['change_note']='Cambiar la validación sin alterar casos registrados'
     assert admin.put(BASE+'/types/REPLENISHMENT',json=saved).status_code==200
     current=action(creator,row,'SUBMIT').json();assert current['stage']=='Validación de delegación'
     current=action(worker,current,'RETURN').json();assert current['status']=='DRAFT' and current['assignee_id']==accounts[0][0]
@@ -453,3 +455,107 @@ def test_legacy_close_and_inventory_verification_keep_their_original_behavior(se
     assert action(worker,current,document='AJ-123').status_code==422
     current=action(worker,current,document='AJ-123',verification_note='Comprobado en EXIT').json()
     assert current['assignee_id']==accounts[0][0]
+
+
+def test_registered_draft_seals_version_but_allows_renaming(setup):
+    admin,(creator,worker,other),accounts=setup
+    saved=configure(admin,accounts)
+    assert saved['flow_version']==1 and not saved['in_use']
+    saved['configuration']['steps'][0]['name']='Revisar solicitud'
+    saved=admin.put(BASE+'/types/REPLENISHMENT',json=saved).json()
+    assert saved['flow_version']==1
+    row=create(creator)
+    saved['configuration']['steps'][0]['hours']=72
+    blocked=admin.put(BASE+'/types/REPLENISHMENT',json=saved)
+    assert blocked.status_code==409 and 'nueva versión' in blocked.text
+    assert admin.delete(BASE+'/types/REPLENISHMENT',params={'revision':saved['revision']}).status_code==409
+    renamed=admin.patch(BASE+'/types/REPLENISHMENT/name',json={'revision':saved['revision'],'name':'Aprovisionamiento'}).json()
+    assert renamed['flow_version']==1 and renamed['in_use'] and renamed['has_incidents']
+    current=creator.get(BASE+'/'+row['id']).json()
+    assert current['type_name']=='Aprovisionamiento' and current['flow_version']==1
+    assert current['workflow']==row['workflow']
+    assert admin.patch(BASE+'/types/REPLENISHMENT/name',json={'revision':saved['revision'],'name':'Antiguo'}).status_code==409
+    assert creator.patch(BASE+'/types/REPLENISHMENT/name',json={'revision':renamed['revision'],'name':'Sin permiso'}).status_code==403
+    history=admin.get(BASE+'/types/REPLENISHMENT/history').json()
+    assert [entry['action'] for entry in history['changes']]==['RENAMED','EDITED','CREATED']
+    assert history['changes'][0]['actor'] and history['changes'][0]['created_at']
+    assert history['versions'][0]['in_use']
+
+
+def test_explicit_new_version_preserves_old_cases_and_assignments(setup):
+    admin,(creator,worker,other),accounts=setup
+    saved=configure(admin,accounts);old=create(creator)
+    saved['new_version']=True;saved['configuration']['steps'][0]['name']='Nueva revisión'
+    assert admin.put(BASE+'/types/REPLENISHMENT',json=saved).status_code==422
+    saved['change_note']='Separar validación de solicitud'
+    response=admin.put(BASE+'/types/REPLENISHMENT',json=saved)
+    assert response.status_code==200,response.text
+    second=response.json();assert second['flow_version']==2 and not second['in_use'] and second['has_incidents']
+    second['configuration']['steps'][0]['hours']=96
+    second=admin.put(BASE+'/types/REPLENISHMENT',json=second).json()
+    assert second['flow_version']==2
+    new=create(creator);assert new['flow_version']==2 and new['workflow']['steps'][0]['hours']==96
+    unchanged=creator.get(BASE+'/'+old['id']).json()
+    assert unchanged['flow_version']==1 and unchanged['workflow']==old['workflow']
+    opened=action(creator,old,'SUBMIT').json()
+    assert opened['flow_version']==1 and opened['stage']!=new['workflow']['steps'][0]['name']
+    visible=worker.get(BASE+'?box=ALL&status=OPEN').json()['items']
+    assert len(visible)==1 and visible[0]['flow_version']==1
+    assert visible[0]['flow_steps'][0]['state']=='CURRENT'
+    assert all(step['state']=='PENDING' for step in visible[0]['flow_steps'][1:])
+    assert other.get(BASE+'?box=ALL&status=OPEN').json()['total']==0
+    history=admin.get(BASE+'/types/REPLENISHMENT/history').json()
+    assert [entry['number'] for entry in history['versions']]==[2,1]
+    assert history['versions'][0]['note']==saved['change_note']
+    second['configuration']['notify']=False
+    assert admin.put(BASE+'/types/REPLENISHMENT',json=second).status_code==409
+
+
+def test_unused_process_deletion_preserves_history_and_reserves_code(setup):
+    admin,(creator,worker,other),accounts=setup
+    saved=configure(admin,accounts)
+    assert creator.delete(BASE+'/types/REPLENISHMENT',params={'revision':saved['revision']}).status_code==403
+    assert admin.delete(BASE+'/types/REPLENISHMENT',params={'revision':saved['revision']+1}).status_code==409
+    result=admin.delete(BASE+'/types/REPLENISHMENT',params={'revision':saved['revision']})
+    assert result.status_code==200,result.text
+    assert not any(item['configuration']['code']=='REPLENISHMENT' for item in admin.get(BASE+'/options').json()['types'])
+    assert creator.post(BASE,json=data()).status_code==409
+    assert admin.get(BASE+'/types/REPLENISHMENT/history').json()['changes'][0]['action']=='DELETED'
+    assert admin.get(BASE+'/types/REPLENISHMENT/history').json()['deleted']
+    saved['revision']+=1
+    assert admin.put(BASE+'/types/REPLENISHMENT',json=saved).status_code==409
+
+
+def test_completed_incidence_still_prevents_process_deletion(setup):
+    admin,(creator,worker,other),accounts=setup
+    saved=configure(admin,accounts)
+    saved['configuration']['steps']=[{**saved['configuration']['steps'][0],'kind':'CONFIRM','scope':'REQUESTER'}]
+    saved=admin.put(BASE+'/types/REPLENISHMENT',json=saved).json()
+    row=action(creator,create(creator),'SUBMIT').json()
+    assert action(creator,row).json()['status']=='CLOSED'
+    assert admin.delete(BASE+'/types/REPLENISHMENT',params={'revision':saved['revision']}).status_code==409
+    assert admin.get(BASE+'/types/REPLENISHMENT/history').json()['versions'][0]['in_use']
+
+
+def test_legacy_versions_are_reconstructed_once_without_changing_rules(setup):
+    admin,(creator,worker,other),accounts=setup
+    configure(admin,accounts);first=create(creator);second=create(creator)
+    from app.incident_versions import migrate
+    with SessionLocal() as db:
+        source=db.get(IncidentType,'REPLENISHMENT')
+        cfg=deepcopy(source.configuration);cfg.pop('_flow_version')
+        cfg['steps'][0]['hours']=96;source.configuration=cfg
+        for index,value in enumerate((first,second)):
+            case=db.get(LogisticsIncident,value['id']);workflow=deepcopy(case.workflow);workflow.pop('_flow_version')
+            if value==second:workflow['steps'][0]['hours']=96
+            case.workflow=workflow
+            case.created_at=datetime(2026,11,13,tzinfo=timezone.utc)+timedelta(minutes=index)
+        db.execute(delete(IncidentFlowChange));db.execute(delete(IncidentFlowVersion));db.commit()
+        engine=db.bind
+    migrate(engine);migrate(engine)
+    history=admin.get(BASE+'/types/REPLENISHMENT/history').json()
+    assert history['current_version']==2 and len(history['versions'])==2 and len(history['changes'])==1
+    assert all(entry['legacy'] and entry['created_by'] is None for entry in history['versions'])
+    assert creator.get(BASE+'/'+first['id']).json()['flow_version']==1
+    assert creator.get(BASE+'/'+second['id']).json()['flow_version']==2
+    assert creator.get(BASE+'/'+first['id']).json()['workflow']['steps']==first['workflow']['steps']

@@ -10,6 +10,8 @@ def main():
     from .migrate_delegation_fields import migrate_delegation_fields
     migrate_delegation_fields(engine)
     Base.metadata.create_all(engine)
+    from .incident_versions import migrate as migrate_incident_versions
+    migrate_incident_versions(engine)
     from .replenishment_read_model import migrate as migrate_replenishment_read_model
     migrate_replenishment_read_model(engine)
     with engine.begin() as conn:

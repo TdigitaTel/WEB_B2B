@@ -71,6 +71,52 @@ let root=createRoot(document.getElementById('root'));
  assert.equal(saved.revision,3,'Edits use the selected stored revision');
  assert.equal(saved.configuration.code,'OTHER');
 
+ // A registered version is read-only; changes require an explicit new version with a reason.
+ const oldFetch=global.fetch;let requestedVersion=null,renameRequest=null,deleted=false,openedId=null;
+ const usedFlow={revision:5,configuration:config,flow_version:2,in_use:true,has_incidents:true,version_count:2};
+ const historyValue={name:config.name,current_version:2,versions:[{number:2,configuration:config,created_at:'2026-11-16T09:00:00Z',created_by:'Operador',note:'Nueva validación',legacy:false,in_use:true},{number:1,configuration:config,created_at:'2026-11-13T09:00:00Z',created_by:null,note:'Versión heredada',legacy:true,in_use:true}],changes:[{id:1,version:2,action:'VERSION_CREATED',actor:'Operador',created_at:'2026-11-16T09:00:00Z',detail:{note:'Nueva validación'}}]};
+ global.fetch=async(url,request={})=>{calls.push([url,request]);let value;
+  if(url.endsWith('/history'))value=historyValue;
+  else if(request.method==='PATCH'){renameRequest=JSON.parse(request.body);value={...usedFlow,revision:6,configuration:{...config,name:renameRequest.name}};}
+  else if(request.method==='DELETE'){deleted=true;value={deleted:true};}
+  else if(request.method==='PUT'){requestedVersion=JSON.parse(request.body);value={...requestedVersion,flow_version:3,in_use:false};}
+  else value={items:[{...detail,status:'OPEN',flow_version:2,stage:'Validación',assignee_name:'Responsable',flow_steps:[{name:'Validación',kind:'WORK',state:'CURRENT'},{name:'Cierre',kind:'CONFIRM',state:'PENDING'}]}],total:1};
+  return {ok:true,status:200,json:async()=>structuredClone(value)};
+ };
+ await React.act(async()=>root.unmount());root=createRoot(document.getElementById('root'));
+ await React.act(async()=>root.render(React.createElement(Flows,{options:{...options,types:[usedFlow]},onSaved:()=>{}})));
+ assert.match(document.body.textContent,/v2/);assert.ok(document.querySelector('[aria-label="Eliminar flujo Toma de inventario"]').disabled);
+ await React.act(async()=>document.querySelector('[aria-label="Editar flujo Toma de inventario"]').click());
+ assert.ok(label('Nombre').querySelector('input').matches(':disabled'));
+ assert.equal([...document.querySelectorAll('button')].find(button=>button.textContent==='Guardar configuración del flujo'),undefined);
+ await React.act(async()=>[...document.querySelectorAll('button')].find(button=>button.textContent==='Cancelar edición y volver al listado').click());
+ await React.act(async()=>document.querySelector('[aria-label="Nueva versión de Toma de inventario"]').click());
+ assert.ok(!label('Nombre').querySelector('input').matches(':disabled'));
+ assert.ok([...document.querySelectorAll('button')].find(button=>button.textContent==='Guardar nueva versión').disabled);
+ await React.act(async()=>setInput(label('Motivo de la nueva versión').querySelector('textarea'),'Separar validaciones'));
+ await React.act(async()=>document.querySelector('form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})));
+ assert.equal(requestedVersion.new_version,true);assert.equal(requestedVersion.change_note,'Separar validaciones');assert.equal(requestedVersion.revision,5);
+ await React.act(async()=>document.querySelector('[aria-label="Cambiar nombre de Toma de inventario"]').click());
+ await React.act(async()=>setInput(label('Nombre del proceso').querySelector('input'),'Nuevo nombre'));
+ await React.act(async()=>document.querySelector('form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})));
+ assert.equal(renameRequest.name,'Nuevo nombre');assert.match(document.body.textContent,/Nuevo nombre/);
+ await React.act(async()=>document.querySelector('[aria-label="Historial de Nuevo nombre"]').click());
+ assert.match(document.body.textContent,/Versión 1/);assert.match(document.body.textContent,/Versión 2/);assert.match(document.body.textContent,/Nueva validación/);
+ await React.act(async()=>[...document.querySelectorAll('button')].find(button=>button.textContent==='Volver a flujos').click());
+ await React.act(async()=>root.unmount());root=createRoot(document.getElementById('root'));
+ window.confirm=()=>true;
+ await React.act(async()=>root.render(React.createElement(Flows,{options:{...options,types:[{...usedFlow,in_use:false,has_incidents:false}]},onSaved:()=>{}})));
+ await React.act(async()=>document.querySelector('[aria-label="Eliminar flujo Toma de inventario"]').click());
+ assert.ok(deleted);assert.match(document.body.textContent,/No hay flujos configurados/);
+ await React.act(async()=>root.unmount());root=createRoot(document.getElementById('root'));
+ const ProcessViewer=require('../app/IncidentProcessViewer.tsx').default;calls=[];
+ await React.act(async()=>root.render(React.createElement(ProcessViewer,{options,onOpen:id=>openedId=id})));
+ await React.act(async()=>new Promise(resolve=>setTimeout(resolve,240)));
+ assert.ok(calls[0][0].includes('status=OPEN'));assert.match(document.body.textContent,/v2/);assert.match(document.body.textContent,/En curso/);assert.match(document.body.textContent,/Responsable/);
+ await React.act(async()=>[...document.querySelectorAll('button')].find(button=>button.textContent==='Abrir incidencia').click());assert.equal(openedId,detail.id);
+ const beforeIdle=calls.length;await React.act(async()=>new Promise(resolve=>setTimeout(resolve,240)));assert.equal(calls.length,beforeIdle,'Viewer does not poll');
+ global.fetch=oldFetch;
+
  await React.act(async()=>root.unmount());root=createRoot(document.getElementById('root'));
  const Form=require('../app/IncidentForm.tsx').default;
  await React.act(async()=>root.render(React.createElement(Form,{options,onSaved:value=>{received=value},onCancel:()=>{}})));

@@ -702,6 +702,30 @@ class IncidentType(Base):
     configuration: Mapped[dict] = mapped_column(JSON)
 
 
+class IncidentFlowVersion(Base):
+    __tablename__='logistics_incident_flow_versions'
+    __table_args__=(UniqueConstraint('type_code','number'),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    type_code: Mapped[str] = mapped_column(String(40),index=True)
+    number: Mapped[int] = mapped_column(Integer)
+    configuration: Mapped[dict] = mapped_column(JSON)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey('users.id'))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),server_default=func.now())
+    note: Mapped[str] = mapped_column(Text,default='')
+    legacy: Mapped[bool] = mapped_column(Boolean,default=False)
+
+
+class IncidentFlowChange(Base):
+    __tablename__='logistics_incident_flow_changes'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    type_code: Mapped[str] = mapped_column(String(40),index=True)
+    flow_version: Mapped[int] = mapped_column(Integer)
+    action: Mapped[str] = mapped_column(String(30))
+    actor_id: Mapped[int | None] = mapped_column(ForeignKey('users.id'))
+    detail: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),server_default=func.now())
+
+
 class IncidentSequence(Base):
     __tablename__ = 'logistics_incident_sequences'
     year: Mapped[int] = mapped_column(Integer, primary_key=True)

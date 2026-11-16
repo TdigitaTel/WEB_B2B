@@ -58,6 +58,8 @@ class TypeConfiguration(BaseModel):
         return self
 
 class SaveType(BaseModel):
+    new_version:bool=False
+    change_note:str=Field(default='',max_length=1000)
     revision:int=Field(0,ge=0)
     configuration:TypeConfiguration
 
@@ -107,3 +109,13 @@ class Action(BaseModel):
 
 class EditIncident(CreateIncident):
     version:int=Field(ge=1)
+
+
+class RenameFlow(BaseModel):
+    revision:int=Field(ge=1)
+    name:str=Field(min_length=1,max_length=120)
+    @field_validator('name')
+    @classmethod
+    def valid_name(cls,value):
+        if not value.strip() or any(ord(c)<32 for c in value):raise ValueError('Indica un nombre de flujo válido')
+        return value.strip()
