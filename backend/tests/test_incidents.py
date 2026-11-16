@@ -386,3 +386,70 @@ def test_destination_requires_explicit_access_and_all_delegations_remains_explic
         access=db.get(OperatorAccess,accounts[0][0]);access.permissions={'all_delegations':True};db.commit()
     assert {row['id'] for row in creator.get(BASE+'/options').json()['destinations']}=={'1:00','1:01','1:02'}
     assert creator.post(BASE,json=data('TRANSFER')).status_code==201
+
+
+@pytest.mark.parametrize('activities',[
+    ['EXECUTE'],['WORK','EXECUTE','CONFIRM'],['EXECUTE','APPROVE','WORK'],['CONFIRM','WORK']])
+def test_configurer_controls_inventory_activities_order_and_closure(setup,activities,monkeypatch):
+    admin,(creator,worker,other),accounts=setup
+    flow=configure(admin,accounts,'INVENTORY')
+    template=flow['configuration']['steps'][0]
+    flow['configuration']['steps']=[{**deepcopy(template),'name':f'{index} {kind}','kind':kind,'scope':'GENERAL',
+        'general':{'user_id':accounts[1][0],'email':accounts[1][1]},'delegations':{},'substitute':None,
+        'require_document':False,'require_stock_verification':False} for index,kind in enumerate(activities)]
+    response=admin.put(BASE+'/types/INVENTORY',json=flow)
+    assert response.status_code==200,response.text
+    row=create(creator,'INVENTORY')
+    current=action(creator,row,'SUBMIT').json()
+    assert current['assignee_id']==accounts[1][0]
+    import app.incidents as module
+    monkeypatch.setattr(module,'stock_for',lambda *args:pytest.fail('Optional verification must not query EXIT'))
+    for index,kind in enumerate(activities):
+        current=worker.get(BASE+'/'+row['id']).json()
+        assert current['stage_kind']==kind and current['can_work']
+        response=action(worker,current)
+        assert response.status_code==200,response.text
+        current=response.json()
+        if kind=='CONFIRM' or index==len(activities)-1:
+            assert current['status']=='CLOSED'
+            assert len(current['emails'])==index+1
+            break
+        assert current['status']=='OPEN'
+    assert action(creator,current).status_code==403
+
+
+def test_any_activity_can_be_assigned_to_requester_without_changing_flow_snapshot(setup):
+    admin,(creator,worker,other),accounts=setup
+    flow=configure(admin,accounts)
+    flow['configuration']['steps']=flow['configuration']['steps'][:1]
+    flow['configuration']['steps'][0].update({'scope':'REQUESTER','general':None})
+    response=admin.put(BASE+'/types/REPLENISHMENT',json=flow)
+    assert response.status_code==200,response.text
+    row=create(creator);current=action(creator,row,'SUBMIT').json()
+    assert current['assignee_id']==accounts[0][0] and current['can_work']
+    assert action(worker,current).status_code==404
+    assert action(creator,current).json()['status']=='CLOSED'
+
+
+def test_legacy_close_and_inventory_verification_keep_their_original_behavior(setup):
+    from app.incident_flow import normalize,requester,stock_verification
+    admin,(creator,worker,other),accounts=setup
+    configure(admin,accounts,'INVENTORY')
+    row=create(creator,'INVENTORY')
+    with SessionLocal() as db:
+        item=db.get(LogisticsIncident,row['id']);legacy=deepcopy(item.workflow)
+        for step in legacy['steps']:
+            step.pop('require_stock_verification',None)
+            if step['kind']=='CONFIRM':step['scope']='DELEGATION'
+        legacy['steps'][2]['require_document']=False
+        item.workflow=legacy;db.commit()
+    assert requester(legacy['steps'][-1])
+    assert stock_verification(legacy,legacy['steps'][2])
+    assert normalize(legacy)['steps'][-1]['scope']=='REQUESTER'
+    current=action(creator,row,'SUBMIT').json()
+    current=action(worker,current).json();current=action(worker,current).json()
+    assert current['stage_kind']=='EXECUTE'
+    assert action(worker,current,verification_note='Revisado').status_code==422
+    assert action(worker,current,document='AJ-123').status_code==422
+    current=action(worker,current,document='AJ-123',verification_note='Comprobado en EXIT').json()
+    assert current['assignee_id']==accounts[0][0]

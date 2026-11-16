@@ -28,6 +28,15 @@ let root=createRoot(document.getElementById('root'));
  assert.match(document.querySelector('[aria-label="Flujos configurados"]').textContent,/Toma de inventario/);
  await React.act(async()=>document.querySelector('[aria-label="Editar flujo Toma de inventario"]').click());
  assert.ok(document.querySelector('[aria-label="Responsable general de etapa 2"] option[value="2"]'),'Approval stage can assign active users without a global approval permission');
+ const lastStage=document.querySelector('.incident-stage-editor:last-of-type');
+ assert.equal([...lastStage.querySelectorAll('button')].find(button=>button.textContent==='Quitar').disabled,false,'Closing activity is removable');
+ assert.equal([...lastStage.querySelectorAll('button')].find(button=>button.textContent==='↑').disabled,false,'Closing activity can be reordered');
+ assert.ok(lastStage.querySelector('select'),'Closing assignee is configurable');
+ const beforeProcess=[...document.querySelectorAll('[aria-label^="Actividad de etapa"]')].map(select=>select.value);
+ await React.act(async()=>choose(label('Proceso').querySelector('select'),'SALE'));
+ assert.deepEqual([...document.querySelectorAll('[aria-label^="Actividad de etapa"]')].map(select=>select.value),beforeProcess,'Changing process type does not replace configured activities');
+ await React.act(async()=>choose(label('Proceso').querySelector('select'),'INVENTORY'));
+
  await React.act(async()=>choose(label('Asignación').querySelector('select'),'DELEGATION'));
  await React.act(async()=>document.querySelectorAll('.incident-delegation-targets input[type=checkbox]')[1].click());
  const destinationPeople=document.querySelector('[aria-label="Responsable de Ferrol, etapa 1"]');

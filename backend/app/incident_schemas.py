@@ -16,13 +16,14 @@ class Destination(BaseModel):
 class Step(BaseModel):
     name:str=Field(min_length=1,max_length=120)
     kind:Literal['WORK','APPROVE','EXECUTE','CONFIRM']='WORK'
-    scope:Literal['GENERAL','DELEGATION','ORIGIN','DESTINATION']='DELEGATION'
+    scope:Literal['GENERAL','DELEGATION','ORIGIN','DESTINATION','REQUESTER']='DELEGATION'
     general:Destination|None=None
     delegations:dict[str,Destination]=Field(default_factory=dict,max_length=200)
     substitute:Destination|None=None
     hours:int=Field(48,ge=1,le=8760)
     files:Literal['INHERIT','FORBIDDEN','OPTIONAL','REQUIRED']='INHERIT'
     require_document:bool=False
+    require_stock_verification:bool=False
     @field_validator('name')
     @classmethod
     def valid_name(cls,value):
@@ -54,10 +55,6 @@ class TypeConfiguration(BaseModel):
         if self.file_mode=='FORBIDDEN' and any(step.files in {'OPTIONAL','REQUIRED'} for step in self.steps):raise ValueError('Un tipo que no admite archivos no puede exigirlos en una etapa')
         required_files=(1 if self.file_mode=='REQUIRED' else 0)+sum(step.files=='REQUIRED' for step in self.steps)
         if required_files>self.max_files:raise ValueError('El máximo de archivos debe permitir uno por cada etapa obligatoria')
-        if self.kind=='INVENTORY':
-            approval=[i for i,step in enumerate(self.steps) if step.kind=='APPROVE']
-            execution=[i for i,step in enumerate(self.steps) if step.kind=='EXECUTE']
-            if not approval or not execution or min(execution)<=min(approval):raise ValueError('Inventario necesita autorización antes de ejecutar el ajuste')
         return self
 
 class SaveType(BaseModel):

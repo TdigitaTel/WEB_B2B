@@ -19,7 +19,8 @@ from .delegations import fetch_delegations
 from .erp_db import fetch_catalog_articles,connect_sqlserver
 from .incident_schemas import SaveType,CreateIncident,EditIncident,Action,TypeConfiguration
 from .order_email_settings import email_address
-from .incident_scope import includes,allows_task,task_reference
+from .incident_scope import includes,allows_task
+from .incident_flow import requester,stock_verification,normalize,document_required
 
 router=APIRouter(prefix='/api/v1/store/incidents',tags=['incidents'])
 operator=require_roles('ADMIN','OPERADOR_TIENDA')
@@ -70,15 +71,15 @@ def defaults(code):
     steps=[]
     for index,name in enumerate(names[code]):
         kind='CONFIRM' if index==len(names[code])-1 else 'APPROVE' if code=='INVENTORY' and index==1 else 'EXECUTE' if code=='INVENTORY' and index==2 else 'WORK'
-        steps.append({'name':name,'kind':kind,'scope':'ORIGIN' if code=='TRANSFER' and index==0 else 'DESTINATION' if code=='TRANSFER' and index==1 else 'GENERAL' if index==1 and code!='INVENTORY' else 'DELEGATION','require_document':kind=='EXECUTE'})
+        steps.append({'name':name,'kind':kind,'scope':'REQUESTER' if kind=='CONFIRM' else 'ORIGIN' if code=='TRANSFER' and index==0 else 'DESTINATION' if code=='TRANSFER' and index==1 else 'GENERAL' if index==1 and code!='INVENTORY' else 'DELEGATION','require_document':kind=='EXECUTE','require_stock_verification':code=='INVENTORY' and kind=='EXECUTE'})
     return TypeConfiguration(code=code,name=LABELS[code],kind=code,steps=steps).model_dump()
 
 def type_rows(db):
     saved={row.code:row for row in db.scalars(select(Type).order_by(Type.code))}
-    return [{'revision':saved[code].revision if code in saved else 0,'configuration':saved[code].configuration if code in saved else defaults(code)} for code in list(LABELS)+sorted(set(saved)-set(LABELS))]
+    return [{'revision':saved[code].revision if code in saved else 0,'configuration':normalize(saved[code].configuration) if code in saved else defaults(code)} for code in list(LABELS)+sorted(set(saved)-set(LABELS))]
 
 def scoped_configuration(configuration,scope):
-    value=deepcopy(configuration)
+    value=normalize(configuration)
     if scope is not None:
         for step in value['steps']:
             step['delegations']={key:target for key,target in step.get('delegations',{}).items() if key in scope}
@@ -95,7 +96,7 @@ def active_target(db,target,kind='WORK'):
     return user
 
 def resolve(db,row,step):
-    if step['kind']=='CONFIRM':
+    if requester(step):
         user=db.get(User,row.creator_id)
         if not user or not user.active or user.role not in {'ADMIN','OPERADOR_TIENDA'} or not allows_task(user,db,row,step):fail('El solicitante ya no puede confirmar; un supervisor debe revisar la asignación',409)
         return user,user.email
@@ -158,7 +159,7 @@ def detail(row,db,user):
     p=permissions_for(user,db);supervisor=supervises(user,db,row)
     current=row.workflow['steps'][row.stage_index] if row.stage_index>=0 else None
     work=(row.assignee_id==user.id or supervisor) and bool(current and allows_task(user,db,row,current))
-    if current and current['kind']=='CONFIRM':work=work and row.assignee_id==user.id and row.creator_id==user.id
+    if current and requester(current):work=work and row.assignee_id==user.id and row.creator_id==user.id
     return {**summary(row,db),'lines':row.lines,'workflow':scoped_configuration(row.workflow,scope_ids(user,db)),'file_mode':file_mode(row),'files':files,
         'events':[{'id':entry.id,'action':entry.action,'actor':names.get(entry.actor_id),'detail':entry.detail,'created_at':entry.created_at} for entry in events],
         'emails':mails,'can_submit':row.status=='DRAFT' and row.creator_id==user.id and allowed_origin(user,db,row.delegation_id) and p.get('incident_create',False),
@@ -182,8 +183,6 @@ def options(user:User=Depends(operator),db:Session=Depends(get_db)):
 def save_type(code:str,body:SaveType,user:User=Depends(operator),db:Session=Depends(get_db)):
     require(user,db,'incident_config');cfg=body.configuration
     if code!=cfg.code:fail('El código del tipo no coincide')
-    if cfg.steps[-1].kind!='CONFIRM':fail('La última etapa debe ser la confirmación del solicitante')
-    if any(step.kind=='CONFIRM' for step in cfg.steps[:-1]):fail('La confirmación del solicitante debe ser la última etapa')
     valid=stores()
     for step in cfg.steps:
         for reference in step.delegations:
@@ -191,13 +190,16 @@ def save_type(code:str,body:SaveType,user:User=Depends(operator),db:Session=Depe
             target=active_target(db,step.delegations[reference].model_dump())
             if target and not allowed_origin(target,db,reference):fail('El responsable debe tener acceso a la delegación asignada')
         if step.scope=='DESTINATION' and cfg.kind!='TRANSFER':fail('Destino solo está disponible para intercambios')
-        targets=[*step.delegations.values(),*([step.general] if step.general else []),*([step.substitute] if step.substitute else [])]
+        if step.scope=='REQUESTER':targets=[]
+        elif step.scope=='GENERAL':targets=[step.general] if step.general else []
+        else:targets=list(step.delegations.values())
+        if step.scope!='REQUESTER' and step.substitute:targets.append(step.substitute)
         for target in targets:
             account=active_target(db,target.model_dump(),step.kind)
             if not account:fail('El responsable debe ser un usuario web activo')
             own_scope=scope_ids(user,db);account_scope=scope_ids(account,db)
             if own_scope is not None and account_scope is not None and not set(own_scope).intersection(account_scope):fail('El responsable debe compartir una delegación autorizada')
-        if cfg.active and step.kind!='CONFIRM' and not (step.general if step.scope=='GENERAL' else step.delegations or step.substitute):fail('Configura responsables antes de activar el flujo')
+        if cfg.active and step.scope!='REQUESTER' and not (step.general if step.scope=='GENERAL' else step.delegations or step.substitute):fail('Configura responsables antes de activar el flujo')
     from sqlalchemy.dialects.postgresql import insert as pg_insert
     from sqlalchemy.dialects.sqlite import insert as sqlite_insert
     insert=pg_insert if db.bind.dialect.name=='postgresql' else sqlite_insert
@@ -205,7 +207,7 @@ def save_type(code:str,body:SaveType,user:User=Depends(operator),db:Session=Depe
     row=db.scalar(select(Type).where(Type.code==code).with_for_update())
     if row.revision!=body.revision:fail('Otro usuario ha cambiado este flujo. Recarga antes de guardar',409)
     saved=cfg.model_dump();scope=scope_ids(user,db)
-    previous=row.configuration
+    previous=normalize(row.configuration)
     hidden=scope is not None and any(set(step.get('delegations',{}))-set(scope) for step in previous.get('steps',[]))
     if hidden:
         old_steps=previous['steps'];new_steps=saved['steps']
@@ -349,13 +351,15 @@ def action(incident_id:str,body:Action,user:User=Depends(operator),db:Session=De
         event(db,row,user,'COMMENT',note=body.note)
     elif name=='SUBMIT':
         if not allowed['can_submit']:fail('Solo el solicitante puede enviar su borrador',403)
-        for step in row.workflow['steps']:resolve(db,row,step)
+        for step in row.workflow['steps']:
+            resolve(db,row,step)
+            if step['kind']=='CONFIRM':break
         files_required(db,row);assign(db,row,0,user)
     elif name=='REASSIGN':
         if not allowed['can_reassign']:fail('Solo un supervisor autorizado puede reasignar',403)
         if not body.note.strip():fail('Indica el motivo de la reasignación')
         step=row.workflow['steps'][row.stage_index]
-        if step['kind']=='CONFIRM' and body.user_id!=row.creator_id:fail('La confirmación final corresponde al solicitante')
+        if requester(step) and body.user_id!=row.creator_id:fail('Esta actividad está asignada al solicitante en el flujo')
         target={'user_id':body.user_id,'email':body.email}
         account=active_target(db,target,step['kind'])
         if not account:fail('Selecciona un usuario web activo como responsable')
@@ -383,18 +387,19 @@ def action(incident_id:str,body:Action,user:User=Depends(operator),db:Session=De
             event(db,row,user,'RETURNED',note=body.note)
         elif name=='ADVANCE':
             files_required(db,row)
-            if (step.get('require_document') or step['kind']=='EXECUTE') and not body.document.strip():fail('Indica el documento de resolución o ajuste realizado en EXIT')
-            if step['kind']=='EXECUTE' and row.workflow['kind']=='INVENTORY' and not body.verification_note.strip():fail('Confirma la revisión del stock actual y los movimientos posteriores al recuento')
+            if document_required(step) and not body.document.strip():fail('Esta actividad exige un documento de resolución o ejecución')
+            verify=step['kind']=='EXECUTE' and row.workflow['kind']=='INVENTORY'
+            if verify and stock_verification(row.workflow,step) and not body.verification_note.strip():fail('Confirma la revisión del stock actual y los movimientos posteriores al recuento')
             if body.document.strip():row.resolution_document=body.document.strip()
             verification={}
-            if step['kind']=='EXECUTE' and row.workflow['kind']=='INVENTORY':
+            if verify and body.verification_note.strip():
                 if body.verification_source=='EXIT':
                     try:verification=stock_for([line['sku'] for line in row.lines],row.delegation_id)
                     except Exception:fail('No se pudo verificar el stock actual. Reintenta o registra una comprobación manual justificada',503)
                     if any(line['sku'] not in verification for line in row.lines):fail('No se pudo identificar el stock actual de todos los materiales',409)
                 else:verification={'source':'MANUAL','note':body.verification_note}
-            event(db,row,user,'COMPLETED_STAGE',stage=step['name'],note=body.note,document=body.document,verification_note=body.verification_note,verification_source=body.verification_source if step['kind']=='EXECUTE' and row.workflow['kind']=='INVENTORY' else None,stock_verified=verification,verified_at=now().isoformat() if step['kind']=='EXECUTE' and row.workflow['kind']=='INVENTORY' else None)
-            if row.stage_index==len(row.workflow['steps'])-1:row.status='CLOSED';row.assignee_id=None;row.due_at=None;event(db,row,user,'CLOSED',note=body.note)
+            event(db,row,user,'COMPLETED_STAGE',stage=step['name'],note=body.note,document=body.document,verification_note=body.verification_note,verification_source=body.verification_source if verify and body.verification_note.strip() else None,stock_verified=verification,verified_at=now().isoformat() if verify and body.verification_note.strip() else None)
+            if step['kind']=='CONFIRM' or row.stage_index==len(row.workflow['steps'])-1:row.status='CLOSED';row.assignee_id=None;row.due_at=None;event(db,row,user,'CLOSED',note=body.note)
             else:assign(db,row,row.stage_index+1,user)
     row.version+=1;row.updated_at=now();db.commit();return detail(row,db,user)
 
