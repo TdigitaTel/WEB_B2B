@@ -117,14 +117,14 @@ def listing(q: str = Query('', max_length=200), page: int = Query(1, ge=1), enab
         delegations = []
         warning = 'Usuarios cargados. No se pudieron consultar las sedes de EXIT; no se puede guardar la asignación de sede hasta recuperar esa consulta.'
     return {'items': items, 'total': total, 'page_size': size, 'modules': MODULES, 'warning': warning,
-            'incident_processes':[{'code':row.code,'name':row.configuration['name']} for row in db.scalars(select(IncidentType).order_by(IncidentType.code))],
+            'incident_processes':[{'code':row.code,'name':row.configuration['name']} for row in db.scalars(select(IncidentType).order_by(IncidentType.code)) if not row.configuration.get('_deleted')],
             'delegations': [{'company': d.company, 'code': d.code, 'name': d.name} for d in delegations]}
 
 
 @router.put('')
 def save(data: AccessIn, user: User = Depends(manager), db=Depends(get_db)):
     source = lookup(data.code)
-    configured=set(db.scalars(select(IncidentType.code)))
+    configured={row.code for row in db.scalars(select(IncidentType)) if not row.configuration.get('_deleted')}
     if set(data.incident_process_codes)-configured:
         raise HTTPException(422,'Selecciona procesos de incidencias ya configurados')
     if data.permissions.get('incident_supervise') and not (data.incident_all_processes or data.incident_process_codes):

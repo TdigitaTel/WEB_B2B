@@ -13,14 +13,15 @@ from sqlalchemy.orm import Session,load_only
 from .auth import require_roles,audit
 from .db import get_db
 from .models import (User,OperatorAccess,IncidentType as Type,IncidentSequence as Sequence,
-    LogisticsIncident as Incident,IncidentEvent as Event,IncidentAttachment as Attachment,IncidentEmail as Mail,Order,OrderItem)
+    LogisticsIncident as Incident,IncidentEvent as Event,IncidentAttachment as Attachment,IncidentEmail as Mail,Order,OrderItem,IncidentFlowVersion as FlowVersion,IncidentFlowChange as FlowChange)
 from .operator_permissions import permissions_for,delegation_scope,can_operate_delegation
 from .delegations import fetch_delegations
 from .erp_db import fetch_catalog_articles,connect_sqlserver
-from .incident_schemas import SaveType,CreateIncident,EditIncident,Action,TypeConfiguration
+from .incident_schemas import SaveType,CreateIncident,EditIncident,Action,TypeConfiguration,RenameFlow
 from .order_email_settings import email_address
 from .incident_scope import includes,allows_task
 from .incident_flow import requester,stock_verification,normalize,document_required
+from . import incident_versions as versions
 
 router=APIRouter(prefix='/api/v1/store/incidents',tags=['incidents'])
 operator=require_roles('ADMIN','OPERADOR_TIENDA')
@@ -47,7 +48,7 @@ def managed_processes(user,db):
     if not permissions_for(user,db).get('incident_supervise'):return set()
     access=db.get(OperatorAccess,user.id)
     if not access:return set()
-    configured=set(db.scalars(select(Type.code)))
+    configured={row.code for row in db.scalars(select(Type)) if not row.configuration.get('_deleted')}
     if access.permissions.get('incident_all_processes') is True:return configured
     return configured.intersection(access.permissions.get('incident_process_codes',[]))
 def supervises(user,db,row):
@@ -75,8 +76,19 @@ def defaults(code):
     return TypeConfiguration(code=code,name=LABELS[code],kind=code,steps=steps).model_dump()
 
 def type_rows(db):
-    saved={row.code:row for row in db.scalars(select(Type).order_by(Type.code))}
-    return [{'revision':saved[code].revision if code in saved else 0,'configuration':normalize(saved[code].configuration) if code in saved else defaults(code)} for code in list(LABELS)+sorted(set(saved)-set(LABELS))]
+    rows=list(db.scalars(select(Type).order_by(Type.code)))
+    missing=[row.code for row in rows if not row.configuration.get('_flow_version')]
+    if missing:
+        for row in db.scalars(select(Type).where(Type.code.in_(missing)).with_for_update()):versions.ensure(db,row)
+        db.commit()
+    saved={row.code:row for row in rows}
+    result=[]
+    for code in list(LABELS)+sorted(set(saved)-set(LABELS)):
+        row=saved.get(code)
+        if row and row.configuration.get('_deleted'):continue
+        result.append({'revision':row.revision,'configuration':versions.configuration(row.configuration),**versions.metadata(db,row)} if row else
+            {'revision':0,'configuration':defaults(code),'flow_version':1,'in_use':False,'has_incidents':False,'version_count':0})
+    return result
 
 def scoped_configuration(configuration,scope):
     value=normalize(configuration)
@@ -140,14 +152,17 @@ def queue_mail(db,row,address,user_id,stage):
         if status!='DISABLED':status='NOT_CONFIGURED'
     db.add(Mail(incident_id=row.id,assignment_version=row.assignment_version,recipient_id=user_id,recipient=address,stage=stage,status=status))
 
-def summary(row,db,names=None):
+def summary(row,db,names=None,flow_names=None):
     stage=row.workflow['steps'][row.stage_index] if row.stage_index>=0 else None
     if names is None:names=dict(db.execute(select(User.id,User.full_name).where(User.id.in_([row.creator_id,row.assignee_id or row.creator_id]))).all())
-    return {'id':row.id,'number':row.number,'type_code':row.type_code,'type_name':row.workflow['name'],'kind':row.workflow['kind'],
+    if flow_names is None:
+        current=db.get(Type,row.type_code);flow_name=current.configuration['name'] if current else row.workflow['name']
+    else:flow_name=flow_names.get(row.type_code,row.workflow['name'])
+    return {'id':row.id,'number':row.number,'type_code':row.type_code,'type_name':flow_name,'flow_version':row.workflow.get('_flow_version',1),'flow_steps':[{'name':step['name'],'kind':step['kind'],'state':'CURRENT' if row.status=='OPEN' and index==row.stage_index else 'COMPLETED' if index<row.stage_index or row.status=='CLOSED' and index==row.stage_index else 'NOT_EXECUTED' if row.status in {'CLOSED','REJECTED'} else 'PENDING'} for index,step in enumerate(row.workflow['steps'])],'kind':row.workflow['kind'],
         'delegation_id':row.delegation_id,'delegation_name':row.delegation_name,'destination_id':row.destination_id,
         'document':row.document,'description':row.description,'reason':row.reason,'priority':row.priority,'needed_on':row.needed_on,
         'creator_id':row.creator_id,'creator_name':names.get(row.creator_id),'assignee_id':row.assignee_id,'assignee_name':names.get(row.assignee_id),
-        'status':row.status,'stage_index':row.stage_index,'stage':stage['name'] if stage else 'Borrador','stage_kind':stage['kind'] if stage else None,
+        'status':row.status,'stage_index':row.stage_index,'stage':stage['name'] if stage else 'Pendiente de envío','stage_kind':stage['kind'] if stage else None,
         'version':row.version,'created_at':row.created_at,'updated_at':row.updated_at,'entered_at':row.entered_at,'due_at':row.due_at,'resolution_document':row.resolution_document}
 
 def detail(row,db,user):
@@ -207,7 +222,10 @@ def save_type(code:str,body:SaveType,user:User=Depends(operator),db:Session=Depe
     row=db.scalar(select(Type).where(Type.code==code).with_for_update())
     if row.revision!=body.revision:fail('Otro usuario ha cambiado este flujo. Recarga antes de guardar',409)
     saved=cfg.model_dump();scope=scope_ids(user,db)
-    previous=normalize(row.configuration)
+    if row.configuration.get('_deleted'):fail('Este código pertenece a un flujo eliminado. Utiliza otro código',409)
+    created=row.revision==0
+    number=1 if created else versions.ensure(db,row)
+    previous=versions.configuration(row.configuration)
     hidden=scope is not None and any(set(step.get('delegations',{}))-set(scope) for step in previous.get('steps',[]))
     if hidden:
         old_steps=previous['steps'];new_steps=saved['steps']
@@ -215,8 +233,72 @@ def save_type(code:str,body:SaveType,user:User=Depends(operator),db:Session=Depe
             fail('Este flujo incluye otras delegaciones. Solo un configurador con acceso a todas ellas puede cambiar su configuración común',403)
         for old,new in zip(old_steps,new_steps):
             new['delegations']={**{key:target for key,target in old.get('delegations',{}).items() if key not in scope},**new['delegations']}
-    row.configuration=saved;row.revision+=1;audit(db,user,'INCIDENT_FLOW_SAVED','INCIDENT_TYPE',code);db.commit()
-    return scoped_type({'revision':row.revision,'configuration':row.configuration},scope)
+    in_use=versions.used(db,code,number)
+    if body.new_version:
+        if created:fail('Guarda el flujo inicial antes de crear otra versión',409)
+        if not body.change_note.strip():fail('Indica el motivo de la nueva versión')
+        number=(db.scalar(select(func.max(FlowVersion.number)).where(FlowVersion.type_code==code)) or number)+1
+    elif in_use and versions.structure(previous)!=versions.structure(saved):
+        fail('Esta versión ya tiene incidencias registradas y está bloqueada. Crea una nueva versión para modificar el flujo',409)
+    snapshot=db.scalar(select(FlowVersion).where(FlowVersion.type_code==code,FlowVersion.number==number))
+    if snapshot is None:
+        db.add(FlowVersion(type_code=code,number=number,configuration=deepcopy(saved),created_by=user.id,note=body.change_note.strip()))
+    elif not in_use:snapshot.configuration=deepcopy(saved)
+    row.configuration={**saved,'_flow_version':number};row.revision+=1
+    action='CREATED' if created else 'VERSION_CREATED' if body.new_version else 'RENAMED' if in_use else 'EDITED'
+    versions.record(db,row,number,action,user,note=body.change_note.strip(),previous=previous,configuration=saved)
+    audit(db,user,'INCIDENT_FLOW_'+action,'INCIDENT_TYPE',code,{'flow_version':number});db.commit()
+    return scoped_type({'revision':row.revision,'configuration':saved,**versions.metadata(db,row)},scope)
+
+
+def locked_type(code,db):
+    row=db.scalar(select(Type).where(Type.code==code).with_for_update())
+    if not row or row.configuration.get('_deleted'):fail('El flujo no existe',404)
+    versions.ensure(db,row)
+    return row
+
+
+@router.patch('/types/{code}/name')
+def rename_type(code:str,body:RenameFlow,user:User=Depends(operator),db:Session=Depends(get_db)):
+    require(user,db,'incident_config');row=locked_type(code,db)
+    if row.revision!=body.revision:fail('El flujo ha cambiado. Recarga antes de continuar',409)
+    previous=row.configuration['name'];row.configuration={**row.configuration,'name':body.name};row.revision+=1
+    versions.record(db,row,row.configuration['_flow_version'],'RENAMED',user,previous_name=previous,name=body.name)
+    audit(db,user,'INCIDENT_FLOW_RENAMED','INCIDENT_TYPE',code);db.commit()
+    return scoped_type({'revision':row.revision,'configuration':versions.configuration(row.configuration),**versions.metadata(db,row)},scope_ids(user,db))
+
+
+@router.delete('/types/{code}')
+def delete_type(code:str,revision:int=Query(ge=1),user:User=Depends(operator),db:Session=Depends(get_db)):
+    require(user,db,'incident_config');row=locked_type(code,db)
+    if row.revision!=revision:fail('El flujo ha cambiado. Recarga antes de eliminar',409)
+    if versions.used(db,code):fail('No se puede eliminar un flujo con incidencias registradas, aunque estén cerradas',409)
+    scoped=scoped_type({'configuration':versions.configuration(row.configuration)},scope_ids(user,db))
+    if scoped['structure_locked']:fail('Necesitas acceso a todas las delegaciones del flujo para eliminarlo',403)
+    row.configuration={**row.configuration,'_deleted':True};row.revision+=1
+    versions.record(db,row,row.configuration['_flow_version'],'DELETED',user,name=row.configuration['name'])
+    audit(db,user,'INCIDENT_FLOW_DELETED','INCIDENT_TYPE',code);db.commit()
+    return {'deleted':True,'code':code}
+
+
+@router.get('/types/{code}/history')
+def type_history(code:str,user:User=Depends(operator),db:Session=Depends(get_db)):
+    require(user,db,'incident_config')
+    row=db.scalar(select(Type).where(Type.code==code).with_for_update())
+    if not row:fail('El flujo no existe',404)
+    versions.ensure(db,row);db.commit();scope=scope_ids(user,db)
+    snapshots=list(db.scalars(select(FlowVersion).where(FlowVersion.type_code==code).order_by(FlowVersion.number.desc())))
+    changes=list(db.scalars(select(FlowChange).where(FlowChange.type_code==code).order_by(FlowChange.id.desc())))
+    ids={entry.actor_id for entry in changes if entry.actor_id}|{entry.created_by for entry in snapshots if entry.created_by}
+    names=dict(db.execute(select(User.id,User.full_name).where(User.id.in_(ids))).all()) if ids else {}
+    def safe_detail(data):
+        result=deepcopy(data)
+        for key in ('previous','configuration'):
+            if isinstance(result.get(key),dict) and 'steps' in result[key]:result[key]=scoped_configuration(result[key],scope)
+        return result
+    return {'code':code,'name':row.configuration['name'],'current_version':row.configuration['_flow_version'],'deleted':bool(row.configuration.get('_deleted')),
+        'versions':[{'number':entry.number,'configuration':scoped_configuration(entry.configuration,scope),'created_at':entry.created_at,'created_by':names.get(entry.created_by),'note':entry.note,'legacy':entry.legacy,'in_use':bool(versions.used(db,code,entry.number))} for entry in snapshots],
+        'changes':[{'id':entry.id,'version':entry.flow_version,'action':entry.action,'actor':names.get(entry.actor_id),'created_at':entry.created_at,'detail':safe_detail(entry.detail)} for entry in changes]}
 
 @router.get('/materials')
 def materials(q:str=Query('',max_length=200),user:User=Depends(operator),db:Session=Depends(get_db)):
@@ -294,8 +376,10 @@ def collect_lines(body,config):
 def create(body:CreateIncident,user:User=Depends(operator),db:Session=Depends(get_db)):
     require(user,db,'incident_create');delegations=stores()
     if body.delegation_id not in delegations or not allowed_origin(user,db,body.delegation_id):fail('Delegación no autorizada',403)
-    config=next((item['configuration'] for item in type_rows(db) if item['configuration']['code']==body.type_code),None)
-    if not config or not config['active']:fail('Activa y configura este tipo de incidencia antes de usarlo',409)
+    source=db.scalar(select(Type).where(Type.code==body.type_code).with_for_update())
+    if not source or source.configuration.get('_deleted') or not source.configuration.get('active'):fail('Activa y configura este tipo de incidencia antes de usarlo',409)
+    number=versions.ensure(db,source)
+    config={**versions.configuration(source.configuration),'_flow_version':number}
     kind=config['kind']
     if body.reason not in config['reasons']:fail('Selecciona un motivo configurado para este tipo')
     if kind!='INVENTORY' and not body.document.strip():fail('Indica el número del documento relacionado')
@@ -325,7 +409,9 @@ def listing(box:str=Query('MINE',pattern='^(MINE|ASSIGNED|ALL)$'),status:str=Que
     if scope is not None:query=query.where(or_(Incident.delegation_id.in_(scope),Incident.destination_id.in_(scope)))
     if box=='MINE':query=query.where(Incident.creator_id==user.id)
     elif box=='ASSIGNED':
-        query=query.where(Incident.assignee_id==user.id,Incident.status=='OPEN')
+        query=query.where(or_(
+            (Incident.assignee_id==user.id)&(Incident.status=='OPEN'),
+            (Incident.creator_id==user.id)&(Incident.status=='DRAFT')))
     if status=='ACTIVE':query=query.where(Incident.status.in_(['DRAFT','OPEN']))
     elif status!='ALL':query=query.where(Incident.status==status)
     if q:query=query.where(or_(Incident.number.contains(q,autoescape=True),Incident.document.contains(q,autoescape=True)))
@@ -335,7 +421,8 @@ def listing(box:str=Query('MINE',pattern='^(MINE|ASSIGNED|ALL)$'),status:str=Que
     rows=list(db.scalars(query.order_by(Incident.updated_at.desc(),Incident.id).offset((page-1)*30).limit(30)))
     ids={value for row in rows for value in (row.creator_id,row.assignee_id) if value}
     names=dict(db.execute(select(User.id,User.full_name).where(User.id.in_(ids))).all()) if ids else {}
-    return {'items':[summary(row,db,names) for row in rows],'total':total,'page_size':30}
+    flow_names={item.code:item.configuration['name'] for item in db.scalars(select(Type).where(Type.code.in_({row.type_code for row in rows})))}
+    return {'items':[summary(row,db,names,flow_names) for row in rows],'total':total,'page_size':30}
 
 @router.get('/{incident_id}')
 def read(incident_id:str,user:User=Depends(operator),db:Session=Depends(get_db)):return detail(load(incident_id,user,db),db,user)
@@ -350,7 +437,7 @@ def action(incident_id:str,body:Action,user:User=Depends(operator),db:Session=De
         if not body.note.strip():fail('Escribe el comentario')
         event(db,row,user,'COMMENT',note=body.note)
     elif name=='SUBMIT':
-        if not allowed['can_submit']:fail('Solo el solicitante puede enviar su borrador',403)
+        if not allowed['can_submit']:fail('Solo el solicitante puede enviar la incidencia registrada',403)
         for step in row.workflow['steps']:
             resolve(db,row,step)
             if step['kind']=='CONFIRM':break
@@ -382,7 +469,7 @@ def action(incident_id:str,body:Action,user:User=Depends(operator),db:Session=De
         elif name=='RETURN':
             if row.stage_index==0:
                 row.status='DRAFT';row.stage_index=-1;row.assignee_id=row.creator_id;row.due_at=None;row.assignment_version+=1
-                creator=db.get(User,row.creator_id);queue_mail(db,row,creator.email,creator.id,'Corregir borrador')
+                creator=db.get(User,row.creator_id);queue_mail(db,row,creator.email,creator.id,'Corregir registro')
             else:assign(db,row,row.stage_index-1,user,body.note)
             event(db,row,user,'RETURNED',note=body.note)
         elif name=='ADVANCE':
@@ -446,7 +533,7 @@ def download(incident_id:str,file_id:str,user:User=Depends(operator),db:Session=
 @router.put('/{incident_id}')
 def edit(incident_id:str,body:EditIncident,user:User=Depends(operator),db:Session=Depends(get_db)):
     require(user,db,'incident_create');row=load(incident_id,user,db,True)
-    if row.status!='DRAFT' or row.creator_id!=user.id:fail('Solo el solicitante puede corregir su borrador',403)
+    if row.status!='DRAFT' or row.creator_id!=user.id:fail('Solo el solicitante puede corregir la incidencia antes de enviarla',403)
     if row.version!=body.version:fail('La incidencia ha cambiado. Recarga antes de corregir',409)
     if body.type_code!=row.type_code or body.delegation_id!=row.delegation_id:fail('El tipo y la delegación de una incidencia registrada no pueden cambiar')
     if body.reason not in row.workflow['reasons']:fail('Selecciona un motivo del flujo registrado')
