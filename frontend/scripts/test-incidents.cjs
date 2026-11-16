@@ -133,10 +133,22 @@ let root=createRoot(document.getElementById('root'));
  let scrollTarget=null;document.getElementById('flow-stage-1').scrollIntoView=()=>scrollTarget='flow-stage-1';
  await React.act(async()=>document.querySelector('[aria-label="Ir a etapa 2: Autorización"]').click());assert.equal(scrollTarget,'flow-stage-1');
  await React.act(async()=>root.render(React.createElement(Timeline,{incident:{...detail,status:'OPEN',stage_index:1,stage:'Ejecutar ajuste',assignee_name:'Nuria',flow_steps:[{name:'Validación',kind:'WORK',state:'COMPLETED',responsible_name:'Ana',entered_at:'2026-11-16T09:00:00Z',completed_at:'2026-11-16T10:00:00Z',completed_by:'Marga'},{name:'Ejecutar ajuste',kind:'EXECUTE',state:'CURRENT',responsible_name:'Nuria',entered_at:'2026-11-16T10:00:00Z'},{name:'Confirmación',kind:'CONFIRM',state:'PENDING',planned_responsible_name:'RPA'}]}})));
- assert.equal(document.querySelectorAll('.incident-step-circle').length,4,'Registration and each configured stage have their own circle');
+ assert.equal(document.querySelectorAll('.incident-step-circle').length,3,'Only the three configured stages have circles');
+ assert.deepEqual([...document.querySelectorAll('.incident-step-content > b')].map(node=>node.textContent),['Validación','Ejecutar ajuste','Confirmación']);
+ assert.deepEqual([...document.querySelectorAll('.incident-step-circle')].map(node=>node.textContent),['✓','2','3']);
+ assert.match(document.querySelector('.incident-registration-meta').textContent,/Registrada por/);
+ assert.equal(document.querySelector('.incident-stepper .incident-registration-meta'),null,'Creation metadata is outside the configured flow');
  assert.match(document.querySelector('[aria-current=step]').textContent,/Ejecutar ajuste/);
  assert.match(document.body.textContent,/Completada por: Marga/);assert.match(document.body.textContent,/Fin: /);
  assert.match(document.body.textContent,/Previsto: RPA/);
+ const draftSteps=[{name:'Registro de stock errado',kind:'WORK'},{name:'Resolución logística',kind:'EXECUTE'},{name:'Confirmación',kind:'CONFIRM'}];
+ await React.act(async()=>root.render(React.createElement(Timeline,{incident:{...detail,status:'DRAFT',stage_index:0,flow_steps:undefined,workflow:{...detail.workflow,steps:draftSteps}}})));
+ assert.equal(document.querySelectorAll('.incident-step-circle').length,3,'An unsent record also shows only configured stages');
+ assert.deepEqual([...document.querySelectorAll('.incident-step-circle')].map(node=>node.textContent),['1','2','3']);
+ assert.equal(document.querySelector('[aria-current=step]'),null,'An unsent record has not started a stage');
+ assert.match(document.body.textContent,/Pendiente de enviar al primer responsable/);
+ assert.equal(document.querySelector('.incident-step-content > b').textContent,'Registro de stock errado');
+
  await React.act(async()=>root.render(React.createElement(Diagram,{options,flow:{...config,steps:[config.steps[3],config.steps[0]]}})));
  assert.match(document.querySelector('.is-skipped').textContent,/No se ejecuta: hay un cierre anterior/);
 
