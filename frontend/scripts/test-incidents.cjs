@@ -152,6 +152,25 @@ let root=createRoot(document.getElementById('root'));
  await React.act(async()=>root.render(React.createElement(Diagram,{options,flow:{...config,steps:[config.steps[3],config.steps[0]]}})));
  assert.match(document.querySelector('.is-skipped').textContent,/No se ejecuta: hay un cierre anterior/);
 
+ // Deletion is hidden without server permission and requires an exact number plus a reason.
+ await React.act(async()=>root.unmount());root=createRoot(document.getElementById('root'));
+ const DeleteIncident=require('../app/IncidentDelete.tsx').default;
+ let deletedCallback=false,deleteRequest=null;
+ const beforeDeleteFetch=global.fetch;
+ global.fetch=async(url,request)=>{deleteRequest=[url,request];return {ok:true,status:200,json:async()=>({deleted:true})}};
+ await React.act(async()=>root.render(React.createElement(DeleteIncident,{incident:{...detail,can_delete:false},onDeleted:()=>{}})));
+ assert.equal(document.querySelector('button'),null);
+ await React.act(async()=>root.render(React.createElement(DeleteIncident,{incident:{...detail,can_delete:true},onDeleted:()=>deletedCallback=true})));
+ await React.act(async()=>document.querySelector('button').click());
+ const confirmButton=[...document.querySelectorAll('button')].find(button=>button.textContent==='Confirmar eliminación');assert.ok(confirmButton.disabled);
+ await React.act(async()=>{setInput(label('Número de incidencia para confirmar').querySelector('input'),'OTRA');setInput(label('Motivo de eliminación').querySelector('textarea'),'Registro de prueba')});
+ assert.ok(confirmButton.disabled);
+ await React.act(async()=>setInput(label('Número de incidencia para confirmar').querySelector('input'),detail.number));assert.ok(!confirmButton.disabled);
+ await React.act(async()=>document.querySelector('form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})));
+ assert.equal(deleteRequest[1].method,'DELETE');assert.equal(JSON.parse(deleteRequest[1].body).confirmation_number,detail.number);
+ assert.equal(JSON.parse(deleteRequest[1].body).note,'Registro de prueba');assert.equal(JSON.parse(deleteRequest[1].body).version,detail.version);assert.ok(deletedCallback);
+ global.fetch=beforeDeleteFetch;
+
  await React.act(async()=>root.unmount());root=createRoot(document.getElementById('root'));
  const Form=require('../app/IncidentForm.tsx').default;
  await React.act(async()=>root.render(React.createElement(Form,{options,onSaved:value=>{received=value},onCancel:()=>{}})));

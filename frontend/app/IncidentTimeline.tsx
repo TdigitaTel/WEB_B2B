@@ -1,6 +1,6 @@
 'use client';
 import {activityLabels,formatIncidentDate,statusLabels,type Detail,type Incident,type FlowProgress} from './incidentTypes';
-const states:Record<string,string>={CURRENT:'En curso',COMPLETED:'Completada',PENDING:'Pendiente',NOT_EXECUTED:'No ejecutada',REJECTED:'Rechazada'};
+const states:Record<string,string>={CURRENT:'En curso',COMPLETED:'Completada',PENDING:'Pendiente',NOT_EXECUTED:'No ejecutada',REJECTED:'Rechazada',DELETED:'Eliminada'};
 export default function IncidentTimeline({incident}:{incident:Incident|Detail}){
  const definitions='workflow' in incident?incident.workflow.steps:[];
  const steps:FlowProgress[]=incident.flow_steps||definitions.map((step,index)=>({...step,state:incident.status==='OPEN'&&index===incident.stage_index?'CURRENT':index<incident.stage_index||incident.status==='CLOSED'&&index===incident.stage_index?'COMPLETED':incident.status==='CLOSED'||incident.status==='REJECTED'?'NOT_EXECUTED':'PENDING'}));

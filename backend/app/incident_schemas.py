@@ -119,3 +119,14 @@ class RenameFlow(BaseModel):
     def valid_name(cls,value):
         if not value.strip() or any(ord(c)<32 for c in value):raise ValueError('Indica un nombre de flujo válido')
         return value.strip()
+
+
+class DeleteIncident(BaseModel):
+    version:int=Field(ge=1)
+    confirmation_number:str=Field(min_length=1,max_length=30)
+    note:str=Field(min_length=3,max_length=1000)
+    @field_validator('note')
+    @classmethod
+    def reason(cls,value):
+        if len(value.strip())<3:raise ValueError('Indica el motivo de eliminación')
+        return value.strip()

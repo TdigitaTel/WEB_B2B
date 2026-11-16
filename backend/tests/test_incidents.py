@@ -610,3 +610,107 @@ def test_visual_progress_uses_persisted_assignment_and_completion_events(setup):
     assert listed['flow_steps'][2]['entered_at'] is None
     assert listed['flow_steps'][2]['planned_responsible_name']=='creator'
     assert listed['flow_steps'][2]['responsible_name'] is None
+
+
+@pytest.fixture
+def rpa(setup):
+    admin,clients,accounts=setup
+    with SessionLocal() as db:
+        user=db.get(User,accounts[0][0]);user.access_code='RPA';db.commit()
+    yield clients[0]
+    with SessionLocal() as db:
+        db.get(User,accounts[0][0]).access_code=None;db.commit()
+
+
+def delete_case(client,row,**changes):
+    body={'version':row['version'],'confirmation_number':row['number'],'note':'Incidencia de prueba obsoleta',**changes}
+    return client.request('DELETE',BASE+'/'+row['id'],json=body)
+
+
+def test_only_real_rpa_account_can_delete_and_process_is_preserved(setup,rpa):
+    admin,(creator,worker,other),accounts=setup
+    configure(admin,accounts);draft=create(creator)
+    assert draft['can_delete'] and creator.get(BASE+'/options').json()['permissions']['incident_delete']
+    assert not admin.get(BASE+'/options').json()['permissions']['incident_delete']
+    assert delete_case(admin,draft).status_code==403
+    with SessionLocal() as db:
+        account=db.get(User,accounts[1][0]);account.full_name='RPA'
+        access=db.get(OperatorAccess,account.id);access.permissions={**access.permissions,'incident_delete':True};db.commit()
+    assert not worker.get(BASE+'/options').json()['permissions']['incident_delete']
+    assert delete_case(worker,draft).status_code==403
+    uploaded=creator.post(BASE+'/'+draft['id']+'/files',params={'version':draft['version']},files={'file':('prueba.pdf',b'%PDF-1.4\n1 0 obj\nendobj\n%%EOF','application/pdf')})
+    assert uploaded.status_code==201,uploaded.text
+    draft=uploaded.json();file_id=draft['files'][0]['id']
+    result=delete_case(creator,draft)
+    assert result.status_code==200,result.text
+    assert not creator.get(BASE+'?box=MINE&status=ALL').json()['items']
+    assert creator.get(BASE+'?box=ALL&status=DELETED').json()['total']==1
+    assert admin.get(BASE+'?box=ALL&status=DELETED').status_code==403
+    assert admin.get(BASE+'/'+draft['id']).status_code==404
+    archived=creator.get(BASE+'/'+draft['id']).json()
+    assert archived['status']=='DELETED' and not archived['can_delete'] and not archived['can_submit'] and not archived['can_comment']
+    assert archived['files'][0]['id']==file_id
+    assert creator.get(BASE+'/'+draft['id']+'/files/'+file_id).status_code==200
+    assert admin.get(BASE+'/'+draft['id']+'/files/'+file_id).status_code==404
+    assert archived['events'][-1]['action']=='DELETED' and archived['events'][-1]['detail']['note']=='Incidencia de prueba obsoleta'
+    assert creator.post(BASE+'/'+draft['id']+'/actions',json={'version':archived['version'],'action':'SUBMIT'}).status_code==403
+    # Configuration, versions and evidence are preserved, including the lock on used versions.
+    current=next(item for item in admin.get(BASE+'/options').json()['types'] if item['configuration']['code']=='REPLENISHMENT')
+    assert current['in_use'] and current['has_incidents']
+    assert create(creator)['flow_version']==draft['flow_version']
+
+
+def test_deleting_open_incident_cancels_queued_mail_and_checks_confirmation(setup,rpa):
+    admin,(creator,worker,other),accounts=setup
+    configure(admin,accounts);current=action(creator,create(creator),'SUBMIT').json()
+    assert delete_case(creator,current,version=current['version']-1).status_code==409
+    assert delete_case(creator,current,confirmation_number='OTRA').status_code==422
+    assert delete_case(creator,current,note='  ').status_code==422
+    with SessionLocal() as db:
+        job=db.scalar(select(IncidentEmail).where(IncidentEmail.incident_id==current['id']));job.status='SENDING';db.commit()
+    assert delete_case(creator,current).status_code==409
+    with SessionLocal() as db:
+        job=db.scalar(select(IncidentEmail).where(IncidentEmail.incident_id==current['id']));job.status='PENDING';db.commit()
+    assert delete_case(creator,current).status_code==200
+    assert worker.get(BASE+'/'+current['id']).status_code==404
+    archived=creator.get(BASE+'/'+current['id']).json()
+    assert archived['assignee_id'] is None and archived['due_at'] is None
+    assert archived['emails'][0]['status']=='SUPERSEDED'
+    assert archived['flow_steps'][0]['state']=='DELETED'
+    from app.incident_mail import deliver
+    sent=[]
+    with SessionLocal() as db:
+        job=db.scalar(select(IncidentEmail).where(IncidentEmail.incident_id==current['id']))
+        deliver(db,job,transport=lambda *args:sent.append(args))
+    assert not sent
+
+
+def test_rpa_delete_respects_delegation_and_worker_lock(setup,rpa,monkeypatch):
+    admin,(creator,worker,other),accounts=setup
+    configure(admin,accounts)
+    body=data();body['delegation_id']='1:02'
+    other_case=other.post(BASE,json=body).json()
+    assert delete_case(creator,other_case).status_code==404
+    from contextlib import contextmanager
+    @contextmanager
+    def busy():yield False
+    monkeypatch.setattr('app.incidents.delivery_lock',busy)
+    own=create(creator)
+    assert delete_case(creator,own).status_code==409
+    assert creator.get(BASE+'/'+own['id']).json()['status']=='DRAFT'
+
+
+def test_rpa_can_audit_deleted_assigned_case_but_cannot_delete_closed(setup,rpa):
+    admin,(creator,worker,other),accounts=setup
+    saved=configure(admin,accounts)
+    for step in saved['configuration']['steps']:
+        step['scope']='GENERAL';step['general']={'user_id':accounts[0][0],'email':accounts[0][1]}
+    saved=admin.put(BASE+'/types/REPLENISHMENT',json=saved).json()
+    opened=action(worker,create(worker),'SUBMIT').json()
+    assert delete_case(creator,opened).status_code==200
+    assert creator.get(BASE+'/'+opened['id']).status_code==200
+    assert creator.get(BASE+'?box=ALL&status=DELETED').json()['total']==1
+    current=action(creator,create(creator),'SUBMIT').json()
+    for _ in range(3):current=action(creator,current).json()
+    assert current['status']=='CLOSED' and not current['can_delete']
+    assert delete_case(creator,current).status_code==409

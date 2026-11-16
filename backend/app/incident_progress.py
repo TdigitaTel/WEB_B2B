@@ -22,7 +22,7 @@ def progress(row,events,names):
     definitions=row.workflow['steps']
     result=[]
     for index,step in enumerate(definitions):
-        state='CURRENT' if row.status=='OPEN' and index==row.stage_index else 'REJECTED' if row.status=='REJECTED' and index==row.stage_index else 'COMPLETED' if index<row.stage_index or row.status=='CLOSED' and index==row.stage_index else 'NOT_EXECUTED' if row.status in {'CLOSED','REJECTED'} else 'PENDING'
+        state='CURRENT' if row.status=='OPEN' and index==row.stage_index else 'DELETED' if row.status=='DELETED' and index==row.stage_index else 'REJECTED' if row.status=='REJECTED' and index==row.stage_index else 'COMPLETED' if index<row.stage_index or row.status=='CLOSED' and index==row.stage_index else 'NOT_EXECUTED' if row.status in {'CLOSED','REJECTED','DELETED'} else 'PENDING'
         result.append({'name':step['name'],'kind':step['kind'],'state':state,'entered_at':None,'completed_at':None,'responsible_name':None,'planned_responsible_name':names.get(planned_user_id(row,step)),'completed_by':None,'visits':[]})
     cursor=None
     for entry in events:
