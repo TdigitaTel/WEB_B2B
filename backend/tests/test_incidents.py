@@ -714,3 +714,55 @@ def test_rpa_can_audit_deleted_assigned_case_but_cannot_delete_closed(setup,rpa)
     for _ in range(3):current=action(creator,current).json()
     assert current['status']=='CLOSED' and not current['can_delete']
     assert delete_case(creator,current).status_code==409
+
+
+def test_configured_stage_fields_validate_and_record_without_initial_order(setup):
+    admin,(creator,worker,other),accounts=setup
+    saved=configure(admin,accounts)
+    fields=[{'key':'pedido','label':'Pedido generado','type':'TEXT','required':True},
+            {'key':'cantidad','label':'Cantidad ejecutada','type':'NUMBER','required':True},
+            {'key':'fecha','label':'Fecha de ejecución','type':'DATE','required':True},
+            {'key':'observacion','label':'Referencia opcional','type':'TEXT','required':False}]
+    saved['configuration']['steps'][0]['fields']=fields
+    saved=admin.put(BASE+'/types/REPLENISHMENT',json=saved).json()
+    payload=data();payload['document']=''
+    result=creator.post(BASE,json=payload);assert result.status_code==201,result.text
+    row=result.json();assert row['document']==''
+    payload['version']=row['version']
+    result=creator.put(BASE+'/'+row['id'],json=payload);assert result.status_code==200,result.text
+    row=action(creator,result.json(),'SUBMIT').json()
+    original_version=row['version']
+    assert action(worker,row).status_code==422
+    values={'pedido':'PED-0003','cantidad':'0','fecha':'2026-11-16'}
+    for field,value in [('pedido','  '),('cantidad','NaN'),('cantidad','Infinity'),('cantidad','varias'),('fecha','2026-02-30'),('fecha','16/11/2026')]:
+        invalid={**values,field:value}
+        assert action(worker,row,fields=invalid).status_code==422
+    assert action(worker,row,fields={**values,'desconocido':'No permitido'}).status_code==422
+    unchanged=worker.get(BASE+'/'+row['id']).json()
+    assert unchanged['version']==original_version and unchanged['stage_index']==0
+    # Other actions are not blocked by fields that are required only when completing the stage.
+    row=action(worker,row,'COMMENT').json()
+    result=action(worker,row,fields=values);assert result.status_code==200,result.text
+    advanced=result.json();assert advanced['stage_index']==1
+    event=next(event for event in advanced['events'] if event['action']=='COMPLETED_STAGE')
+    assert event['detail']['fields']==[{**field,'value':values[field['key']]} for field in fields[:3]]
+    assert advanced['workflow']['steps'][0]['fields']==fields
+    # A used version's field definitions cannot be silently modified.
+    saved['configuration']['steps'][0]['fields'][0]['required']=False
+    assert admin.put(BASE+'/types/REPLENISHMENT',json=saved).status_code==409
+    saved.update(new_version=True,change_note='Referencia opcional en próximas incidencias')
+    assert admin.put(BASE+'/types/REPLENISHMENT',json=saved).status_code==200
+    assert worker.get(BASE+'/'+row['id']).json()['workflow']['steps'][0]['fields'][0]['required'] is True
+
+
+@pytest.mark.parametrize('fields',[
+    [{'key':'a','label':'   ','type':'TEXT'}],
+    [{'key':'a','label':'Dato','type':'OTRO'}],
+    [{'key':'a','label':'Uno','type':'TEXT'},{'key':'a','label':'Dos','type':'NUMBER'}],
+    [{'key':'invalido-1','label':'Dato','type':'DATE'}],
+])
+def test_invalid_stage_field_configuration_is_rejected(setup,fields):
+    admin,_,accounts=setup
+    saved=configure(admin,accounts)
+    saved['configuration']['steps'][0]['fields']=fields
+    assert admin.put(BASE+'/types/REPLENISHMENT',json=saved).status_code==422

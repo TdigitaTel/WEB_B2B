@@ -20,6 +20,7 @@ from .erp_db import fetch_catalog_articles,connect_sqlserver
 from .incident_schemas import SaveType,CreateIncident,EditIncident,Action,TypeConfiguration,RenameFlow,DeleteIncident
 from .order_email_settings import email_address
 from .incident_scope import includes,allows_task
+from .incident_fields import validate_fields
 from .incident_flow import requester,stock_verification,normalize,document_required
 from . import incident_versions as versions
 from .incident_progress import progress,planned_ids
@@ -386,7 +387,6 @@ def create(body:CreateIncident,user:User=Depends(operator),db:Session=Depends(ge
     config={**versions.configuration(source.configuration),'_flow_version':number}
     kind=config['kind']
     if body.reason not in config['reasons']:fail('Selecciona un motivo configurado para este tipo')
-    if kind!='INVENTORY' and not body.document.strip():fail('Indica el número del documento relacionado')
     if kind=='TRANSFER':
         if body.destination_id not in delegations or body.destination_id==body.delegation_id:fail('Selecciona una delegación de destino diferente')
         if not allowed_origin(user,db,body.destination_id):fail('Delegación de destino no autorizada',403)
@@ -506,6 +506,7 @@ def action(incident_id:str,body:Action,user:User=Depends(operator),db:Session=De
             else:assign(db,row,row.stage_index-1,user,body.note)
             event(db,row,user,'RETURNED',note=body.note)
         elif name=='ADVANCE':
+            field_values=validate_fields(step,body.fields)
             files_required(db,row)
             if document_required(step) and not body.document.strip():fail('Esta actividad exige un documento de resolución o ejecución')
             verify=step['kind']=='EXECUTE' and row.workflow['kind']=='INVENTORY'
@@ -518,7 +519,7 @@ def action(incident_id:str,body:Action,user:User=Depends(operator),db:Session=De
                     except Exception:fail('No se pudo verificar el stock actual. Reintenta o registra una comprobación manual justificada',503)
                     if any(line['sku'] not in verification for line in row.lines):fail('No se pudo identificar el stock actual de todos los materiales',409)
                 else:verification={'source':'MANUAL','note':body.verification_note}
-            event(db,row,user,'COMPLETED_STAGE',stage_index=row.stage_index,stage=step['name'],note=body.note,document=body.document,verification_note=body.verification_note,verification_source=body.verification_source if verify and body.verification_note.strip() else None,stock_verified=verification,verified_at=now().isoformat() if verify and body.verification_note.strip() else None)
+            event(db,row,user,'COMPLETED_STAGE',fields=field_values,stage_index=row.stage_index,stage=step['name'],note=body.note,document=body.document,verification_note=body.verification_note,verification_source=body.verification_source if verify and body.verification_note.strip() else None,stock_verified=verification,verified_at=now().isoformat() if verify and body.verification_note.strip() else None)
             if step['kind']=='CONFIRM' or row.stage_index==len(row.workflow['steps'])-1:row.status='CLOSED';row.assignee_id=None;row.due_at=None;event(db,row,user,'CLOSED',note=body.note)
             else:assign(db,row,row.stage_index+1,user)
     row.version+=1;row.updated_at=now();db.commit();return detail(row,db,user)
@@ -570,7 +571,6 @@ def edit(incident_id:str,body:EditIncident,user:User=Depends(operator),db:Sessio
     if row.version!=body.version:fail('La incidencia ha cambiado. Recarga antes de corregir',409)
     if body.type_code!=row.type_code or body.delegation_id!=row.delegation_id:fail('El tipo y la delegación de una incidencia registrada no pueden cambiar')
     if body.reason not in row.workflow['reasons']:fail('Selecciona un motivo del flujo registrado')
-    if row.workflow['kind']!='INVENTORY' and not body.document.strip():fail('Indica el documento relacionado')
     if row.workflow['kind']=='TRANSFER':
         if body.destination_id not in stores() or body.destination_id==row.delegation_id:fail('Selecciona un destino diferente')
         if not allowed_origin(user,db,body.destination_id):fail('Delegación de destino no autorizada',403)

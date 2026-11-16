@@ -13,6 +13,17 @@ class Destination(BaseModel):
     @classmethod
     def address(cls,value):return email_address(value)
 
+class StageField(BaseModel):
+    key:str=Field(min_length=1,max_length=60,pattern=r'^[a-zA-Z][a-zA-Z0-9_]*$')
+    label:str=Field(min_length=1,max_length=120)
+    type:Literal['TEXT','NUMBER','DATE']='TEXT'
+    required:bool=False
+    @field_validator('label')
+    @classmethod
+    def valid_label(cls,value):
+        if not value.strip() or any(ord(c)<32 for c in value):raise ValueError('Indica un nombre de campo válido')
+        return value.strip()
+
 class Step(BaseModel):
     name:str=Field(min_length=1,max_length=120)
     kind:Literal['WORK','APPROVE','EXECUTE','CONFIRM']='WORK'
@@ -22,6 +33,12 @@ class Step(BaseModel):
     substitute:Destination|None=None
     hours:int=Field(48,ge=1,le=8760)
     files:Literal['INHERIT','FORBIDDEN','OPTIONAL','REQUIRED']='INHERIT'
+    fields:list[StageField]=Field(default_factory=list,max_length=30)
+    @field_validator('fields')
+    @classmethod
+    def distinct_fields(cls,values):
+        if len({field.key for field in values})!=len(values):raise ValueError('Los identificadores de campos de una etapa no pueden repetirse')
+        return values
     require_document:bool=False
     require_stock_verification:bool=False
     @field_validator('name')
@@ -102,6 +119,7 @@ class Action(BaseModel):
     action:Literal['SUBMIT','ADVANCE','RETURN','REJECT','COMMENT','REASSIGN','RESEND_EMAIL']
     note:str=Field(default='',max_length=4000)
     document:str=Field(default='',max_length=160)
+    fields:dict[str,str]=Field(default_factory=dict,max_length=30)
     verification_note:str=Field(default='',max_length=1000)
     verification_source:Literal['EXIT','MANUAL']='EXIT'
     user_id:int|None=None

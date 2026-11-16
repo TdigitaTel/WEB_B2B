@@ -112,3 +112,12 @@ Se conserva la incidencia, sus archivos, flujo capturado e historial. El evento 
 La eliminación utiliza el mismo bloqueo que el worker de correo para impedir que comience un envío mientras se elimina. Si hay un envío en curso, se informa y se permite reintentar cuando termine; un aviso marcado como SENDING también bloquea la eliminación hasta que el worker resuelva su estado. Los envíos ya realizados y su resultado permanecen en el historial.
 
 No se requiere migración: el estado eliminado y su evidencia utilizan las tablas existentes. No se ha añadido borrado permanente ni cambios automáticos de configuración.
+
+
+### Datos configurables por actividad
+
+Cada etapa admite hasta 30 datos con nombre, tipo (texto, número o fecha) y obligatoriedad. Se solicitan al responsable de esa etapa, en cualquier actividad, y se validan al completarla tanto en la pantalla como en el servidor. Los campos opcionales pueden quedar vacíos; si se rellenan deben respetar su tipo. No se admiten datos ajenos a la definición guardada de la etapa. Las referencias con letras, guiones o ceros iniciales deben configurarse como texto. Las fechas deben ser fechas reales y los números no admiten NaN ni infinito.
+
+Los valores, sus etiquetas y sus tipos quedan en el evento de finalización junto con la etapa, fecha y usuario. Al devolver una incidencia y atenderla de nuevo se conserva cada actuación anterior. Modificar estos campos en un flujo ya utilizado exige una nueva versión; las incidencias existentes conservan la definición de su versión. Los requisitos anteriores de documento de resolución se mantienen en los flujos que ya los tenían configurados.
+
+En reposición, «Delegación solicitante / destino» identifica dónde se necesita y se recibirá el material. En intercambios se distinguen origen y destino. El documento previo es opcional al registrar una incidencia y no se solicita al crear una reposición nueva: el pedido generado se recoge en la etapa que tenga ese dato configurado, por ejemplo Ejecutar. Para una incidencia sobre una venta o compra ya existente puede indicarse su referencia previa.
