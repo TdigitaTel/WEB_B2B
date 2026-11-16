@@ -162,7 +162,7 @@ def summary(row,db,names=None,flow_names=None):
         'delegation_id':row.delegation_id,'delegation_name':row.delegation_name,'destination_id':row.destination_id,
         'document':row.document,'description':row.description,'reason':row.reason,'priority':row.priority,'needed_on':row.needed_on,
         'creator_id':row.creator_id,'creator_name':names.get(row.creator_id),'assignee_id':row.assignee_id,'assignee_name':names.get(row.assignee_id),
-        'status':row.status,'stage_index':row.stage_index,'stage':stage['name'] if stage else 'Borrador','stage_kind':stage['kind'] if stage else None,
+        'status':row.status,'stage_index':row.stage_index,'stage':stage['name'] if stage else 'Pendiente de envío','stage_kind':stage['kind'] if stage else None,
         'version':row.version,'created_at':row.created_at,'updated_at':row.updated_at,'entered_at':row.entered_at,'due_at':row.due_at,'resolution_document':row.resolution_document}
 
 def detail(row,db,user):
@@ -409,7 +409,9 @@ def listing(box:str=Query('MINE',pattern='^(MINE|ASSIGNED|ALL)$'),status:str=Que
     if scope is not None:query=query.where(or_(Incident.delegation_id.in_(scope),Incident.destination_id.in_(scope)))
     if box=='MINE':query=query.where(Incident.creator_id==user.id)
     elif box=='ASSIGNED':
-        query=query.where(Incident.assignee_id==user.id,Incident.status=='OPEN')
+        query=query.where(or_(
+            (Incident.assignee_id==user.id)&(Incident.status=='OPEN'),
+            (Incident.creator_id==user.id)&(Incident.status=='DRAFT')))
     if status=='ACTIVE':query=query.where(Incident.status.in_(['DRAFT','OPEN']))
     elif status!='ALL':query=query.where(Incident.status==status)
     if q:query=query.where(or_(Incident.number.contains(q,autoescape=True),Incident.document.contains(q,autoescape=True)))
@@ -435,7 +437,7 @@ def action(incident_id:str,body:Action,user:User=Depends(operator),db:Session=De
         if not body.note.strip():fail('Escribe el comentario')
         event(db,row,user,'COMMENT',note=body.note)
     elif name=='SUBMIT':
-        if not allowed['can_submit']:fail('Solo el solicitante puede enviar su borrador',403)
+        if not allowed['can_submit']:fail('Solo el solicitante puede enviar la incidencia registrada',403)
         for step in row.workflow['steps']:
             resolve(db,row,step)
             if step['kind']=='CONFIRM':break
@@ -467,7 +469,7 @@ def action(incident_id:str,body:Action,user:User=Depends(operator),db:Session=De
         elif name=='RETURN':
             if row.stage_index==0:
                 row.status='DRAFT';row.stage_index=-1;row.assignee_id=row.creator_id;row.due_at=None;row.assignment_version+=1
-                creator=db.get(User,row.creator_id);queue_mail(db,row,creator.email,creator.id,'Corregir borrador')
+                creator=db.get(User,row.creator_id);queue_mail(db,row,creator.email,creator.id,'Corregir registro')
             else:assign(db,row,row.stage_index-1,user,body.note)
             event(db,row,user,'RETURNED',note=body.note)
         elif name=='ADVANCE':
@@ -531,7 +533,7 @@ def download(incident_id:str,file_id:str,user:User=Depends(operator),db:Session=
 @router.put('/{incident_id}')
 def edit(incident_id:str,body:EditIncident,user:User=Depends(operator),db:Session=Depends(get_db)):
     require(user,db,'incident_create');row=load(incident_id,user,db,True)
-    if row.status!='DRAFT' or row.creator_id!=user.id:fail('Solo el solicitante puede corregir su borrador',403)
+    if row.status!='DRAFT' or row.creator_id!=user.id:fail('Solo el solicitante puede corregir la incidencia antes de enviarla',403)
     if row.version!=body.version:fail('La incidencia ha cambiado. Recarga antes de corregir',409)
     if body.type_code!=row.type_code or body.delegation_id!=row.delegation_id:fail('El tipo y la delegación de una incidencia registrada no pueden cambiar')
     if body.reason not in row.workflow['reasons']:fail('Selecciona un motivo del flujo registrado')

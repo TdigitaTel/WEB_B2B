@@ -147,7 +147,7 @@ def test_return_correction_flow_snapshot_and_delegation_routing(setup):
     assert admin.put(BASE+'/types/REPLENISHMENT',json=saved).status_code==200
     current=action(creator,row,'SUBMIT').json();assert current['stage']=='Validación de delegación'
     current=action(worker,current,'RETURN').json();assert current['status']=='DRAFT' and current['assignee_id']==accounts[0][0]
-    assert current['emails'][-1]['stage']=='Corregir borrador'
+    assert current['emails'][-1]['stage']=='Corregir registro'
     correction={**data(),'version':current['version'],'description':'Cantidad corregida'}
     correction['lines'][0]['expected']=15
     response=creator.put(BASE+'/'+row['id'],json=correction);assert response.status_code==200,response.text
@@ -559,3 +559,34 @@ def test_legacy_versions_are_reconstructed_once_without_changing_rules(setup):
     assert creator.get(BASE+'/'+first['id']).json()['flow_version']==1
     assert creator.get(BASE+'/'+second['id']).json()['flow_version']==2
     assert creator.get(BASE+'/'+first['id']).json()['workflow']['steps']==first['workflow']['steps']
+
+
+def test_personal_inboxes_include_registered_incidents_and_pending_assignments(setup):
+    admin,(creator,worker,other),accounts=setup
+    configure(admin,accounts)
+    row=create(creator)
+    assert row['stage']=='Pendiente de envío' and row['can_submit']
+    def ids(client,box,status='ACTIVE'):
+        result=client.get(BASE,params={'box':box,'status':status})
+        assert result.status_code==200,result.text
+        return {item['id'] for item in result.json()['items']}
+    assert ids(creator,'MINE')=={row['id']}
+    assert ids(creator,'ASSIGNED')=={row['id']}
+    assert ids(worker,'ASSIGNED')==set()
+    # Supervising a process does not make somebody else its creator or current assignee.
+    assert row['id'] in ids(admin,'ALL')
+    assert ids(admin,'MINE')==set() and ids(admin,'ASSIGNED')==set()
+    assert not admin.get(BASE+'/'+row['id']).json()['can_submit']
+    current=action(creator,row,'SUBMIT').json()
+    assert current['status']=='OPEN' and not current['can_submit']
+    assert ids(worker,'ASSIGNED')=={row['id']}
+    assert ids(creator,'ASSIGNED')==set() and ids(creator,'MINE')=={row['id']}
+    current=action(worker,current,'RETURN').json()
+    assert ids(creator,'ASSIGNED')=={row['id']}
+    assert creator.get(BASE+'/'+row['id']).json()['can_submit']
+    current=action(creator,current,'SUBMIT').json()
+    current=action(worker,current).json();current=action(worker,current).json()
+    closed=action(creator,current).json();assert closed['status']=='CLOSED'
+    assert ids(creator,'ASSIGNED')==set()
+    assert ids(creator,'MINE','ALL')=={row['id']}
+    assert ids(other,'MINE','ALL')==set()

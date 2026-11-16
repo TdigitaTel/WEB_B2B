@@ -18,6 +18,6 @@ export async function incidentApi<T>(path:string,options:RequestInit={}):Promise
  if(body===null)throw Error('El servidor no devolvió una respuesta válida. Actualiza para comprobar el resultado.');
  return body;
 }
-export const statusLabels:Record<string,string>={DRAFT:'Borrador',OPEN:'En atención',CLOSED:'Cerrada',REJECTED:'Rechazada'};
+export const statusLabels:Record<string,string>={DRAFT:'Registrado',OPEN:'En atención',CLOSED:'Cerrada',REJECTED:'Rechazada'};
 export const mailLabels:Record<string,string>={PENDING:'En cola',SENDING:'Enviando',SENT:'Aceptado por SMTP',RETRY:'Error · reintento pendiente',FAILED:'Error de envío',UNCERTAIN:'Envío sin confirmar · revisar',NOT_CONFIGURED:'Correo no configurado',SUPERSEDED:'Aviso sustituido',DISABLED:'Avisos desactivados'};
 export const formatIncidentDate=(value:string|null)=>value?new Date(value).toLocaleString('es-ES',{timeZone:'Europe/Madrid'}):'—';
