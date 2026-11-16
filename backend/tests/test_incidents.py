@@ -590,3 +590,23 @@ def test_personal_inboxes_include_registered_incidents_and_pending_assignments(s
     assert ids(creator,'ASSIGNED')==set()
     assert ids(creator,'MINE','ALL')=={row['id']}
     assert ids(other,'MINE','ALL')==set()
+
+
+def test_visual_progress_uses_persisted_assignment_and_completion_events(setup):
+    admin,(creator,worker,other),accounts=setup
+    configure(admin,accounts)
+    current=action(creator,create(creator),'SUBMIT').json()
+    first=current['flow_steps'][0]
+    assert first['state']=='CURRENT' and first['entered_at'] and first['responsible_name']=='worker'
+    assert first['completed_at'] is None
+    current=action(worker,current).json()
+    first=current['flow_steps'][0]
+    assert first['state']=='COMPLETED' and first['completed_at'] and first['completed_by']=='worker'
+    response=admin.post(BASE+'/'+current['id']+'/actions',json={'version':current['version'],'action':'REASSIGN','note':'Nueva persona responsable','user_id':accounts[0][0],'email':accounts[0][1]})
+    assert response.status_code==200,response.text
+    current=response.json();assert current['flow_steps'][1]['responsible_name']=='creator'
+    listed=creator.get(BASE+'?box=ASSIGNED').json()['items'][0]
+    assert listed['flow_steps']==current['flow_steps']
+    assert listed['flow_steps'][2]['entered_at'] is None
+    assert listed['flow_steps'][2]['planned_responsible_name']=='creator'
+    assert listed['flow_steps'][2]['responsible_name'] is None

@@ -117,6 +117,29 @@ let root=createRoot(document.getElementById('root'));
  const beforeIdle=calls.length;await React.act(async()=>new Promise(resolve=>setTimeout(resolve,240)));assert.equal(calls.length,beforeIdle,'Viewer does not poll');
  global.fetch=oldFetch;
 
+ // Diagram mirrors edited stage names/activities and links to the relevant editor.
+ const Diagram=require('../app/IncidentFlowDiagram.tsx').default;
+ const Timeline=require('../app/IncidentTimeline.tsx').default;
+ await React.act(async()=>root.unmount());root=createRoot(document.getElementById('root'));
+ await React.act(async()=>root.render(React.createElement(Flows,{options,onSaved:()=>{}})));
+ await React.act(async()=>document.querySelector('[aria-label="Editar flujo Toma de inventario"]').click());
+ assert.match(document.querySelector('.incident-flow-heading').textContent,/Toma de inventario/);
+ assert.equal(document.querySelectorAll('[aria-label="Diagrama del flujo"] .incident-step-circle').length,4);
+ const stageInput=document.querySelector('#flow-stage-0 input');
+ await React.act(async()=>setInput(stageInput,'Revisar diferencia'));
+ await React.act(async()=>choose(document.querySelector('[aria-label="Actividad de etapa 1"]'),'EXECUTE'));
+ assert.match(document.querySelector('[aria-label="Diagrama del flujo"]').textContent,/Revisar diferencia/);
+ assert.match(document.querySelector('[aria-label="Diagrama del flujo"]').textContent,/Ejecutar/);
+ let scrollTarget=null;document.getElementById('flow-stage-1').scrollIntoView=()=>scrollTarget='flow-stage-1';
+ await React.act(async()=>document.querySelector('[aria-label="Ir a etapa 2: Autorización"]').click());assert.equal(scrollTarget,'flow-stage-1');
+ await React.act(async()=>root.render(React.createElement(Timeline,{incident:{...detail,status:'OPEN',stage_index:1,stage:'Ejecutar ajuste',assignee_name:'Nuria',flow_steps:[{name:'Validación',kind:'WORK',state:'COMPLETED',responsible_name:'Ana',entered_at:'2026-11-16T09:00:00Z',completed_at:'2026-11-16T10:00:00Z',completed_by:'Marga'},{name:'Ejecutar ajuste',kind:'EXECUTE',state:'CURRENT',responsible_name:'Nuria',entered_at:'2026-11-16T10:00:00Z'},{name:'Confirmación',kind:'CONFIRM',state:'PENDING',planned_responsible_name:'RPA'}]}})));
+ assert.equal(document.querySelectorAll('.incident-step-circle').length,4,'Registration and each configured stage have their own circle');
+ assert.match(document.querySelector('[aria-current=step]').textContent,/Ejecutar ajuste/);
+ assert.match(document.body.textContent,/Completada por: Marga/);assert.match(document.body.textContent,/Fin: /);
+ assert.match(document.body.textContent,/Previsto: RPA/);
+ await React.act(async()=>root.render(React.createElement(Diagram,{options,flow:{...config,steps:[config.steps[3],config.steps[0]]}})));
+ assert.match(document.querySelector('.is-skipped').textContent,/No se ejecuta: hay un cierre anterior/);
+
  await React.act(async()=>root.unmount());root=createRoot(document.getElementById('root'));
  const Form=require('../app/IncidentForm.tsx').default;
  await React.act(async()=>root.render(React.createElement(Form,{options,onSaved:value=>{received=value},onCancel:()=>{}})));

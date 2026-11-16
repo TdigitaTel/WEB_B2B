@@ -88,3 +88,14 @@ Guardar una incidencia deja su número y el estado visible **Registrado · pendi
 «Mis tareas» incluye tanto los registros propios pendientes de envío como las actividades abiertas asignadas a la cuenta. «Creadas por mí» muestra solo incidencias cuyo solicitante es la cuenta de la sesión y abre con Estado = Todos; alternar bandejas vuelve a la primera página y restablece el filtro de estado adecuado. «Todas las autorizadas» mantiene la consulta transversal según permisos. El listado indica quién es el solicitante y si corresponde a la cuenta actual. Un supervisor no pasa a ser creador ni puede enviar en nombre del solicitante por consultar un registro ajeno; la ficha explica quién tiene pendiente el envío.
 
 **Ubicación en almacén** es la posición física donde se contó el material, por ejemplo pasillo A, estantería 3. No es otra delegación ni una ubicación consultada automáticamente en EXIT. Si el recuento abarca toda la delegación, se puede indicar «Almacén completo». La ayuda aparece junto al campo y el encabezado de la ficha utiliza el mismo nombre.
+
+
+## Vista visual del flujo y seguimiento
+
+La configuración destaca la cabecera con nombre, versión, estado y número de etapas. El recorrido se muestra mediante círculos conectados con nombre, actividad, responsable previsto y plazo. Pulsar un círculo lleva al editor de esa etapa; el diagrama se actualiza mientras se cambian nombres, actividades, responsables u orden. Las etapas posteriores a Cerrar se marcan como fuera del recorrido. El detalle del editor separa los datos generales de cada etapa y mantiene el bloqueo de versiones utilizadas.
+
+La ficha de una incidencia y el visor «Flujos en curso» muestran el mismo seguimiento visual antes del resto de información: registro, etapas completadas, etapa actual, pendientes y no ejecutadas. Se muestran fechas de entrada y finalización, responsable real, persona que completó la actividad si fue distinta, plazo actual y responsable previsto de las etapas futuras. Los colores tienen texto y leyenda. En móvil, el recorrido es vertical.
+
+Los datos reales se reconstruyen desde el historial persistido. Las nuevas asignaciones, reasignaciones y finalizaciones incluyen el índice de etapa para distinguir nombres repetidos. Para eventos anteriores se admite el nombre solo cuando identifica una única etapa; las fechas o responsables desconocidos se indican como no registrados. No se sustituyen responsables históricos por los de una versión nueva. Al volver a una etapa se conservan sus entradas anteriores en un desplegable. El resto de actuaciones y comentarios sigue disponible en el historial completo.
+
+La carga del visor consulta eventos y usuarios una sola vez por página, sin consultas por cada etapa ni actualización periódica. No se añade migración ni cambia la lógica de asignación, permisos, envío o avance del flujo.

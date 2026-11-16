@@ -22,6 +22,7 @@ from .order_email_settings import email_address
 from .incident_scope import includes,allows_task
 from .incident_flow import requester,stock_verification,normalize,document_required
 from . import incident_versions as versions
+from .incident_progress import progress,planned_ids
 
 router=APIRouter(prefix='/api/v1/store/incidents',tags=['incidents'])
 operator=require_roles('ADMIN','OPERADOR_TIENDA')
@@ -142,7 +143,7 @@ def assign(db,row,index,user,note=''):
     target,address=resolve(db,row,step)
     row.stage_index=index;row.assignee_id=target.id;row.status='OPEN';row.entered_at=now();row.due_at=now()+timedelta(hours=step['hours']);row.assignment_version+=1
     queue_mail(db,row,address,target.id,step['name'])
-    event(db,row,user,'ASSIGNED',stage=step['name'],assignee_id=target.id,assignee_name=target.full_name,note=note)
+    event(db,row,user,'ASSIGNED',stage_index=index,stage=step['name'],assignee_id=target.id,assignee_name=target.full_name,note=note)
 
 def queue_mail(db,row,address,user_id,stage):
     status='PENDING' if row.workflow.get('notify') else 'DISABLED'
@@ -152,13 +153,14 @@ def queue_mail(db,row,address,user_id,stage):
         if status!='DISABLED':status='NOT_CONFIGURED'
     db.add(Mail(incident_id=row.id,assignment_version=row.assignment_version,recipient_id=user_id,recipient=address,stage=stage,status=status))
 
-def summary(row,db,names=None,flow_names=None):
+def summary(row,db,names=None,flow_names=None,event_rows=None):
     stage=row.workflow['steps'][row.stage_index] if row.stage_index>=0 else None
-    if names is None:names=dict(db.execute(select(User.id,User.full_name).where(User.id.in_([row.creator_id,row.assignee_id or row.creator_id]))).all())
+    if event_rows is None:event_rows=list(db.scalars(select(Event).where(Event.incident_id==row.id).order_by(Event.id)))
+    if names is None:names=dict(db.execute(select(User.id,User.full_name).where(User.id.in_({row.creator_id,row.assignee_id or row.creator_id}|planned_ids(row)|{entry.actor_id for entry in event_rows}))).all())
     if flow_names is None:
         current=db.get(Type,row.type_code);flow_name=current.configuration['name'] if current else row.workflow['name']
     else:flow_name=flow_names.get(row.type_code,row.workflow['name'])
-    return {'id':row.id,'number':row.number,'type_code':row.type_code,'type_name':flow_name,'flow_version':row.workflow.get('_flow_version',1),'flow_steps':[{'name':step['name'],'kind':step['kind'],'state':'CURRENT' if row.status=='OPEN' and index==row.stage_index else 'COMPLETED' if index<row.stage_index or row.status=='CLOSED' and index==row.stage_index else 'NOT_EXECUTED' if row.status in {'CLOSED','REJECTED'} else 'PENDING'} for index,step in enumerate(row.workflow['steps'])],'kind':row.workflow['kind'],
+    return {'id':row.id,'number':row.number,'type_code':row.type_code,'type_name':flow_name,'flow_version':row.workflow.get('_flow_version',1),'flow_steps':progress(row,event_rows,names),'kind':row.workflow['kind'],
         'delegation_id':row.delegation_id,'delegation_name':row.delegation_name,'destination_id':row.destination_id,
         'document':row.document,'description':row.description,'reason':row.reason,'priority':row.priority,'needed_on':row.needed_on,
         'creator_id':row.creator_id,'creator_name':names.get(row.creator_id),'assignee_id':row.assignee_id,'assignee_name':names.get(row.assignee_id),
@@ -169,13 +171,13 @@ def detail(row,db,user):
     db.flush()
     files=[dict(record._mapping) for record in db.execute(select(Attachment.id,Attachment.filename,Attachment.size,Attachment.media_type,Attachment.uploaded_by,Attachment.stage_index,Attachment.created_at).where(Attachment.incident_id==row.id).order_by(Attachment.created_at,Attachment.id))]
     events=list(db.scalars(select(Event).where(Event.incident_id==row.id).order_by(Event.id)))
-    names=dict(db.execute(select(User.id,User.full_name).where(User.id.in_({entry.actor_id for entry in events}))).all()) if events else {}
+    names=dict(db.execute(select(User.id,User.full_name).where(User.id.in_({row.creator_id,row.assignee_id or row.creator_id}|planned_ids(row)|{entry.actor_id for entry in events}))).all())
     mails=[{'id':entry.id,'stage':entry.stage,'status':entry.status,'attempts':entry.attempts,'diagnostic':entry.diagnostic,'created_at':entry.created_at,'updated_at':entry.updated_at} for entry in db.scalars(select(Mail).where(Mail.incident_id==row.id).order_by(Mail.id))]
     p=permissions_for(user,db);supervisor=supervises(user,db,row)
     current=row.workflow['steps'][row.stage_index] if row.stage_index>=0 else None
     work=(row.assignee_id==user.id or supervisor) and bool(current and allows_task(user,db,row,current))
     if current and requester(current):work=work and row.assignee_id==user.id and row.creator_id==user.id
-    return {**summary(row,db),'lines':row.lines,'workflow':scoped_configuration(row.workflow,scope_ids(user,db)),'file_mode':file_mode(row),'files':files,
+    return {**summary(row,db,names,event_rows=events),'lines':row.lines,'workflow':scoped_configuration(row.workflow,scope_ids(user,db)),'file_mode':file_mode(row),'files':files,
         'events':[{'id':entry.id,'action':entry.action,'actor':names.get(entry.actor_id),'detail':entry.detail,'created_at':entry.created_at} for entry in events],
         'emails':mails,'can_submit':row.status=='DRAFT' and row.creator_id==user.id and allowed_origin(user,db,row.delegation_id) and p.get('incident_create',False),
         'can_work':row.status=='OPEN' and bool(work),'can_attach':(row.status=='DRAFT' and row.creator_id==user.id and allowed_origin(user,db,row.delegation_id) and p.get('incident_create') or row.status=='OPEN' and bool(work)) and file_mode(row)!='FORBIDDEN',
@@ -419,10 +421,15 @@ def listing(box:str=Query('MINE',pattern='^(MINE|ASSIGNED|ALL)$'),status:str=Que
     if type_code:query=query.where(Incident.type_code==type_code)
     total=db.scalar(select(func.count()).select_from(query.subquery()))
     rows=list(db.scalars(query.order_by(Incident.updated_at.desc(),Incident.id).offset((page-1)*30).limit(30)))
+    page_events=list(db.scalars(select(Event).where(Event.incident_id.in_([row.id for row in rows]),Event.action.in_(['ASSIGNED','REASSIGNED','COMPLETED_STAGE'])).order_by(Event.id))) if rows else []
+    grouped={row.id:[] for row in rows}
+    for entry in page_events:grouped[entry.incident_id].append(entry)
     ids={value for row in rows for value in (row.creator_id,row.assignee_id) if value}
+    ids.update(entry.actor_id for entry in page_events if entry.actor_id)
+    for row in rows:ids.update(planned_ids(row))
     names=dict(db.execute(select(User.id,User.full_name).where(User.id.in_(ids))).all()) if ids else {}
     flow_names={item.code:item.configuration['name'] for item in db.scalars(select(Type).where(Type.code.in_({row.type_code for row in rows})))}
-    return {'items':[summary(row,db,names,flow_names) for row in rows],'total':total,'page_size':30}
+    return {'items':[summary(row,db,names,flow_names,grouped[row.id]) for row in rows],'total':total,'page_size':30}
 
 @router.get('/{incident_id}')
 def read(incident_id:str,user:User=Depends(operator),db:Session=Depends(get_db)):return detail(load(incident_id,user,db),db,user)
@@ -453,7 +460,7 @@ def action(incident_id:str,body:Action,user:User=Depends(operator),db:Session=De
         if not allows_task(account,db,row,step):fail('El responsable no tiene acceso a la delegación de esta actividad',403)
         try:address=email_address(body.email)
         except ValueError:fail('Indica un correo válido')
-        row.assignee_id=account.id;row.assignment_version+=1;row.entered_at=now();row.due_at=now()+timedelta(hours=step['hours']);queue_mail(db,row,address,account.id,step['name']);event(db,row,user,'REASSIGNED',assignee_id=account.id,assignee_name=account.full_name,note=body.note)
+        row.assignee_id=account.id;row.assignment_version+=1;row.entered_at=now();row.due_at=now()+timedelta(hours=step['hours']);queue_mail(db,row,address,account.id,step['name']);event(db,row,user,'REASSIGNED',stage_index=row.stage_index,assignee_id=account.id,assignee_name=account.full_name,note=body.note)
     elif name=='RESEND_EMAIL':
         if not (allowed['can_work'] or allowed['can_reassign'] or allowed['can_submit']):fail('No puedes reenviar este aviso',403)
         mail=db.scalar(select(Mail).where(Mail.incident_id==row.id,Mail.assignment_version==row.assignment_version).order_by(Mail.id.desc()).limit(1))
@@ -485,7 +492,7 @@ def action(incident_id:str,body:Action,user:User=Depends(operator),db:Session=De
                     except Exception:fail('No se pudo verificar el stock actual. Reintenta o registra una comprobación manual justificada',503)
                     if any(line['sku'] not in verification for line in row.lines):fail('No se pudo identificar el stock actual de todos los materiales',409)
                 else:verification={'source':'MANUAL','note':body.verification_note}
-            event(db,row,user,'COMPLETED_STAGE',stage=step['name'],note=body.note,document=body.document,verification_note=body.verification_note,verification_source=body.verification_source if verify and body.verification_note.strip() else None,stock_verified=verification,verified_at=now().isoformat() if verify and body.verification_note.strip() else None)
+            event(db,row,user,'COMPLETED_STAGE',stage_index=row.stage_index,stage=step['name'],note=body.note,document=body.document,verification_note=body.verification_note,verification_source=body.verification_source if verify and body.verification_note.strip() else None,stock_verified=verification,verified_at=now().isoformat() if verify and body.verification_note.strip() else None)
             if step['kind']=='CONFIRM' or row.stage_index==len(row.workflow['steps'])-1:row.status='CLOSED';row.assignee_id=None;row.due_at=None;event(db,row,user,'CLOSED',note=body.note)
             else:assign(db,row,row.stage_index+1,user)
     row.version+=1;row.updated_at=now();db.commit();return detail(row,db,user)
