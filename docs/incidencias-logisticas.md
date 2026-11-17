@@ -121,3 +121,10 @@ Cada etapa admite hasta 30 datos con nombre, tipo (texto, número o fecha) y obl
 Los valores, sus etiquetas y sus tipos quedan en el evento de finalización junto con la etapa, fecha y usuario. Al devolver una incidencia y atenderla de nuevo se conserva cada actuación anterior. Modificar estos campos en un flujo ya utilizado exige una nueva versión; las incidencias existentes conservan la definición de su versión. Los requisitos anteriores de documento de resolución se mantienen en los flujos que ya los tenían configurados.
 
 En reposición, «Delegación solicitante / destino» identifica dónde se necesita y se recibirá el material. En intercambios se distinguen origen y destino. El documento previo es opcional al registrar una incidencia y no se solicita al crear una reposición nueva: el pedido generado se recoge en la etapa que tenga ese dato configurado, por ejemplo Ejecutar. Para una incidencia sobre una venta o compra ya existente puede indicarse su referencia previa.
+
+
+### Atención simplificada
+
+El responsable escribe Observaciones y pulsa «Guardar y continuar» o «Guardar y cerrar», según el recorrido configurado. Los datos adicionales solo aparecen si se han configurado para esa etapa. El requisito anterior de documento se presenta como «Número de movimiento»; sigue siendo obligatorio únicamente donde el flujo lo exige. Devolver, rechazar, guardar un comentario sin avanzar y reasignar están agrupados en «Otras acciones». Los archivos opcionales están plegados y los obligatorios se muestran abiertos.
+
+La revisión de stock opcional no muestra controles ni consulta EXIT. Si la versión del flujo exige revisar el stock, se muestra una única casilla «He revisado el stock y los movimientos posteriores al recuento». Al marcarla y completar la etapa queda constancia de una confirmación manual en el historial, sin atribuir una consulta automática a EXIT. Se conserva la validación de esa versión del flujo y no se modifica su configuración ni el historial previo.
