@@ -677,3 +677,124 @@ class OrderEmailDelivery(Base):
 # Keep the light read projection in the same transaction as manual result changes.
 from .replenishment_read_model import install_events
 install_events(ReplenishmentResult)
+
+
+class HomeBannerSettings(Base):
+    __tablename__ = 'home_banner_settings'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    interval_seconds: Mapped[int] = mapped_column(Integer, default=5)
+    revision: Mapped[str] = mapped_column(String(36), default=public_uuid)
+
+
+class HomeBannerSlide(Base):
+    __tablename__ = 'home_banner_slides'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=public_uuid)
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    alt: Mapped[str] = mapped_column(String(200), default='Información de Bermúdez Ulloa')
+    image_data: Mapped[bytes | None] = mapped_column(LargeBinary)
+
+
+class IncidentType(Base):
+    __tablename__ = 'logistics_incident_types'
+    code: Mapped[str] = mapped_column(String(40), primary_key=True)
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    configuration: Mapped[dict] = mapped_column(JSON)
+
+
+class IncidentFlowVersion(Base):
+    __tablename__='logistics_incident_flow_versions'
+    __table_args__=(UniqueConstraint('type_code','number'),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    type_code: Mapped[str] = mapped_column(String(40),index=True)
+    number: Mapped[int] = mapped_column(Integer)
+    configuration: Mapped[dict] = mapped_column(JSON)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey('users.id'))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),server_default=func.now())
+    note: Mapped[str] = mapped_column(Text,default='')
+    legacy: Mapped[bool] = mapped_column(Boolean,default=False)
+
+
+class IncidentFlowChange(Base):
+    __tablename__='logistics_incident_flow_changes'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    type_code: Mapped[str] = mapped_column(String(40),index=True)
+    flow_version: Mapped[int] = mapped_column(Integer)
+    action: Mapped[str] = mapped_column(String(30))
+    actor_id: Mapped[int | None] = mapped_column(ForeignKey('users.id'))
+    detail: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True),server_default=func.now())
+
+
+class IncidentSequence(Base):
+    __tablename__ = 'logistics_incident_sequences'
+    year: Mapped[int] = mapped_column(Integer, primary_key=True)
+    value: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class LogisticsIncident(Base):
+    __tablename__ = 'logistics_incidents'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=public_uuid)
+    number: Mapped[str] = mapped_column(String(30), unique=True, index=True)
+    type_code: Mapped[str] = mapped_column(String(40), index=True)
+    delegation_id: Mapped[str] = mapped_column(String(80), index=True)
+    delegation_name: Mapped[str] = mapped_column(String(160))
+    destination_id: Mapped[str | None] = mapped_column(String(80))
+    document: Mapped[str] = mapped_column(String(160), default='')
+    description: Mapped[str] = mapped_column(Text)
+    reason: Mapped[str] = mapped_column(String(160))
+    priority: Mapped[str] = mapped_column(String(20), default='NORMAL')
+    needed_on: Mapped[date | None] = mapped_column(Date)
+    creator_id: Mapped[int] = mapped_column(ForeignKey('users.id'), index=True)
+    assignee_id: Mapped[int | None] = mapped_column(ForeignKey('users.id'), index=True)
+    status: Mapped[str] = mapped_column(String(20), default='DRAFT', index=True)
+    stage_index: Mapped[int] = mapped_column(Integer, default=-1)
+    assignment_version: Mapped[int] = mapped_column(Integer, default=0)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    workflow: Mapped[dict] = mapped_column(JSON)
+    lines: Mapped[list] = mapped_column(JSON)
+    resolution_document: Mapped[str] = mapped_column(String(160), default='')
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    entered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class IncidentEvent(Base):
+    __tablename__ = 'logistics_incident_events'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    incident_id: Mapped[str] = mapped_column(ForeignKey('logistics_incidents.id'), index=True)
+    actor_id: Mapped[int] = mapped_column(ForeignKey('users.id'))
+    action: Mapped[str] = mapped_column(String(30))
+    detail: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class IncidentAttachment(Base):
+    __tablename__ = 'logistics_incident_attachments'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=public_uuid)
+    incident_id: Mapped[str] = mapped_column(ForeignKey('logistics_incidents.id'), index=True)
+    uploaded_by: Mapped[int] = mapped_column(ForeignKey('users.id'))
+    stage_index: Mapped[int] = mapped_column(Integer)
+    filename: Mapped[str] = mapped_column(String(180))
+    media_type: Mapped[str] = mapped_column(String(100))
+    size: Mapped[int] = mapped_column(Integer)
+    content: Mapped[bytes] = mapped_column(LargeBinary)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class IncidentEmail(Base):
+    __tablename__ = 'logistics_incident_emails'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    incident_id: Mapped[str] = mapped_column(ForeignKey('logistics_incidents.id'), index=True)
+    assignment_version: Mapped[int] = mapped_column(Integer)
+    recipient_id: Mapped[int] = mapped_column(ForeignKey('users.id'))
+    recipient: Mapped[str] = mapped_column(String(254))
+    stage: Mapped[str] = mapped_column(String(120))
+    status: Mapped[str] = mapped_column(String(30), default='PENDING', index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    diagnostic: Mapped[dict | None] = mapped_column(JSON)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    __table_args__ = (UniqueConstraint('incident_id','assignment_version','recipient_id'),)
