@@ -631,6 +631,12 @@ def redistribution_result(job_id:str,page:int=Query(1,ge=1),page_size:int=Query(
     return result_page(db,get_job(db,job_id,user),page,page_size,q)
 
 
+@router.get('/redistribution/jobs/{job_id}/movements/{detail_id}')
+def redistribution_movement_detail(job_id:str,detail_id:str,db:Session=Depends(get_db),user:User=Depends(operator)):
+    from .redistribution_jobs import get_job, movement_detail
+    return movement_detail(db,get_job(db,job_id,user),detail_id)
+
+
 @router.post('/redistribution/jobs/{job_id}/export.xlsx')
 def redistribution_job_export(job_id:str,body:RedistributionExportInput,db:Session=Depends(get_db),user:User=Depends(operator)):
     from .redistribution_jobs import get_job, validate_snapshot, entries

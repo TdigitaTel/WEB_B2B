@@ -104,6 +104,8 @@ def test_redistribution_respects_both_decimal_multiples_and_does_not_overallocat
     assert [(m['to_delegation'],m['quantity']) for m in moves]==[('04',10),('00',15)]
     assert result['unmet_needs'][0]['quantity']==16
     assert sum(Decimal(str(m['quantity'])) for m in moves)==Decimal(25)
+    trace=moves[0]['calculation_detail'];assert trace['raw_surplus']==25.9 and trace['initial_surplus']==25 and trace['dispatch_step']==5
+    returned=moves[1]['calculation_detail'];assert returned['remaining_needs']==[{'delegation':'02','quantity':16,'dispatch_step':20,'assignable':0}]
 
 
 def test_redistribution_api_uses_current_snapshots_without_exit_reads(client,monkeypatch):

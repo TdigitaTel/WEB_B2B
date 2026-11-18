@@ -111,7 +111,9 @@ def process_batch(job_id,token):
         # Registry/scenario locks are held only for this block, not for the whole calculation.
         job=owned(db,job_id,token);validate_snapshot(db,job.snapshot)
         proposal=calculate_redistribution(db,job.request['consumption_basis'],batch.codes)
-        batch.result={key:proposal[key] for key in ('movements','unmet_needs','material_warnings')}
+        # Details are fetched only on demand, never as part of table pagination.
+        details=[move.pop('calculation_detail',None) for move in proposal['movements']]
+        batch.result={key:proposal[key] for key in ('movements','unmet_needs','material_warnings')}|{'movement_details':details}
         batch.fingerprint=digest(batch.result)
         job.summary={key:job.summary.get(key,0)+value for key,value in proposal['summary'].items()}
         job.processed_articles+=len(batch.codes);job.completed_batches+=1
@@ -175,8 +177,9 @@ def get_job(db,public_id,user):
 
 
 def entries(db,job,kind):
-    for rows in db.scalars(select(Batch.result[kind]).where(Batch.job_id==job.id).order_by(Batch.number).execution_options(yield_per=1)):
-        yield from rows or []
+    for number,rows in db.execute(select(Batch.number,Batch.result[kind]).where(Batch.job_id==job.id).order_by(Batch.number).execution_options(yield_per=1)):
+        for index,row in enumerate(rows or []):
+            yield {**row,'detail_id':f'{number}-{index}'} if kind=='movements' else row
 
 
 def result_page(db,job,page=1,page_size=100,q=''):
@@ -191,3 +194,25 @@ def result_page(db,job,page=1,page_size=100,q=''):
     return {**job.result_metadata,'movements':movements,'movement_total':count,'page':page,'page_size':page_size,
         'unmet_needs':list(islice(entries(db,job,'unmet_needs'),100)),
         'material_warnings':list(islice(entries(db,job,'material_warnings'),100))}
+
+
+def movement_detail(db,job,detail_id):
+    import re
+    if job.status!='COMPLETED':raise HTTPException(409,'La redistribución todavía no está completa')
+    if not re.fullmatch(r'[1-9][0-9]{0,7}-(0|[1-9][0-9]{0,7})',detail_id):raise HTTPException(404,'Movimiento no encontrado')
+    validate_snapshot(db,job.snapshot)
+    number,index=map(int,detail_id.split('-'))
+    batch=db.execute(select(Batch.result['movements'],Batch.result['movement_details']).where(Batch.job_id==job.id,Batch.number==number)).first()
+    if not batch or index>=len(batch[0] or []):raise HTTPException(404,'Movimiento no encontrado')
+    move=batch[0][index];detail=(batch[1] or [])[index] if index<len(batch[1] or []) else None
+    reconstructed=False
+    if not detail:
+        # Compatibility for proposals created before details were persisted.
+        # Reconstruct ONE material from the same frozen calculation, never EXIT.
+        proposal=calculate_redistribution(db,job.request['consumption_basis'],[move['sku']])
+        match=next((row for row in proposal['movements'] if all(row[key]==move[key] for key in ('sku','from_delegation','to_delegation','kind','quantity'))),None)
+        if not match:raise HTTPException(409,'No se puede verificar el detalle de esta propuesta antigua. Vuelve a calcular la redistribución.')
+        detail=match.get('calculation_detail');reconstructed=True
+    if not detail:raise HTTPException(409,'Esta propuesta no contiene el detalle. Vuelve a calcular la redistribución.')
+    return {'movement':move,'detail':detail,'reconstructed':reconstructed,'consumption_basis':job.request['consumption_basis'],
+        'consumption_basis_label':BASIS_LABELS[job.request['consumption_basis']],'fingerprint':job.result_metadata['fingerprint']}

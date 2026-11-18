@@ -65,3 +65,9 @@
 .repl-purchase-results small{font-size:10px}
 
 .repl-clean-results .repl-review-value{font-size:11px}
+
+.repl-movement-detail .repl-side-by-side>section{padding:14px;background:#f3f8fb;border:1px solid #d6e3ec;border-radius:9px;margin-top:0}
+.repl-movement-detail .repl-parameter-values{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
+.repl-calculation-line{padding:12px;border-left:3px solid #1c608c;background:#edf5fa;border-radius:5px;line-height:1.6}
+.repl-movement-detail details{margin-top:14px}
+.repl-movement-detail summary{cursor:pointer;color:#1c608c;font-weight:700}
