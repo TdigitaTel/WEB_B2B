@@ -77,6 +77,14 @@ const render=endpoint=>root.render(React.createElement(History,{endpoint,unit:'P
  assert.match(document.querySelector('[aria-label="Indicador de excepcionalidad"]').textContent,/100 %/);
  assert.match(document.querySelector('[aria-label="Indicador de excepcionalidad"]').textContent,/01\/04\/2026/);
  assert.match(document.querySelector('[aria-label="Indicador de excepcionalidad"]').textContent,/no descarta ventas ni cambia las propuestas automáticamente/);
+ data.exceptionality={...data.exceptionality,level:'LOW',reasons:['OUTLIERS'],positive_days:179,consumption_day_percent:48.9,top3_share_percent:9.4,outlier_days:3,outlier_share_percent:9.4,positive_daily_mean:2.68,positive_daily_median:2,analysis_version:2};
+ await React.act(async()=>render('/saved/result/recurring-low-impact'));
+ assert.equal(document.querySelector('.repl-history-metrics [data-exceptionality-level]').dataset.exceptionalityLevel,'LOW');
+ assert.match(document.querySelector('.repl-history-metrics').textContent,/Consumo recurrente · picos de bajo impacto/);
+ assert.match(document.body.textContent,/picos señalados representan 9,4 %/);
+ assert.match(document.body.textContent,/Media de los días con consumo: 2,68 PZ/);
+ assert.match(document.body.textContent,/al menos el 25 %/);
+ assert.ok(!document.querySelector('[aria-label="Indicador de excepcionalidad"]').textContent.includes('Alta excepcionalidad · revisar'));
  delete data.exceptionality;
  delete data.spot_analysis;
  data.daily_modes=[];data.weekly_sales.forEach(w=>w.sold=0);data.daily_median=null;data.positive_consumption_days=0;

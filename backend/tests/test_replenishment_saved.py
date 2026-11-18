@@ -205,3 +205,59 @@ def test_redistribution_compares_statistics_from_saved_sources_without_overwriti
     assert client.post(PREFIX+'/redistribution/export.xlsx',json={'fingerprint':chosen['fingerprint'],'consumption_basis':'MEAN'}).status_code==409
     with SessionLocal() as db:assert [row.payload for row in db.scalars(select(Result).order_by(Result.id))]==before
     assert client.post(PREFIX+'/redistribution',json={'consumption_basis':'INVALID'}).status_code==422
+
+
+def test_almeiras_calculation_saved_filtered_exported_and_kept_out_of_redistribution(client,monkeypatch):
+    setup_source(monkeypatch,['ALMEIRAS'])
+    body=request();body['filters']['delegations']=['00'];body.update(all_consumption_bases=True,sequential_delegations=True)
+    response=client.post(PREFIX+'/jobs',json=body);assert response.status_code in (200,202),response.text
+    assert worker.process_one()
+    job=client.get(PREFIX+'/jobs/'+response.json()['id']).json();assert job['status']=='COMPLETED',job
+    sid=job['result']['id']
+    options=client.get(PREFIX+'/options').json()
+    assert {'code':'00','name':'Almeiras'} in options['delegations']
+    saved=client.get(PREFIX+'/calculations').json()
+    assert [row['delegation'] for row in saved['items']]==['00']
+    assert saved['items'][0]['delegation_name']=='Almeiras'
+    assert {row['code'] for row in saved['missing_delegations']}=={'01','02','04','05'}
+    for basis in ['MEAN','MEDIAN','MODE']:
+        response=client.get(f'{PREFIX}/simulations/{sid}/results?delegation=00&consumption_basis={basis}')
+        assert response.status_code==200,response.text
+        row=response.json()['items'][0]
+        assert row['stock']==50 and row['gross_sales']==1 and row['delegation']=='00'
+        assert row['central_total_requested']==0 and row['central_can_supply'] is False
+    import io
+    from openpyxl import load_workbook
+    response=client.get(f'{PREFIX}/simulations/{sid}/export.xlsx?delegation=00&mode=simple')
+    assert response.status_code==200,response.text
+    cells=list(load_workbook(io.BytesIO(response.content)).active.values)
+    assert cells[1][cells[0].index('Delegación')]=='00'
+    assert 'No aplica: consumo propio de Almeiras' in cells[1]
+    # A separately saved central calculation is optional and never turns the four-branch flow into five branches.
+    body['filters']['delegations']=['01','02','04','05']
+    response=client.post(PREFIX+'/jobs',json=body);assert response.status_code in (200,202),response.text
+    assert worker.process_one()
+    saved=client.get(PREFIX+'/calculations').json()
+    assert {row['delegation'] for row in saved['items']}=={'00','01','02','04','05'}
+    assert not saved['missing_delegations']
+    response=client.post(PREFIX+'/redistribution',json={'consumption_basis':'MEAN'})
+    assert response.status_code==200,response.text
+    assert {row['delegation'] for row in response.json()['calculations']}=={'01','02','04','05'}
+    assert not response.json()['material_warnings']
+
+
+def test_all_five_delegations_run_sequentially_without_central_self_supply(client,monkeypatch):
+    setup_source(monkeypatch,['ALL_FIVE'])
+    body=request();body['filters']['delegations']=['00','01','02','04','05'];body.update(all_consumption_bases=True,sequential_delegations=True)
+    response=client.post(PREFIX+'/jobs',json=body);assert response.status_code in (200,202),response.text
+    assert worker.process_one()
+    job=client.get(PREFIX+'/jobs/'+response.json()['id']).json()
+    assert job['status']=='COMPLETED' and job['completed_batches']==5
+    sid=job['result']['id']
+    for basis in ['MEAN','MEDIAN','MODE']:
+        rows=client.get(f'{PREFIX}/simulations/{sid}/results?consumption_basis={basis}').json()['items']
+        assert len(rows)==5
+        central=next(row for row in rows if row['delegation']=='00')
+        total=sum(row['final_quantity'] for row in rows if row['delegation']!='00')
+        assert all(row['central_total_requested']==total for row in rows)
+        assert central['central_can_supply'] is False and central['central_covers_without_multiple'] is None

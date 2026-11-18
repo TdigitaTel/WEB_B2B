@@ -8,7 +8,7 @@ const calculations={id:'done',consumption_bases:['MEAN','MEDIAN','MODE'],filters
 let calls=[],download='';
 global.URL.createObjectURL=()=> 'blob:excel';global.URL.revokeObjectURL=()=>{};dom.window.HTMLAnchorElement.prototype.click=function(){download=this.download};
 global.fetch=async(url,options={})=>{calls.push([url,options]);let body;
- if(url.endsWith('/options'))body={article_limit:1000,server_date:'2026-04-30',delegations:[{code:'01',name:'San Diego'},{code:'02',name:'Ferrol'},{code:'04',name:'Santiago'},{code:'05',name:'Sanxenxo'}],areas:[],families:[],subfamilies:[],types:[]};
+ if(url.endsWith('/options'))body={article_limit:1000,server_date:'2026-04-30',delegations:[{code:'00',name:'Almeiras'},{code:'01',name:'San Diego'},{code:'02',name:'Ferrol'},{code:'04',name:'Santiago'},{code:'05',name:'Sanxenxo'}],areas:[],families:[],subfamilies:[],types:[]};
  else if(url.endsWith('/jobs/current'))body={job:null,latest_result:calculations};
  else if(url.includes('/results?')){const query=new URL(url,dom.window.location.href).searchParams;body={items:[],total:0,summary:{articles_analyzed:query.get('delegation')==='02'?2:8,to_replenish:query.get('consumption_basis')==='MEDIAN'?1:4}};}
  else if(url.includes('/export.xlsx?'))return {ok:true,status:200,headers:{get:()=> 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'},blob:async()=>new Blob(['excel'])};
@@ -21,6 +21,8 @@ const query=()=>new URL(calls.filter(c=>c[0].includes('/results?')).at(-1)[0],do
  await React.act(async()=>root.render(React.createElement(View)));await pause();
  assert.equal(document.querySelector('input[value=MEAN]').checked,true);
  assert.equal(query().get('consumption_basis'),'MEAN');assert.equal(query().get('delegation'),null);
+ const inputDelegation=[...document.querySelectorAll('label')].find(label=>label.firstChild?.textContent==='Delegación').querySelector('select');
+ assert.ok(inputDelegation.querySelector('option[value="00"]'));assert.ok(inputDelegation.querySelector('option[value="ALL_WITH_CENTRAL"]'));
  const delegation=document.querySelector('[aria-label="Delegación del resultado"]');assert.equal(delegation.options.length,5);
  await React.act(async()=>{delegation.value='02';delegation.dispatchEvent(new Event('change',{bubbles:true}));});await pause();
  assert.equal(query().get('delegation'),'02');assert.equal(query().get('consumption_basis'),'MEAN');

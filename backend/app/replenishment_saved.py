@@ -9,7 +9,7 @@ from sqlalchemy import select, delete, or_, text
 from .models import (ReplenishmentDelegationCalculation as Current, ReplenishmentScenario as Scenario,
     ReplenishmentResult as Result, ReplenishmentJob as Job, ReplenishmentBatch as Batch,
     ReplenishmentAdjustment as Adjustment)
-from .replenishment_source import DELEGATIONS
+from .replenishment_source import DELEGATIONS, CALCULATION_DELEGATIONS
 
 
 def lock_registry(db):
@@ -65,12 +65,12 @@ def publish_calculations(db,scenario):
 def calculation_list(db):
     from .replenishment import scenario_metadata, ResultFilters, filtered_results, result_summary
     current=current_calculations(db);items=[]
-    for code in DELEGATIONS:
+    for code in CALCULATION_DELEGATIONS:
         if code not in current:continue
         sid=current[code].scenario_id
         payload=scenario_metadata(db,sid)
         calculated_at=db.scalar(select(Job.finished_at).where(Job.scenario_id==sid))
-        payload.update(delegation=code,delegation_name=DELEGATIONS[code],
+        payload.update(delegation=code,delegation_name=CALCULATION_DELEGATIONS[code],
             calculated_at=calculated_at or payload['created_at'],
             filters={**payload['filters'],'delegations':[code]},
             summary=result_summary(db,filtered_results(sid,ResultFilters(delegation=code))))
@@ -176,7 +176,7 @@ def rebased_planning_rows(db,scenario,delegation,basis):
 
 
 def calculate_redistribution(db,consumption_basis='MEAN'):
-    current=current_calculations(db)
+    current={code:row for code,row in current_calculations(db).items() if code in DELEGATIONS}
     missing=[{'code':d,'name':name} for d,name in DELEGATIONS.items() if d not in current]
     if missing:raise HTTPException(409,{'message':'Faltan cálculos guardados. Calcula todas las delegaciones antes de redistribuir.','missing_delegations':missing})
     # Lock snapshots as well as the registry: manual result adjustments serialize with this proposal.

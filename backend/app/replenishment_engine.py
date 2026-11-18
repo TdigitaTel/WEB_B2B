@@ -67,17 +67,22 @@ def exceptionality_analysis(values,start,outliers):
     reasons=[]
     if positive and share>=80:reasons.append('CONCENTRATION')
     if positive and days>=30 and frequency<=10:reasons.append('LOW_FREQUENCY')
+    outlier_share=sum(row['demand'] for row in outliers)/total*100 if total else 0
     if outliers:reasons.append('OUTLIERS')
+    if outliers and outlier_share>=25:reasons.append('OUTLIER_IMPACT')
     if positive<8 and positive:reasons.append('FEW_ACTIVE_DAYS')
     if days<30 and positive:reasons.append('SHORT_PERIOD')
     level=('NO_CONSUMPTION' if not positive else 'LIMITED_HISTORY' if days<30 else
-           'HIGH' if 'CONCENTRATION' in reasons or 'OUTLIERS' in reasons else
+           'HIGH' if 'CONCENTRATION' in reasons or 'OUTLIER_IMPACT' in reasons else
            'MEDIUM' if 'LOW_FREQUENCY' in reasons or 'FEW_ACTIVE_DAYS' in reasons else 'LOW')
     return {'level':level,'reasons':reasons,'observed_days':days,'positive_days':positive,
         'consumption_day_percent':frequency,'top3_share_percent':share,'top_days':largest,
         'largest_quantity':largest[0]['quantity'] if largest else None,
         'largest_date':largest[0]['day'] if largest else None,
-        'outlier_days':len(outliers),'minimum_observed_days':30}
+        'outlier_days':len(outliers),'outlier_share_percent':outlier_share,'high_impact_threshold_percent':25,
+        'positive_daily_mean':total/positive if positive else None,
+        'positive_daily_median':median([row['quantity'] for row in events]) if positive else None,
+        'analysis_version':2,'minimum_observed_days':30}
 
 
 def spot_analysis(values,start,monthly,daily_mean):
@@ -392,8 +397,8 @@ def annotate_central(results,source):
         row.update(quantity_comparison(row))
         groups[row['sku']].append(row)
     for sku,rows in groups.items():
-        stock=central.get(sku);total=sum(row['final_quantity'] for row in rows)
-        comparison_totals={key:(sum(row[key] for row in rows) if all(row[key] is not None for row in rows) else None) for key in ('quantity_without_multiple','quantity_with_exit_multiple')}
+        stock=central.get(sku);requests=[row for row in rows if row['delegation']!='00'];total=sum(row['final_quantity'] for row in requests)
+        comparison_totals={key:(sum(row[key] for row in requests) if all(row[key] is not None for row in requests) else None) for key in ('quantity_without_multiple','quantity_with_exit_multiple')}
         stats_cache={};reserve=0;central_avg=0;central_observed_avg=0;reserve_days=0;central_std=0
         for row in rows:
             params=Parameters.model_validate(row['parameters']).model_dump()
@@ -421,13 +426,13 @@ def annotate_central(results,source):
                 central_physical_available=physical,central_monthly_consumption=central_observed_avg*30 if valid_history else None,
                 central_daily_mean=central_observed_avg if valid_history else None,central_daily_reference=central_avg if valid_history else None,central_daily_std=central_std if valid_history else None,
                 central_reserve=reserve if valid_history else None,central_reserve_days=reserve_days,
-                central_available=available,central_total_requested=total,central_can_supply=covered and row['final_quantity']>0,
+                central_available=available,central_total_requested=total,central_can_supply=row['delegation']!='00' and covered and row['final_quantity']>0,
                 central_shortage=max(0,total-available) if available is not None else None)
             for key,suffix in [('quantity_without_multiple','without_multiple'),('quantity_with_exit_multiple','with_exit_multiple')]:
                 requested=comparison_totals[key]
                 row['central_total_'+suffix]=requested
-                row['central_covers_'+suffix]=(None if requested is None or available is None else bool(requested<=available+1e-8))
-            if total>0 and not covered:
+                row['central_covers_'+suffix]=(None if row['delegation']=='00' or requested is None or available is None else bool(requested<=available+1e-8))
+            if row['delegation']!='00' and total>0 and not covered:
                 row['recommendations'].append(recommendation('CENTRAL_SIN_DATOS' if available is None else 'CENTRAL_INSUFICIENTE',
                     'No se puede asegurar despacho: faltan datos de stock o consumo de Almeiras.' if available is None else
                     'Almeiras no cubre la propuesta conjunta después de reservar su consumo. No despachar esta propuesta completa sin provocar una rotura de stock.',
@@ -480,8 +485,9 @@ def consumption_analysis_label(row):
                 'LOW':'Sin señales de excepcionalidad','LIMITED_HISTORY':'Periodo corto · interpretación limitada',
                 'NO_CONSUMPTION':'Sin consumo positivo'}
         flags={'CONCENTRATION':'consumo concentrado en pocos días','LOW_FREQUENCY':'baja frecuencia',
-               'OUTLIERS':'picos atípicos','FEW_ACTIVE_DAYS':'pocos días de consumo','SHORT_PERIOD':'menos de 30 días observados'}
-        return (f"{labels[info['level']]}: {info['positive_days']} de {info['observed_days']} días con consumo "
+               'OUTLIERS':'picos atípicos','OUTLIER_IMPACT':'picos con impacto relevante (al menos el 25 % del consumo)','FEW_ACTIVE_DAYS':'pocos días de consumo','SHORT_PERIOD':'menos de 30 días observados'}
+        label='Consumo recurrente · picos de bajo impacto' if info['level']=='LOW' and info['outlier_days'] else labels[info['level']]
+        return (f"{label}: {info['positive_days']} de {info['observed_days']} días con consumo "
                 f"({info['consumption_day_percent']:.1f} %); {info['top3_share_percent']:.1f} % del consumo en los {len(info['top_days'])} mayores días. "
                 + '; '.join(flags[key] for key in info['reasons']))
     analysis=row.get('spot_analysis') or {}

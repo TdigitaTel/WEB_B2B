@@ -26,7 +26,7 @@ from .models import (AuditEvent, MaterialArea, MaterialFamily, MaterialSubfamily
     ReplenishmentAdjustment as Adjustment, ReplenishmentSettings as ModuleSettings,
     ReplenishmentJob as Job, ReplenishmentBatch as Batch, User)
 from .replenishment_engine import Parameters, PRECEDENCE, prepare_context, calculate_article, annotate_central, summarize, rounded_dispatch, quantity_comparison, ConsumptionBasis, selected_basis, calculate_all_bases, annotate_all_bases, consumption_analysis_label, demand_statistics, history_statistics
-from .replenishment_source import DELEGATIONS, MAX_ARTICLES, HARD_MAX_ARTICLES, read_replenishment_source
+from .replenishment_source import DELEGATIONS, CALCULATION_DELEGATIONS, MAX_ARTICLES, HARD_MAX_ARTICLES, read_replenishment_source
 
 operator=require_roles('ADMIN','OPERADOR_TIENDA')
 router=APIRouter(prefix='/api/v1/store/replenishment',tags=['replenishment'],dependencies=[Depends(operator)])
@@ -42,7 +42,7 @@ def validate_parameters(patch):
 class Filters(BaseModel):
     date_from: date = date(2026,1,1)
     date_to: date = Field(default_factory=today)
-    delegations: list[Literal['01','02','04','05']] = Field(default_factory=lambda:list(DELEGATIONS),min_length=1,max_length=4)
+    delegations: list[Literal['00','01','02','04','05']] = Field(default_factory=lambda:list(DELEGATIONS),min_length=1,max_length=5)
     area_id:int|None=None
     family_id:int|None=None
     subfamily_id:int|None=None
@@ -154,7 +154,7 @@ def save_settings(body:SettingsInput,db:Session=Depends(get_db),user:User=Depend
 
 @router.get('/options')
 def options(db:Session=Depends(get_db)):
-    result={'server_date':today().isoformat(),'delegations':[{'code':key,'name':value} for key,value in DELEGATIONS.items()],
+    result={'server_date':today().isoformat(),'delegations':[{'code':key,'name':value} for key,value in CALCULATION_DELEGATIONS.items()],
         'defaults':Parameters().model_dump(),'precedence':PRECEDENCE,**module_settings(db)}
     visible_areas=select(MaterialArea.id).where(MaterialArea.id.not_in(hidden_areas(db)),
         MaterialArea.id.not_in(unclassified_area_ids(db)) | (MaterialArea.code==UNCLASSIFIED_CODE))
@@ -180,8 +180,8 @@ def save_policy(body:PolicyInput,db:Session=Depends(get_db),user:User=Depends(op
     if body.scope=='GLOBAL':key='*'
     elif body.scope in models and (not key.isdigit() or not db.get(models[body.scope],int(key))):
         raise HTTPException(422,'Clasificación no encontrada')
-    elif body.scope=='DELEGATION' and key not in DELEGATIONS:raise HTTPException(422,'Delegación no admitida')
-    elif body.scope=='ARTICLE_DELEGATION' and (len(key.rsplit('|',1))!=2 or key.rsplit('|',1)[1] not in DELEGATIONS or not key.rsplit('|',1)[0]):
+    elif body.scope=='DELEGATION' and key not in CALCULATION_DELEGATIONS:raise HTTPException(422,'Delegación no admitida')
+    elif body.scope=='ARTICLE_DELEGATION' and (len(key.rsplit('|',1))!=2 or key.rsplit('|',1)[1] not in CALCULATION_DELEGATIONS or not key.rsplit('|',1)[0]):
         raise HTTPException(422,'Utiliza código de artículo|delegación, por ejemplo 03009|02')
     row=db.scalar(select(Policy).where(Policy.scope==body.scope,Policy.scope_key==key).with_for_update())
     previous=policy_payload(row) if row else None
@@ -304,7 +304,7 @@ def run_simulation(body:RunInput,db:Session=Depends(get_db),user:User=Depends(op
 
 class ResultFilters(BaseModel):
     consumption_basis:ConsumptionBasis|None=None
-    delegation:Literal['01','02','04','05']|None=None
+    delegation:Literal['00','01','02','04','05']|None=None
     q:str=Field(default='',max_length=200)
     alerts_only:bool=False
     needed_only:bool=False
@@ -539,7 +539,7 @@ def export(scenario_id:str,filters:ResultFilters=Depends(),db:Session=Depends(ge
         for suffix,key in [('without_multiple','central_status'),('with_exit_multiple','central_exit_status')]:
             quantity=row['quantity_'+suffix]
             covered=row.get('central_covers_'+suffix)
-            row[key]='Revisar múltiplo EXIT' if quantity is None else 'Sin necesidad' if not quantity else ('Revisar datos' if row.get('central_available') is None else 'Recalcular cobertura') if covered is None else 'Cubre conjunto' if covered else 'No cubre conjunto'
+            row[key]='No aplica: consumo propio de Almeiras' if row['delegation']=='00' else 'Revisar múltiplo EXIT' if quantity is None else 'Sin necesidad' if not quantity else ('Revisar datos' if row.get('central_available') is None else 'Recalcular cobertura') if covered is None else 'Cubre conjunto' if covered else 'No cubre conjunto'
         if row['quantity_with_exit_multiple'] is None:row['quantity_with_exit_multiple']='Revisar múltiplo EXIT'
         row['notices']='; '.join(item['reason'] for item in row['recommendations'])
         if mode=='simple':
