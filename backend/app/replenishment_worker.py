@@ -197,7 +197,9 @@ def main():
     logging.basicConfig(level=logging.INFO)
     while True:
         try:
-            if not process_one():time.sleep(2)
+            if not process_one():
+                from .procurement import process_one as process_purchase
+                if not process_purchase():time.sleep(2)
         except Exception:
             logger.exception('Error del proceso de reposición; se volverá a consultar la cola')
             time.sleep(5)

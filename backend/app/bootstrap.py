@@ -1,7 +1,7 @@
 from sqlalchemy import text
 
 from .db import Base, engine
-from . import models  # noqa: F401
+from . import models, procurement_models  # noqa: F401
 
 
 def main():
