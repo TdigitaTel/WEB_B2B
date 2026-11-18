@@ -41,8 +41,9 @@ def workbook_bytes(proposal):
           m['origin_maximum_stock'],m['origin_transferable_surplus']] for m in proposal['movements']))
     sheet('Necesidades sin cubrir',['Código material','Delegación código','Delegación','Cantidad pendiente','Unidad'],
         ([n['sku'],n['delegation'],names.get(n['delegation'],n['delegation']),n['quantity'],n['unit_type']] for n in proposal['unmet_needs']))
+    from itertools import chain
     sheet('Alertas',['Ámbito','Código material','Mensaje'],
-        [*(['General','',w] for w in proposal['warnings']),*(['Material excluido',w['sku'],w['reason']] for w in proposal['material_warnings'])])
+        chain((['General','',w] for w in proposal['warnings']),(['Material excluido',w['sku'],w['reason']] for w in proposal['material_warnings'])))
     sheet('Cálculos utilizados',['Delegación código','Delegación','Identificador cálculo','Stock consultado','Ventas desde','Ventas hasta'],
         ([c['delegation'],c['name'],c['scenario_id'],c['captured_at'],c['date_from'],c['date_to']] for c in proposal['calculations']))
     summary=proposal['summary']
@@ -51,7 +52,8 @@ def workbook_bytes(proposal):
         ['Referencia de la propuesta',proposal['fingerprint']],['Criterio de consumo',proposal.get('consumption_basis_label','Media')],['Materiales con movimientos',summary['materials']],
         ['Movimientos entre delegaciones',summary['transfers']],['Devoluciones a Almeiras',summary['returns_to_central']],
         ['Necesidades sin cubrir',summary['unmet_needs']],['Materiales excluidos',summary['excluded_materials']],
-        ['Alcance','Propuesta completa; la búsqueda de pantalla no limita el Excel. No se ejecutan traslados ni reservas en EXIT.'],
+        ['Alcance','Propuesta completa de los filtros seleccionados; la búsqueda de movimientos no limita el Excel. No se ejecutan traslados ni reservas en EXIT.'],
+        ['Filtros del cálculo',str(proposal.get('filters',{}))],
         ['Regla de origen','Stock físico − comprometido − stock máximo; no se despachan entradas pendientes.'],
         ['Unidades','Las cantidades conservan su unidad. No se suman cantidades de unidades diferentes.'],
     ])
