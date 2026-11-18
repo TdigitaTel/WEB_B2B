@@ -155,3 +155,74 @@ def test_source_changes_after_committed_batch_keep_partial_result_unpublished(cl
     assert worker.process_one()
     assert client.get(path).json()['status']=='FAILED'
     assert client.get(path+'/result').status_code==409
+
+
+def test_movement_details_freeze_inputs_and_allocations_without_recalculating(client,monkeypatch):
+    publish(client,monkeypatch,['DETAIL'])
+    with SessionLocal() as db:
+        for row in db.scalars(select(Result)):
+            value=deepcopy(row.payload)
+            stock=100 if row.delegation=='01' else 0 if row.delegation=='02' else 10
+            value.update(maximum_stock=10,stock=stock,outgoing=0,incoming=40 if row.delegation=='01' else 0,
+                inventory_position=stock+(40 if row.delegation=='01' else 0),final_quantity=3 if row.delegation=='02' else 0,
+                effective_multiple=1)
+            row.payload=value
+        db.commit()
+    queued=create(client);assert worker.process_one();path=PREFIX+'/redistribution/jobs/'+queued['id']
+    data=client.get(path+'/result').json();transfer,returned=data['movements']
+    assert transfer['quantity']==3 and returned['quantity']==87
+    assert transfer['detail_id']!=returned['detail_id']
+    assert 'calculation_detail' not in transfer  # Keep listing/pagination small.
+    with SessionLocal() as db:
+        batch=db.scalar(select(Batch).where(Batch.job_id==db.scalar(select(Job.id).where(Job.public_id==queued['id']))))
+        assert len(batch.result['movement_details'])==2
+    def forbidden(*args,**kwargs):raise AssertionError('Opening a persisted detail must not recalculate or read EXIT')
+    monkeypatch.setattr(queue,'calculate_redistribution',forbidden)
+    monkeypatch.setattr(worker,'read_replenishment_source',forbidden)
+    detail=client.get(path+'/movements/'+transfer['detail_id'])
+    assert detail.status_code==200,detail.text
+    evidence=detail.json();trace=evidence['detail']
+    assert not evidence['reconstructed'] and evidence['fingerprint']==data['fingerprint']
+    assert trace['origin']['stock']==100 and trace['origin']['incoming']==40
+    assert trace['origin']['source']['version']==1 and trace['origin']['parameters']['simple_formula'] is True
+    assert trace['raw_surplus']==trace['initial_surplus']==90  # Future incoming never increases donor surplus.
+    assert trace['dispatch_step']==1 and trace['origin_before']==90 and trace['origin_after']==87
+    assert trace['destination_initial_need']==3 and trace['destination_before']==3 and trace['destination_after']==0
+    assert trace['destination']['delegation']=='02'
+    returned_detail=client.get(path+'/movements/'+returned['detail_id']).json()['detail']
+    assert returned_detail['origin_before']==87 and returned_detail['already_allocated']==3
+    assert returned_detail['destination'] is None
+    assert returned_detail['prior_movements'][0]['quantity']==3 and returned_detail['sequence']==2
+    assert client.get(path+'/movements/1-999').status_code==404
+    assert client.get(path+'/movements/bad-id').status_code==404
+    searched=client.get(path+'/result?q=DETAIL&page_size=1&page=2').json()
+    assert searched['movements'][0]['detail_id']==returned['detail_id']
+    admin=TestClient(app);assert admin.post('/api/v1/auth/login',json={'email':'admin@bermudez.test','password':'123456'}).status_code==200
+    assert admin.get(path+'/movements/'+transfer['detail_id']).status_code==404
+    with SessionLocal() as db:
+        scenario=db.scalar(select(Scenario));scenario.version+=1;db.commit()
+    assert client.get(path+'/movements/'+transfer['detail_id']).status_code==409
+
+
+def test_legacy_movement_details_reconstruct_and_verify_only_the_selected_sku(client,monkeypatch):
+    publish(client,monkeypatch,['LEGACY','OTHER'])
+    with SessionLocal() as db:
+        for row in db.scalars(select(Result)):
+            value=deepcopy(row.payload);value.update(stock=100,maximum_stock=10,outgoing=0,incoming=0,inventory_position=100,final_quantity=0)
+            row.payload=value
+        db.commit()
+    queued=create(client);assert worker.process_one();path=PREFIX+'/redistribution/jobs/'+queued['id']
+    with SessionLocal() as db:
+        batch=db.scalar(select(Batch));batch.result={key:value for key,value in batch.result.items() if key!='movement_details'};db.commit()
+    move=client.get(path+'/result').json()['movements'][0]
+    calls=[];original=queue.calculate_redistribution
+    def checked(db,basis,codes):calls.append(codes);return original(db,basis,codes)
+    monkeypatch.setattr(queue,'calculate_redistribution',checked)
+    monkeypatch.setattr(worker,'read_replenishment_source',lambda *a:pytest.fail('Legacy detail must use the saved calculation'))
+    response=client.get(path+'/movements/'+move['detail_id'])
+    assert response.status_code==200,response.text
+    assert response.json()['reconstructed'] and response.json()['movement']['quantity']==90
+    assert calls==[[move['sku']]]
+    with SessionLocal() as db:
+        batch=db.scalar(select(Batch));value=deepcopy(batch.result);value['movements'][0]['quantity']=999;batch.result=value;db.commit()
+    assert client.get(path+'/movements/'+move['detail_id']).status_code==409

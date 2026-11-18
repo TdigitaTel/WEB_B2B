@@ -6,12 +6,14 @@ const React=require('react'),{createRoot}=require('react-dom/client'),View=requi
 let opened=null,missing=true,stale=false,rawFailure=false,calls=[],downloaded='',currentJob=null,polls=0,sequence=0;
 global.URL.createObjectURL=()=> 'blob:redistribution';global.URL.revokeObjectURL=()=>{};
 dom.window.HTMLAnchorElement.prototype.click=function(){downloaded=this.download};
+dom.window.HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','')};dom.window.HTMLDialogElement.prototype.close=function(){this.removeAttribute('open')};
 const saved={id:'saved',delegation:'01',delegation_name:'San Diego',calculated_at:'2026-11-08T10:30:00Z',summary:{articles_analyzed:4},filters:{date_from:'2026-10-01',date_to:'2026-10-31',delegations:['01']}};
 const classifications={areas:[{id:1,name:'Herramientas'}],families:[{id:2,name:'Manuales',area_id:1}],subfamilies:[{id:3,name:'Llaves',family_id:2}],types:[{id:4,name:'Llave fija',subfamily_id:3}]};
-const plan={fingerprint:'a'.repeat(64),movement_total:201,page:1,page_size:100,movements:[{sku:'MAT',description:'Material prueba',unit_type:'UD',from_delegation:'01',to_delegation:'02',quantity:3,kind:'TRANSFER'},{sku:'MAT',description:'Material prueba',unit_type:'UD',from_delegation:'01',to_delegation:'00',quantity:5,kind:'RETURN_CENTRAL'}],unmet_needs:[{sku:'OTHER',delegation:'05',quantity:2,unit_type:'M'}],material_warnings:[{sku:'INVALID',reason:'Falta cálculo del material.'}],warnings:['Los periodos son diferentes.'],calculations:[{delegation:'01',name:'San Diego',captured_at:'2026-11-08T10:00:00Z',date_from:'2026-10-01',date_to:'2026-10-31'}],summary:{materials:1,transfers:1,returns_to_central:1,unmet_needs:1,excluded_materials:1}};
+const plan={fingerprint:'a'.repeat(64),movement_total:201,page:1,page_size:100,movements:[{detail_id:'1-0',sku:'MAT',description:'Material prueba',unit_type:'UD',from_delegation:'01',to_delegation:'02',quantity:3,kind:'TRANSFER'},{detail_id:'1-1',sku:'MAT',description:'Material prueba',unit_type:'UD',from_delegation:'01',to_delegation:'00',quantity:5,kind:'RETURN_CENTRAL'}],unmet_needs:[{sku:'OTHER',delegation:'05',quantity:2,unit_type:'M'}],material_warnings:[{sku:'INVALID',reason:'Falta cálculo del material.'}],warnings:['Los periodos son diferentes.'],calculations:[{delegation:'01',name:'San Diego',captured_at:'2026-11-08T10:00:00Z',date_from:'2026-10-01',date_to:'2026-10-31'}],summary:{materials:1,transfers:1,returns_to_central:1,unmet_needs:1,excluded_materials:1}};
 const response=(body,status=200)=>({ok:status<400,status,text:async()=>JSON.stringify(body)});
 global.fetch=async(url,options={})=>{
  calls.push([url,options]);
+ if(url.includes('/movements/'))return response({movement:plan.movements[0],fingerprint:plan.fingerprint,consumption_basis_label:'Media',reconstructed:false,detail:{version:1,origin:{delegation:'01',stock:20,incoming:0,outgoing:2,maximum_stock:10,inventory_position:18,final_quantity:0},destination:null,raw_surplus:8,initial_surplus:8,origin_before:5,origin_after:0,already_allocated:3,dispatch_step:1,quantity_before_rounding:5,sequence:2,prior_movements:[],remaining_needs:[]}});
  if(url.endsWith('/export.xlsx'))return {...response({detail:'Los cálculos han cambiado. Vuelve a calcular la redistribución.'},stale?409:200),headers:{get:()=> 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'},blob:async()=>new Blob(['excel'])};
  if(url.endsWith('/calculations'))return response({items:[saved,{...saved,delegation:'02',delegation_name:'Ferrol'}],missing_delegations:missing?[{code:'04',name:'Santiago'},{code:'05',name:'Sanxenxo'}]:[]});
  if(url.endsWith('/jobs/current'))return response({job:currentJob});
@@ -53,6 +55,9 @@ const choose=(label,value)=>{const select=document.querySelector(`[aria-label="$
  assert.match(document.body.textContent,/3 UD/);assert.match(document.body.textContent,/5 UD/);
  assert.match(document.body.textContent,/necesidades sin cubrir/);assert.match(document.body.textContent,/INVALID/);
  assert.match(document.body.textContent,/Página 1 de 3/);
+ const detailButton=document.querySelector('.repl-plan-table button');assert.equal(detailButton.textContent,'Ver cálculo');assert.equal(detailButton.disabled,false);
+ await React.act(async()=>detailButton.click());assert.ok(document.querySelector('dialog[open]'));assert.match(document.querySelector('dialog').textContent,/Cuánto puede aportar el origen/);assert.ok(calls.some(c=>c[0].endsWith('/movements/1-0')));
+ await React.act(async()=>document.querySelector('[aria-label="Cerrar cálculo de redistribución"]').click());assert.ok(!document.querySelector('dialog'));
  await React.act(async()=>button('Siguiente').click());await pause(200);
  assert.ok(calls.some(c=>c[0].includes('/result?page=2')));
  await React.act(async()=>button('Exportar redistribución a Excel').click());assert.equal(downloaded,'redistribucion.xlsx');
