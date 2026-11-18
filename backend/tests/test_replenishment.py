@@ -984,3 +984,40 @@ def test_flag_selection_consumption_range_and_export_use_saved_results(monkeypat
     for endpoint in ('/results','/export.xlsx'):
         for invalid in ({'maximum_monthly_consumption':-1},{'minimum_monthly_consumption':5,'maximum_monthly_consumption':4},{'exceptionality_flags':'INVALID'}):
             assert client.get(path+endpoint,params=invalid).status_code==422
+
+
+def test_recurrent_consumption_with_small_peaks_is_not_high_exceptionality():
+    # 179 positive days out of 366, with many repeated 1/2/3-unit sales and three peaks.
+    values=[1]*67+[2]*59+[3]*50+[7,12,16]+[0]*187
+    row=calculate(source_for(values=values));info=row['exceptionality']
+    assert info['positive_days']==179 and info['observed_days']==366
+    assert info['level']=='LOW' and info['outlier_days']==3
+    assert info['outlier_share_percent']==pytest.approx(35/370*100)
+    assert info['positive_daily_mean']==pytest.approx(370/179)
+    assert info['positive_daily_median']==2
+    assert info['analysis_version']==2 and 'OUTLIER_IMPACT' not in info['reasons']
+    assert row['total_demand']==370 and row['spot_analysis']['status']=='POSSIBLE_SPOT'
+
+
+@pytest.mark.parametrize('peak,level',[(99,'LOW'),(100,'HIGH'),(101,'HIGH')])
+def test_high_outlier_exceptionality_requires_material_consumption_impact(peak,level):
+    row=calculate(source_for(values=[10]*30+[peak]));info=row['exceptionality']
+    assert info['level']==level
+    assert info['outlier_share_percent']==pytest.approx(peak/(300+peak)*100)
+    assert ('OUTLIER_IMPACT' in info['reasons'])==(level=='HIGH')
+
+
+def test_almeiras_own_need_is_not_counted_as_a_transfer_from_itself():
+    raw=source_for(values=[10]*30,stock=0)
+    raw['sales'] += [{**row,'delegation':'00'} for row in raw['sales']]
+    raw['stocks'][0]['stock']=0
+    context=prepare_context(raw,['00','02'],[],{'simple_formula':True})
+    rows=[calculate_article(raw['articles'][0],code,context) for code in ['00','02']]
+    annotate_central(rows,raw)
+    central,branch=rows
+    assert central['final_quantity']>0 and central['stock']==0 and central['gross_sales']==300
+    assert central['central_total_requested']==branch['final_quantity']
+    assert branch['central_total_requested']==branch['final_quantity']
+    assert central['central_can_supply'] is False
+    assert central['central_covers_without_multiple'] is None
+    assert not any(note['code'].startswith('CENTRAL_') for note in central['recommendations'])

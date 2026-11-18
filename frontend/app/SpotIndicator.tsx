@@ -1,12 +1,12 @@
 "use client";
-export type ConsumptionExceptionality={level:string;reasons:string[];observed_days:number;positive_days:number;consumption_day_percent:number;top3_share_percent:number;top_days:{day:string;quantity:number}[];largest_quantity:number|null;largest_date:string|null;outlier_days:number};
+export type ConsumptionExceptionality={level:string;reasons:string[];observed_days:number;positive_days:number;consumption_day_percent:number;top3_share_percent:number;top_days:{day:string;quantity:number}[];largest_quantity:number|null;largest_date:string|null;outlier_days:number;outlier_share_percent?:number;high_impact_threshold_percent?:number;positive_daily_mean?:number|null;positive_daily_median?:number|null;analysis_version?:number};
 export type SpotSummary={status:string;flagged_share_percent?:number;positive_days?:number;single_consumption?:{day:string;quantity:number}|null};
 export default function SpotIndicator({analysis,exceptionality,onReview}:{analysis?:SpotSummary;exceptionality?:ConsumptionExceptionality;onReview?:()=>void}){
  if(exceptionality){
   const labels:Record<string,string>={HIGH:'Alta excepcionalidad · revisar',MEDIUM:'Consumo poco frecuente · revisar',LOW:'Sin señales de excepcionalidad',LIMITED_HISTORY:'Periodo corto · interpretación limitada',NO_CONSUMPTION:'Sin consumo positivo'};
-  const flags:Record<string,string>={CONCENTRATION:'Concentrado en pocos días',LOW_FREQUENCY:'Baja frecuencia',OUTLIERS:'Picos atípicos',FEW_ACTIVE_DAYS:'Pocos días con consumo',SHORT_PERIOD:'Menos de 30 días observados'};
+  const flags:Record<string,string>={CONCENTRATION:'Concentrado en pocos días',LOW_FREQUENCY:'Baja frecuencia',OUTLIERS:'Picos atípicos',OUTLIER_IMPACT:'Picos con impacto relevante',FEW_ACTIVE_DAYS:'Pocos días con consumo',SHORT_PERIOD:'Menos de 30 días observados'};
   const fmt=(n:number)=>n.toLocaleString('es-ES',{maximumFractionDigits:1});
-  const content=<><b>{labels[exceptionality.level]||'Excepcionalidad sin analizar'}</b><small>{exceptionality.positive_days} de {exceptionality.observed_days} días con consumo ({fmt(exceptionality.consumption_day_percent)} %).</small><small>Los {exceptionality.top_days.length} mayores días concentran {fmt(exceptionality.top3_share_percent)} % del consumo.</small>{exceptionality.reasons.length>0&&<small>{exceptionality.reasons.map(key=>flags[key]||key).join(' · ')}</small>}{onReview&&<small className="repl-spot-review">Ver análisis →</small>}</>;
+  const content=<><b>{exceptionality.level==='LOW'&&exceptionality.outlier_days>0?'Consumo recurrente · picos de bajo impacto':labels[exceptionality.level]||'Excepcionalidad sin analizar'}</b><small>{exceptionality.positive_days} de {exceptionality.observed_days} días con consumo ({fmt(exceptionality.consumption_day_percent)} %).</small><small>Los {exceptionality.top_days.length} mayores días concentran {fmt(exceptionality.top3_share_percent)} % del consumo.</small>{exceptionality.outlier_share_percent!=null&&exceptionality.outlier_days>0&&<small>Los picos señalados representan {fmt(exceptionality.outlier_share_percent)} % del consumo total.</small>}{exceptionality.reasons.length>0&&<small>{exceptionality.reasons.map(key=>flags[key]||key).join(' · ')}</small>}{onReview&&<small className="repl-spot-review">Ver análisis →</small>}</>;
   const props={className:`repl-spot-indicator ${exceptionality.level==='HIGH'?'warning':exceptionality.level==='MEDIUM'||exceptionality.level==='LIMITED_HISTORY'?'pending':'neutral'}`,'data-exceptionality-level':exceptionality.level};
   return onReview?<button type="button" {...props} onClick={onReview}>{content}</button>:<span {...props}>{content}</span>;
  }
@@ -34,7 +34,7 @@ const exceptionalityStates:Record<string,{label:string;tone:string;notice:string
  NO_CONSUMPTION:{label:'Sin consumo positivo',tone:'unknown',notice:'Sin consumo positivo.'},
  NOT_ANALYZED:{label:'Excepcionalidad sin analizar',tone:'unknown',notice:'Análisis pendiente.'}
 };
-function exceptionalityState(value?:ConsumptionExceptionality){return exceptionalityStates[value?.level||'NOT_ANALYZED']||exceptionalityStates.NOT_ANALYZED}
+function exceptionalityState(value?:ConsumptionExceptionality){if(value?.level==='LOW'&&value.outlier_days>0)return {label:'Consumo recurrente · picos de bajo impacto',tone:'low',notice:null};return exceptionalityStates[value?.level||'NOT_ANALYZED']||exceptionalityStates.NOT_ANALYZED}
 export function exceptionalityNotice(value?:ConsumptionExceptionality){return exceptionalityState(value).notice}
 export function ExceptionalityFlag({value,onReview}:{value?:ConsumptionExceptionality;onReview:()=>void}){
  const state=exceptionalityState(value);
