@@ -72,3 +72,14 @@ El detalle sustituye los valores en la fórmula del sobrante físico, explica el
 Los cálculos nuevos guardan esa evidencia por movimiento junto con el bloque, bajo la misma huella de la propuesta. Se carga únicamente al pulsar el botón: la tabla paginada mantiene sus filas pequeñas, sin históricos ni detalles completos. No se recalcula ni se consulta EXIT al abrir un detalle nuevo.
 
 Para una propuesta anterior sin evidencia persistida, se reconstruye únicamente el material solicitado a partir de las mismas instantáneas guardadas y se verifica que origen, destino, tipo y cantidad coincidan con el movimiento original. El visor lo identifica como reconstruido. Si no coincide, requiere volver a calcular la redistribución. Las comprobaciones de usuario, publicación completa y versión de las fuentes también se aplican al detalle.
+
+
+## Alerta de reposición sin cobertura de Almeiras
+
+Cada resultado muestra una marca independiente de la excepcionalidad del consumo. Rojo indica una cantidad base a reponer mayor que cero y ningún disponible para despacho en Almeiras; ámbar indica disponible positivo que no cubre la propuesta conjunta. Gris identifica disponibilidad sin confirmar, sin afirmar que el stock sea cero. Si falta la disponibilidad calculada pero el stock físico conocido de Almeiras es cero, se puede afirmar que no hay stock despachable. Las entradas pendientes no se suman al disponible físico.
+
+Para la línea de Almeiras (00), la alerta de falta de stock se basa en su propio stock físico, no en el sobrante para enviar a otras delegaciones: no se considera un traslado a sí misma. No se marcan líneas con cantidad base cero ni excluidas manualmente. Se usa la alternativa sin agrupación, el mismo criterio de la tabla; cambiar entre media, mediana y moda consulta la alternativa guardada correspondiente.
+
+La página muestra un aviso destacado, un contador de líneas a reponer sin cobertura, una marca en cada artículo y el resaltado de su propuesta. La lista de cálculos guardados incluye el número de líneas afectadas por delegación. Un selector filtra por falta de disponible, cobertura conjunta insuficiente, ambas, o datos sin confirmar. Los filtros de cobertura completa y alerta son mutuamente excluyentes en la interfaz. El Excel filtrado incorpora la alerta.
+
+La marca no modifica las cantidades, genera pedidos ni envía notificaciones. Describe los datos guardados en la fecha del cálculo, no el stock en tiempo real. Los contadores se refieren a líneas artículo/delegación según los filtros activos. Las proyecciones antiguas se leen con una consulta de campos puntuales del resultado guardado: no se reconstruyen históricos ni se consulta EXIT para mostrar la alerta.
