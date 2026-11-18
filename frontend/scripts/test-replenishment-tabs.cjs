@@ -27,6 +27,10 @@ const panel=id=>document.getElementById('repl-panel-'+id),tab=id=>document.getEl
  await React.act(async()=>tab('calculation').click());assert.equal(field.value,'11');
  await React.act(async()=>tab('calculation').dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true})));
  assert.equal(tab('redistribution').getAttribute('aria-selected'),'true');assert.equal(document.activeElement,tab('redistribution'));assert.equal(listLoads,1);
+ await React.act(async()=>tab('redistribution').dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'End',bubbles:true})));
+ assert.equal(tab('procurement').getAttribute('aria-selected'),'true');assert.equal(panel('procurement').hidden,false);assert.match(panel('procurement').textContent,/Compra sugerida/);
+ await React.act(async()=>tab('procurement').dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'Home',bubbles:true})));assert.equal(tab('calculation').getAttribute('aria-selected'),'true');assert.equal(field.value,'11');
+ await React.act(async()=>tab('redistribution').click());
  await React.act(async()=>[...panel('redistribution').querySelectorAll('button')].find(b=>b.textContent==='Ver cálculo').click());
  assert.equal(panel('calculation').hidden,false);assert.equal(panel('redistribution').hidden,true);
  await React.act(async()=>new Promise(resolve=>setTimeout(resolve,220)));
