@@ -186,9 +186,12 @@ def process_one():
         with SessionLocal() as db:
             # A RUNNING job can only be reclaimed once the previous process has released its global lock.
             job=db.scalar(select(Job).where(Job.status.in_(['QUEUED','RUNNING'])).order_by(Job.id).with_for_update().limit(1))
-            if job is None:return False
-            token=str(uuid.uuid4());job.status='RUNNING';job.worker_token=token
-            job.started_at=job.started_at or now();job.phase='Iniciando cálculo por bloques';job_id=job.id;db.commit()
+            if job is not None:
+                token=str(uuid.uuid4());job.status='RUNNING';job.worker_token=token
+                job.started_at=job.started_at or now();job.phase='Iniciando cálculo por bloques';job_id=job.id;db.commit()
+        if job is None:
+            from .redistribution_jobs import process_one_unlocked
+            return process_one_unlocked()
         process_job(job_id,token)
         return True
 

@@ -798,3 +798,37 @@ class IncidentEmail(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     __table_args__ = (UniqueConstraint('incident_id','assignment_version','recipient_id'),)
+
+
+class RedistributionJob(Base, TimestampMixin):
+    __tablename__ = 'redistribution_jobs'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    public_id: Mapped[str] = mapped_column(String(36), unique=True, default=public_uuid)
+    created_by: Mapped[int] = mapped_column(ForeignKey('users.id'), index=True)
+    status: Mapped[str] = mapped_column(String(16), default='QUEUED', index=True)
+    phase: Mapped[str] = mapped_column(String(200), default='Esperando turno de redistribución')
+    request: Mapped[dict] = mapped_column(JSON)
+    snapshot: Mapped[list] = mapped_column(JSON)
+    initialized: Mapped[bool] = mapped_column(Boolean, default=False)
+    total_articles: Mapped[int] = mapped_column(Integer, default=0)
+    processed_articles: Mapped[int] = mapped_column(Integer, default=0)
+    total_batches: Mapped[int] = mapped_column(Integer, default=0)
+    completed_batches: Mapped[int] = mapped_column(Integer, default=0)
+    summary: Mapped[dict] = mapped_column(JSON, default=dict)
+    result_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    worker_token: Mapped[str | None] = mapped_column(String(36))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(Text)
+
+
+class RedistributionBatch(Base):
+    __tablename__ = 'redistribution_batches'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey('redistribution_jobs.id'), index=True)
+    number: Mapped[int] = mapped_column(Integer)
+    codes: Mapped[list] = mapped_column(JSON)
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    fingerprint: Mapped[str | None] = mapped_column(String(64))
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    __table_args__ = (UniqueConstraint('job_id', 'number'),)
