@@ -62,3 +62,13 @@ La propuesta no se publica hasta completar todos los bloques. Cada bloque y la p
 Los movimientos se sirven en páginas de hasta 100 filas. Las alertas y necesidades pendientes muestran una vista de los primeros 100 registros; el Excel contiene todos los registros de la selección original. La búsqueda de movimientos pagina el resultado almacenado y no limita el Excel. Exportar recorre los resultados guardados por bloques y no vuelve a ejecutar el motor. Una propuesta cuyo origen cambió no se exporta. Se conservan las dos últimas propuestas terminadas correctamente por operador para limitar almacenamiento.
 
 Las tablas `redistribution_jobs` y `redistribution_batches` se crean mediante el arranque habitual e idempotente de la aplicación. No requieren un trabajador adicional: se usa el contenedor existente `replenishment-worker`, con su bloqueo de exclusión. Los clientes antiguos reciben un aviso para usar la cola si intentan calcular o regenerar una exportación síncrona de más de 1.000 materiales. Los errores no JSON se muestran como un mensaje de servidor legible.
+
+## Detalle por movimiento
+
+Cada fila de la propuesta de redistribución ofrece **Ver cálculo**, incluidas las devoluciones a Almeiras. El visor muestra las existencias, entradas, compromisos, consumo del criterio, desviación, plazos, seguridad, mínimo, punto, máximo, objetivo elegido, necesidad y múltiplos utilizados en origen y destino; también muestra la fecha y versión de los cálculos de origen. Los ajustes manuales conservados se identifican expresamente.
+
+El detalle sustituye los valores en la fórmula del sobrante físico, explica el redondeo y registra el sobrante/necesidad antes y después de la asignación. En devoluciones, muestra lo ya asignado y el orden anterior de propuestas. Si quedan necesidades incompatibles con el múltiplo común, incluye sus cantidades y el máximo que podría asignarse respetando ese formato. No aplica un objetivo de reposición de Almeiras a las devoluciones de sobrante.
+
+Los cálculos nuevos guardan esa evidencia por movimiento junto con el bloque, bajo la misma huella de la propuesta. Se carga únicamente al pulsar el botón: la tabla paginada mantiene sus filas pequeñas, sin históricos ni detalles completos. No se recalcula ni se consulta EXIT al abrir un detalle nuevo.
+
+Para una propuesta anterior sin evidencia persistida, se reconstruye únicamente el material solicitado a partir de las mismas instantáneas guardadas y se verifica que origen, destino, tipo y cantidad coincidan con el movimiento original. El visor lo identifica como reconstruido. Si no coincide, requiere volver a calcular la redistribución. Las comprobaciones de usuario, publicación completa y versión de las fuentes también se aplican al detalle.

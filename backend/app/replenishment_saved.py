@@ -111,7 +111,7 @@ def redistribution(rows):
         fields=('stock','incoming','outgoing','maximum_stock','inventory_position','final_quantity')
         if any(number(r.get(key)) is None or (key in ('stock','incoming','outgoing','maximum_stock','final_quantity') and number(r[key])<0) for r in group for key in fields):
             warnings.append({'sku':sku,'reason':'Stock, pendientes u objetivos ausentes o negativos; revisar antes de mover.'});continue
-        donors=[];needs=[]
+        donors=[];needs=[];material_moves=[]
         for row in group:
             # Leave the maximum stock physically in the donor, plus commitments;
             # incoming orders are deliberately excluded from dispatchable surplus.
@@ -122,23 +122,44 @@ def redistribution(rows):
             available=floor_step(available,step)
             need=max(Decimal(0),number(row['final_quantity']))
             if available>0:donors.append({'row':row,'left':available,'initial':available})
-            elif need>0:needs.append({'row':row,'left':need})
+            elif need>0:needs.append({'row':row,'left':need,'initial':need})
         # Stockouts first, then lowest coverage, then delegation code for reproducibility.
         needs.sort(key=lambda n:(number(n['row']['inventory_position'])>0,
             number(n['row']['inventory_position'])/number(n['row']['daily_mean']) if number(n['row'].get('daily_mean')) and number(n['row']['daily_mean'])>0 else Decimal('Infinity'),n['row']['delegation']))
         donors.sort(key=lambda d:(-d['left'],d['row']['delegation']))
-        def movement(d,destination,quantity,kind):
-            row=d['row'];d['left']-=quantity
-            moves.append({'sku':sku,'description':row['description'],'unit_type':row.get('unit_type',''),
+        def evidence(row):
+            keys=('delegation','stock','incoming','outgoing','maximum_stock','inventory_position','final_quantity',
+                'daily_mean','daily_reference','monthly_mean','daily_std','safety_stock','minimum_stock','replenishment_point',
+                'target_stock','effective_multiple','exit_multiple','adjusted_quantity','quantity_without_multiple',
+                'parameters','calculation','manual_parameters','manually_excluded','source','consumption_basis')
+            return {key:row.get(key) for key in keys}
+        def movement(d,destination,quantity,kind,need=None,step=None):
+            row=d['row'];before=d['left'];d['left']-=quantity
+            trace={'version':1,'origin':evidence(row),'destination':evidence(need['row']) if need else None,
+                'raw_surplus':float(max(Decimal(0),number(row['stock'])-number(row['outgoing'])-number(row['maximum_stock']))),
+                'initial_surplus':float(d['initial']),'origin_before':float(before),'origin_after':float(d['left']),
+                'already_allocated':float(d['initial']-before),'dispatch_step':float(step or common_step(row)),
+                'destination_initial_need':float(need['initial']) if need else None,
+                'destination_before':float(need['left']) if need else None,
+                'destination_after':float(need['left']-quantity) if need else None,
+                'quantity_before_rounding':float(min(before,need['left'])) if need else float(before),
+                'sequence':len(material_moves)+1,'prior_movements':list(material_moves),
+                'remaining_needs':([{'delegation':n['row']['delegation'],'quantity':float(n['left']),
+                    'dispatch_step':float(common_step(row,n['row'])),
+                    'assignable':float(floor_step(min(before,n['left']),common_step(row,n['row'])))} for n in needs if n['left']>0] if kind=='RETURN_CENTRAL' else [])}
+            move={'sku':sku,'description':row['description'],'unit_type':row.get('unit_type',''),
                 'from_delegation':row['delegation'],'to_delegation':destination,'quantity':float(quantity),
-                'kind':kind,'origin_maximum_stock':row['maximum_stock'],'origin_transferable_surplus':float(d['initial'])})
+                'kind':kind,'origin_maximum_stock':row['maximum_stock'],'origin_transferable_surplus':float(d['initial']),
+                'calculation_detail':trace}
+            moves.append(move)
+            material_moves.append({key:move[key] for key in ('from_delegation','to_delegation','quantity','kind')})
         for need in needs:
             for donor in donors:
                 if need['left']<=0:break
                 step=common_step(donor['row'],need['row'])
                 qty=floor_step(min(donor['left'],need['left']),step)
                 if qty>0:
-                    movement(donor,need['row']['delegation'],qty,'TRANSFER');need['left']-=qty
+                    movement(donor,need['row']['delegation'],qty,'TRANSFER',need,step);need['left']-=qty
         for donor in donors:
             if donor['left']>0:movement(donor,'00',donor['left'],'RETURN_CENTRAL')
         for need in needs:
@@ -171,10 +192,13 @@ def rebased_planning_rows(db,scenario,delegation,basis,codes=None):
             old=stored.payload
             if stored.sku not in articles:raise HTTPException(409,'Falta un material en la instantánea. Recalcula la delegación.')
             row=calculate_article(articles[stored.sku],delegation,context,{**old.get('manual_parameters',{}),'consumption_basis':basis})
-            if old.get('adjusted_quantity') is not None:row['final_quantity']=old['adjusted_quantity']
-            if old.get('manually_excluded'):row['final_quantity']=0
-            output.append({key:row.get(key) for key in ('sku','delegation','description','unit_type','stock','incoming','outgoing','maximum_stock','inventory_position','final_quantity','effective_multiple','statistic_available')}|
-                          {'daily_mean':row['daily_reference']})
+            if old.get('adjusted_quantity') is not None:row['final_quantity']=old['adjusted_quantity'];row['adjusted_quantity']=old['adjusted_quantity']
+            if old.get('manually_excluded'):row['final_quantity']=0;row['manually_excluded']=True
+            row['manual_parameters']=old.get('manual_parameters',{})
+            output.append({key:row.get(key) for key in ('sku','delegation','description','unit_type','stock','incoming','outgoing','maximum_stock',
+                'inventory_position','final_quantity','effective_multiple','statistic_available','daily_reference','monthly_mean','daily_std',
+                'safety_stock','minimum_stock','replenishment_point','target_stock','exit_multiple','adjusted_quantity','quantity_without_multiple',
+                'parameters','calculation','manual_parameters','manually_excluded')}|{'daily_mean':row['daily_reference']})
     return output
 
 
@@ -195,6 +219,11 @@ def calculate_redistribution(db,consumption_basis='MEAN',codes=None):
         columns += [payload[key].as_string().label(key) for key in ('description','unit_type')]
         columns += [payload[key].as_float().label(key) for key in ('stock','incoming','outgoing','maximum_stock','inventory_position','final_quantity','daily_mean','effective_multiple')]
         columns += [payload['statistic_available'].as_boolean().label('statistic_available')]
+        columns += [payload[key].as_float().label(key) for key in ('daily_reference','monthly_mean','daily_std','safety_stock','minimum_stock',
+            'replenishment_point','target_stock','exit_multiple','adjusted_quantity','quantity_without_multiple')]
+        columns += [payload[key].label(key) for key in ('parameters','calculation','manual_parameters')]
+        columns += [payload['manually_excluded'].as_boolean().label('manually_excluded')]
+        first_row=len(rows)
         if consumption_basis in scenario.source_snapshot.get('consumption_bases',[]) and len(scenario.source_snapshot.get('consumption_bases',[]))>1:
             columns=[column for column in columns if getattr(column,'name',None)!='daily_mean']+[payload['daily_reference'].as_float().label('daily_mean')]
             query=select(*columns).where(Result.scenario_id==scenario.id,Result.delegation==code)
@@ -206,6 +235,10 @@ def calculate_redistribution(db,consumption_basis='MEAN',codes=None):
             query=select(*columns).where(Result.scenario_id==scenario.id,Result.delegation==code)
             if codes is not None:query=query.where(Result.sku.in_(codes))
             rows.extend(dict(row) for row in db.execute(query).mappings())
+        for row in rows[first_row:]:
+            row['consumption_basis']=consumption_basis
+            row['source']={'scenario_id':scenario.public_id,'version':scenario.version,'fingerprint':scenario.source_fingerprint,
+                'captured_at':scenario.source_snapshot['captured_at'],'date_from':scenario.filters['date_from'],'date_to':scenario.filters['date_to']}
         ranges.add((scenario.filters['date_from'],scenario.filters['date_to']))
         calculations.append({'delegation':code,'name':DELEGATIONS[code],'scenario_id':scenario.public_id,
             'captured_at':scenario.source_snapshot['captured_at'],'date_from':scenario.filters['date_from'],'date_to':scenario.filters['date_to']})

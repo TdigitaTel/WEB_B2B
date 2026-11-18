@@ -1,0 +1,25 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),ts=require('typescript');
+const {JSDOM}=require('jsdom'),dom=new JSDOM('<button id="opener">Ver cálculo</button><div id="root"></div>',{url:'https://example.test',pretendToBeVisual:true});
+for(const key of ['window','document','HTMLElement','Event'])global[key]=dom.window[key];global.IS_REACT_ACT_ENVIRONMENT=true;
+dom.window.HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','')};dom.window.HTMLDialogElement.prototype.close=function(){this.removeAttribute('open')};
+for(const ext of ['.ts','.tsx'])require.extensions[ext]=(m,f)=>m._compile(ts.transpileModule(fs.readFileSync(f,'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2021,jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS,esModuleInterop:true}}).outputText,f);
+const React=require('react'),{createRoot}=require('react-dom/client'),View=require('../app/RedistributionCalculation.tsx').default;
+const source={version:2,captured_at:'2026-11-18T10:00:00Z',date_from:'2025-11-18',date_to:'2026-11-18'};
+const origin={delegation:'01',stock:40,incoming:100,outgoing:5,maximum_stock:10,inventory_position:135,final_quantity:0,effective_multiple:null,daily_reference:1,monthly_mean:30,daily_std:2,safety_stock:3,minimum_stock:4,replenishment_point:8,target_stock:10,source,parameters:{lead_days:1,review_days:4,maximum_days:6,use_safety_stock:true,service_level:95,multiple_mode:'NONE'},calculation:{z:1.645,formula:'Stock máximo = stock mínimo + consumo diario × días de cobertura máxima'},manual_parameters:{lead_days:1}};
+const move={detail_id:'1-0',sku:'03283',description:'Material de prueba',unit_type:'UD',from_delegation:'01',to_delegation:'02',quantity:8,kind:'TRANSFER'};
+const trace={version:1,origin,destination:{...origin,delegation:'02',stock:0,incoming:2,outgoing:1,inventory_position:1,final_quantity:8},raw_surplus:25,initial_surplus:25,origin_before:25,origin_after:17,already_allocated:0,dispatch_step:1,destination_initial_need:8,destination_before:8,destination_after:0,quantity_before_rounding:8,sequence:1,prior_movements:[],remaining_needs:[]};
+let requests=[],closed=0,rawError=false,mismatch=false;
+global.fetch=async url=>{requests.push(url);return {ok:!rawError,status:rawError?500:200,text:async()=>rawError?'Internal Server Error':JSON.stringify({movement:move,detail:url.endsWith('1-1')?{...trace,destination:null,origin_before:13,origin_after:0,already_allocated:12,sequence:3,remaining_needs:[{delegation:'02',quantity:16,dispatch_step:20,assignable:0}],prior_movements:[{from_delegation:'01',to_delegation:'02',quantity:8}]}:trace,consumption_basis_label:'Mediana',fingerprint:mismatch?'changed':'saved',reconstructed:url.endsWith('1-1')})}};
+const root=createRoot(document.getElementById('root'));const render=m=>root.render(React.createElement(View,{jobId:'job',move:m,fingerprint:'saved',onClose:()=>closed++}));
+(async()=>{
+ document.getElementById('opener').focus();await React.act(async()=>render(move));
+ assert.ok(document.querySelector('dialog[open]'));assert.match(document.body.textContent,/Cómo se obtienen 8 UD/);assert.match(document.body.textContent,/Mediana/);
+ assert.match(document.body.textContent,/40 − 5 − 10/);assert.match(document.body.textContent,/mínimo\(sobrante 25, necesidad 8\)/);assert.match(document.body.textContent,/Plazo de llegada: 1/);assert.doesNotMatch(document.body.textContent,/lead_days/);
+ assert.ok(requests[0].endsWith('/jobs/job/movements/1-0'));assert.ok(!requests.some(url=>url.includes('/result?')));
+ await React.act(async()=>render({...move,detail_id:'1-1',to_delegation:'00',kind:'RETURN_CENTRAL',quantity:13}));
+ assert.match(document.body.textContent,/Devolución del sobrante/);assert.match(document.body.textContent,/Sobrante inicial 25 − asignaciones previas 12/);assert.match(document.body.textContent,/sin consultar EXIT/);assert.match(document.body.textContent,/Múltiplo común/);
+ await React.act(async()=>document.querySelector('dialog').dispatchEvent(new Event('cancel',{bubbles:true,cancelable:true})));assert.equal(closed,1);
+ rawError=true;await React.act(async()=>render({...move,detail_id:'1-2'}));assert.match(document.querySelector('[role=alert]').textContent,/500/);assert.doesNotMatch(document.body.textContent,/Unexpected token/);
+ rawError=false;mismatch=true;await React.act(async()=>render({...move,detail_id:'1-3'}));assert.match(document.querySelector('[role=alert]').textContent,/propuesta ha cambiado/);
+ await React.act(async()=>root.unmount());assert.equal(document.activeElement,document.getElementById('opener'));dom.window.close();console.log('Movement calculation: lazy saved variables, substitutions, manual labels, returns, packing constraints, errors and focus restoration passed');
+})().catch(error=>{console.error(error);process.exitCode=1;dom.window.close()});
