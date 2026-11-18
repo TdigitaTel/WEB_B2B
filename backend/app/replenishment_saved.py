@@ -148,19 +148,22 @@ def redistribution(rows):
                    'returns_to_central':sum(m['kind']=='RETURN_CENTRAL' for m in moves),'unmet_needs':len(unmet),'excluded_materials':len(warnings)}}
 
 
-def rebased_planning_rows(db,scenario,delegation,basis):
+def rebased_planning_rows(db,scenario,delegation,basis,codes=None):
     """Recalculate from immutable saved sources, not live EXIT. Bound memory per source batch."""
     from .replenishment_engine import prepare_context,calculate_article
-    batch_numbers=list(db.scalars(select(Result.payload['source_batch'].as_integer()).where(
-        Result.scenario_id==scenario.id,Result.delegation==delegation).distinct()))
+    batches=select(Result.payload['source_batch'].as_integer()).where(Result.scenario_id==scenario.id,Result.delegation==delegation)
+    if codes is not None:batches=batches.where(Result.sku.in_(codes))
+    batch_numbers=list(db.scalars(batches.distinct()))
     output=[]
     for number in batch_numbers:
         query=select(Result).where(Result.scenario_id==scenario.id,Result.delegation==delegation)
+        if codes is not None:query=query.where(Result.sku.in_(codes))
         if number is None:query=query.where(Result.payload['source_batch'].as_integer().is_(None))
         else:query=query.where(Result.payload['source_batch'].as_integer()==number)
         source=(db.scalar(select(Batch.source).join(Job,Job.id==Batch.job_id).where(Job.scenario_id==scenario.id,Batch.number==number))
                 if scenario.source_snapshot.get('batched') else scenario.source_snapshot)
         if not source:raise HTTPException(409,'Falta la instantánea del histórico. Recalcula la delegación antes de usar otro criterio.')
+        if len(source['articles'])>1000:raise HTTPException(409,'El cálculo antiguo no guarda este criterio por bloques. Recalcula esa delegación con media, mediana y moda antes de redistribuir.')
         articles={article['sku']:article for article in source['articles']}
         params={**scenario.temporary_parameters,'consumption_basis':basis}
         context=prepare_context(source,[delegation],scenario.policies_snapshot,params)
@@ -175,7 +178,7 @@ def rebased_planning_rows(db,scenario,delegation,basis):
     return output
 
 
-def calculate_redistribution(db,consumption_basis='MEAN'):
+def calculate_redistribution(db,consumption_basis='MEAN',codes=None):
     current={code:row for code,row in current_calculations(db).items() if code in DELEGATIONS}
     missing=[{'code':d,'name':name} for d,name in DELEGATIONS.items() if d not in current]
     if missing:raise HTTPException(409,{'message':'Faltan cálculos guardados. Calcula todas las delegaciones antes de redistribuir.','missing_delegations':missing})
@@ -194,11 +197,15 @@ def calculate_redistribution(db,consumption_basis='MEAN'):
         columns += [payload['statistic_available'].as_boolean().label('statistic_available')]
         if consumption_basis in scenario.source_snapshot.get('consumption_bases',[]) and len(scenario.source_snapshot.get('consumption_bases',[]))>1:
             columns=[column for column in columns if getattr(column,'name',None)!='daily_mean']+[payload['daily_reference'].as_float().label('daily_mean')]
-            rows.extend(dict(row) for row in db.execute(select(*columns).where(Result.scenario_id==scenario.id,Result.delegation==code)).mappings())
+            query=select(*columns).where(Result.scenario_id==scenario.id,Result.delegation==code)
+            if codes is not None:query=query.where(Result.sku.in_(codes))
+            rows.extend(dict(row) for row in db.execute(query).mappings())
         elif consumption_basis!='MEAN' or scenario.temporary_parameters.get('consumption_basis','MEAN')!='MEAN':
-            rows.extend(rebased_planning_rows(db,scenario,code,consumption_basis))
+            rows.extend(rebased_planning_rows(db,scenario,code,consumption_basis,codes))
         else:
-            rows.extend(dict(row) for row in db.execute(select(*columns).where(Result.scenario_id==scenario.id,Result.delegation==code)).mappings())
+            query=select(*columns).where(Result.scenario_id==scenario.id,Result.delegation==code)
+            if codes is not None:query=query.where(Result.sku.in_(codes))
+            rows.extend(dict(row) for row in db.execute(query).mappings())
         ranges.add((scenario.filters['date_from'],scenario.filters['date_to']))
         calculations.append({'delegation':code,'name':DELEGATIONS[code],'scenario_id':scenario.public_id,
             'captured_at':scenario.source_snapshot['captured_at'],'date_from':scenario.filters['date_from'],'date_to':scenario.filters['date_to']})
