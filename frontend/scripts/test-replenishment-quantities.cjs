@@ -12,7 +12,7 @@ const row={id:1,sku:'VALID',description:'Material',delegation:'02',unit_type:'UD
 global.fetch=async(url,options={})=>{let body;
  if(url.endsWith('/options'))body={article_limit:1000,server_date:'2026-04-30',delegations:[],areas:[],families:[],subfamilies:[],types:[]};
  else if(url.endsWith('/jobs/current'))body={job:null,latest_result:calculation};
- else if(url.includes('/results?'))body={items:[row,{...row,id:2,sku:'INVALID',spot_analysis:undefined,exceptionality:undefined,quantity_with_exit_multiple:null,exit_multiple:null,central_covers_with_exit_multiple:null}],total:2,summary:{articles_analyzed:2}};
+ else if(url.includes('/results?'))body={items:[row,{...row,id:2,sku:'INVALID',spot_analysis:undefined,exceptionality:undefined,quantity_with_exit_multiple:null,exit_multiple:null,central_covers_with_exit_multiple:null},{...row,id:3,sku:'CENTRAL-ZERO',delegation:'00',central_available:0},{...row,id:4,sku:'CENTRAL-POSITIVE',delegation:'00',central_available:80},{...row,id:5,sku:'CENTRAL-UNKNOWN',delegation:'00',central_available:null},{...row,id:6,sku:'CENTRAL-FRACTION',delegation:'00',central_available:.5}],total:6,summary:{articles_analyzed:2}};
  else if(url.endsWith('/jobs')&&options.method==='POST'){posted=JSON.parse(options.body);body={id:'job',status:'FAILED',phase:'',filters:posted.filters,temporary_parameters:posted.temporary_parameters};}
  else throw Error('Unexpected '+url);
  return {ok:true,status:200,text:async()=>JSON.stringify(body)};
@@ -40,6 +40,9 @@ const root=createRoot(document.getElementById('root'));
  assert.match(document.querySelector('[aria-label="Leyenda de excepcionalidad"]').textContent,/Alta.*Revisar recurrencia.*Sin señales.*Sin análisis/);
  assert.equal(proposals[1].querySelectorAll('td')[7].querySelector('button').dataset.exceptionalityLevel,'NOT_ANALYZED');
  assert.match(document.body.textContent,/formato de despacho anterior/);
+ const central=[...document.querySelectorAll('.repl-results tbody tr')].slice(2).map(row=>row.querySelector('.repl-central-button').textContent);
+ assert.match(central[0],/^0Sin disponible para despacho$/);assert.doesNotMatch(central[0],/Para otras delegaciones/);
+ assert.match(central[1],/^80Para otras delegaciones$/);assert.match(central[2],/Disponibilidad sin confirmar/);assert.match(central[3],/Menos de 1 unidad disponible/);
  const run=[...document.querySelectorAll('button')].find(b=>/Calcular reposición/.test(b.textContent));
  await React.act(async()=>run.click());
  assert.equal(posted.temporary_parameters.multiple_mode,'NONE','Legacy restored dispatch selector must not silently alter new runs');
