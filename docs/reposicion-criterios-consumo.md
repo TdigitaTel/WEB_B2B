@@ -29,7 +29,7 @@ El estado del análisis spot se muestra siempre junto al consumo medio mensual d
 
 ## Indicador de excepcionalidad por material/delegación
 
-El indicador identifica rareza con uno, dos o más días de consumo. Usa frecuencia (días positivos / días observados), concentración (porcentaje del consumo neto en los 3 mayores días) y picos atípicos. Con periodos de al menos 30 días, marca alta excepcionalidad si la concentración alcanza el 80 % o hay picos; marca consumo poco frecuente si hay consumo en el 10 % de días o menos o menos de 8 días positivos. Con menos de 30 días observados se señala interpretación limitada. Sin consumo se indica expresamente; ausencia de señales no garantiza recurrencia.
+El indicador identifica rareza con uno, dos o más días de consumo. Usa frecuencia (días positivos / días observados), concentración (porcentaje del consumo neto en los 3 mayores días) y picos atípicos. Con periodos de al menos 30 días, marca alta excepcionalidad si la concentración alcanza el 80 % o los días con picos acumulan al menos el 25 % del consumo neto total; marca consumo poco frecuente si hay consumo en el 10 % de días o menos o menos de 8 días positivos. Con menos de 30 días observados se señala interpretación limitada. Sin consumo se indica expresamente; ausencia de señales no garantiza recurrencia.
 
 Estos umbrales son reglas orientativas de gestión, no una probabilidad estadística ni confirmación de una compra spot. La concentración permite identificar un material consumido solo una o dos veces aunque no haya muestra suficiente para el método de cuartiles. Un día puede agrupar varios pedidos. El indicador conserva la media, la seguridad y las cantidades calculadas: no excluye ni bloquea automáticamente por el mero número de días.
 
@@ -38,3 +38,14 @@ La columna «Excepcionalidad» aparece junto al consumo promedio. Excel simplifi
 ## Carga de resultados sin actualización periódica
 
 Reposición carga el último cálculo una vez al entrar. Solo consulta periódicamente el progreso de un trabajo en cola o en ejecución. Al terminar o fallar, esa consulta se detiene: los resultados cargados no se sustituyen al volver a la ventana, recuperar la conexión o pasar el tiempo. Cambiar filtros, paginar, abrir un cálculo guardado o ejecutar uno nuevo son acciones explícitas que cargan los datos necesarios. La lista de cálculos guardados conserva su botón de actualización manual.
+
+
+### Consumo propio de Almeiras
+
+El selector de delegación permite calcular Almeiras (00) o las cinco delegaciones, completando una antes de pasar a la siguiente. Se mantienen las tres bases (media, mediana y moda), stock físico, pendientes, histórico y exportación Excel. El cálculo de Almeiras se guarda y se sustituye independientemente del de cada delegación. Las cuatro delegaciones siguen siendo las necesarias para calcular redistribución; Almeiras conserva su papel de central receptora de excedentes. Su necesidad propia no se cuenta como un traslado desde sí misma ni consume dos veces el stock disponible.
+
+### Impacto de picos y excepcionalidad
+
+Detectar una cantidad diaria atípica no basta para elevar toda la referencia a alta excepcionalidad. Se conserva la detección con mediana y cuartiles, pero la bandera alta por picos exige que estos sumen al menos el 25 % del consumo neto del periodo. La regla de concentración del 80 % en los tres mayores días se mantiene. Los umbrales son reglas orientativas de revisión de esta herramienta; no demuestran una compra spot. Cuando hay consumo recurrente y los picos tienen poco peso, se indica «Consumo recurrente · picos de bajo impacto» y se conserva el detalle de esos días.
+
+Se muestra la media de los días con consumo junto con la mediana calculada sobre esos mismos días. La media de referencia para reponer sigue incluyendo ceros y la normalización mensual, por lo que no se compara directamente con la mediana de días positivos. Esta revisión cambia el indicador, no elimina cantidades ni cambia el cálculo de las propuestas. El detalle utiliza el histórico guardado; para actualizar las banderas almacenadas del listado y su exportación hay que generar un cálculo nuevo.

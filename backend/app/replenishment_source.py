@@ -4,6 +4,7 @@ from decimal import Decimal
 from .erp_db import connect_sqlserver, _insert_article_filter_codes
 
 DELEGATIONS = {'01':'San Diego / A Coruña','02':'Ferrol','04':'Santiago','05':'Sanxenxo'}
+CALCULATION_DELEGATIONS = {'00':'Almeiras',**DELEGATIONS}
 MAX_ARTICLES = 20000
 HARD_MAX_ARTICLES = 100000
 
