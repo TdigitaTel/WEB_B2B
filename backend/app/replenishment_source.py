@@ -50,7 +50,7 @@ def list_replenishment_codes(skus: list[str] | None, max_articles: int, excluded
         exclusion=category_exclusion(cursor,excluded_codes)
         batches=[None] if skus is None else [skus[i:i+1000] for i in range(0,len(skus),1000)]
         for batch in batches:
-            where='inactivo=0'+exclusion;params=()
+            where='CodigoEmpresa=1 AND inactivo=0'+exclusion;params=()
             if batch is not None:
                 where+=' AND codigoarticulo IN ('+','.join(['%s']*len(batch))+')';params=tuple(batch)
             cursor.execute(f'SELECT TOP {max_articles+1} codigoarticulo FROM dbo.articulos WHERE {where} ORDER BY codigoarticulo',params)
@@ -77,7 +77,7 @@ def read_replenishment_source(start: date, end: date, skus: list[str] | None = N
         exclusion=category_exclusion(cursor,excluded_codes)
         batches=[None] if skus is None else [skus[i:i+1000] for i in range(0,len(skus),1000)]
         for batch in batches:
-            where='inactivo=0'+exclusion
+            where='CodigoEmpresa=1 AND inactivo=0'+exclusion
             params=[]
             if batch is not None:
                 where+=' AND codigoarticulo IN ('+','.join(['%s']*len(batch))+')';params.extend(batch)
@@ -122,3 +122,25 @@ def read_replenishment_source(start: date, end: date, skus: list[str] | None = N
         raise ValueError('La vista de stock devuelve más de una fila por artículo/delegación. No se sumará stock consolidado duplicado')
     return {'captured_at':datetime.now(timezone.utc).isoformat(),'extraction_started_at':captured,'article_limit':max_articles,'sales_delegations':['00','01','02','04','05'],'company':1,'start':start.isoformat(),'end':end.isoformat(),
             'articles':articles,'sales':sales,'stocks':stocks}
+
+
+def read_procurement_terms(codes):
+    """Purchase planning metadata from company 1; unmatched brands never hide an article."""
+    if not codes:return {}
+    output={}
+    with connect_sqlserver() as connection, connection.cursor() as cursor:
+        for offset in range(0,len(codes),1000):
+            batch=codes[offset:offset+1000];marks=','.join(['%s']*len(batch))
+            cursor.execute(f'''SELECT a.CodigoArticulo AS sku, a.Aprovisionamiento AS coverage_days,
+                a.DiasReposicion AS lead_days, a.CodigoMarca AS brand_code, m.DescripcionMarca AS brand_name
+                FROM dbo.articulos a LEFT JOIN dbo.Marcas m ON a.CodigoMarca=m.CodigoMarca AND a.CodigoEmpresa=m.CodigoEmpresa
+                WHERE a.CodigoEmpresa=1 AND a.CodigoArticulo IN ({marks})''',tuple(batch))
+            for row in cursor.fetchall():
+                sku=str(row['sku']).strip()
+                if sku in output:raise ValueError('EXIT devuelve artículos o marcas duplicados en la empresa 1; revisa el maestro antes de calcular.')
+                output[sku]={'procurement_coverage_days':dispatch_multiple(row['coverage_days']),
+                    'procurement_lead_days':dispatch_multiple(row['lead_days']),
+                    'brand_code':str(row['brand_code']).strip() if row['brand_code'] is not None else '',
+                    'brand_name':str(row['brand_name'] or '').strip()}
+    if set(output)!=set(codes):raise ValueError('Faltan datos de aprovisionamiento de algún material en la empresa 1.')
+    return output

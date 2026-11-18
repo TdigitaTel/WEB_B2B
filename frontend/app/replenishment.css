@@ -56,3 +56,12 @@
 .repl-clean-results .repl-central-button small{font-size:10px;margin-top:2px;white-space:normal}
 .repl-clean-results .repl-notes-button{padding:5px;font-size:11px}
 .repl-clean-results .repl-consumption-analysis button{padding:5px;min-width:28px;min-height:28px}
+
+.repl-purchase-results table{table-layout:fixed;min-width:1080px;font-size:12px}
+.repl-purchase-results td,.repl-purchase-results th{padding:7px 5px;white-space:normal;overflow-wrap:anywhere}
+.repl-purchase-results td:first-child,.repl-purchase-results th:first-child{width:20%;min-width:0}
+.repl-purchase-results td:last-child{min-width:0}
+.repl-purchase-results td:first-child span{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.3}
+.repl-purchase-results small{font-size:10px}
+
+.repl-clean-results .repl-review-value{font-size:11px}
