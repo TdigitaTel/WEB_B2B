@@ -567,14 +567,17 @@ def saved_calculations(db:Session=Depends(get_db)):
     data=calculation_list(db);db.commit();return data
 
 
-class RedistributionInput(BaseModel):
-    consumption_basis:ConsumptionBasis='MEAN'
+from .redistribution_jobs import Request as RedistributionInput
 
 
 @router.post('/redistribution')
 def calculate_saved_redistribution(body:RedistributionInput|None=None,db:Session=Depends(get_db),user:User=Depends(operator)):
     from .replenishment_saved import calculate_redistribution
-    data=calculate_redistribution(db,body.consumption_basis if body else 'MEAN')
+    from .redistribution_jobs import snapshot, selected_codes
+    request=body or RedistributionInput()
+    codes=selected_codes(db,snapshot(db),request.filters)
+    if len(codes)>1000:raise HTTPException(422,'Para más de 1.000 materiales usa el cálculo de redistribución por bloques.')
+    data=calculate_redistribution(db,request.consumption_basis,codes)
     audit(db,user,'REPLENISHMENT_REDISTRIBUTION_PROPOSED','CURRENT',{'summary':data['summary'],'calculations':data['calculations']})
     db.commit();return data
 
@@ -587,7 +590,10 @@ class RedistributionExportInput(RedistributionInput):
 def export_redistribution(body:RedistributionExportInput,db:Session=Depends(get_db),user:User=Depends(operator)):
     from .replenishment_saved import calculate_redistribution
     from .replenishment_redistribution_export import workbook_bytes
-    proposal=calculate_redistribution(db,body.consumption_basis)
+    from .redistribution_jobs import snapshot, selected_codes
+    codes=selected_codes(db,snapshot(db),body.filters)
+    if len(codes)>1000:raise HTTPException(422,'Exporta la propuesta guardada del cálculo por bloques; no es necesario recalcularla.')
+    proposal=calculate_redistribution(db,body.consumption_basis,codes)
     if proposal['fingerprint']!=body.fingerprint:
         raise HTTPException(409,'Los cálculos han cambiado desde que se generó la propuesta. Vuelve a calcular la redistribución antes de exportarla.')
     data=workbook_bytes(proposal)
@@ -595,3 +601,46 @@ def export_redistribution(body:RedistributionExportInput,db:Session=Depends(get_
     db.commit()
     return Response(data,media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         headers={'Content-Disposition':'attachment; filename="redistribucion.xlsx"'})
+
+
+@router.post('/redistribution/jobs',status_code=202)
+def enqueue_redistribution(body:RedistributionInput,db:Session=Depends(get_db),user:User=Depends(operator)):
+    from .redistribution_jobs import enqueue, public
+    job=enqueue(db,user,body)
+    audit(db,user,'REDISTRIBUTION_QUEUED',job.public_id,{'filters':job.request,'materials':job.total_articles,'batch_size':1000})
+    db.commit();return public(job)
+
+
+@router.get('/redistribution/jobs/current')
+def current_redistribution(db:Session=Depends(get_db),user:User=Depends(operator)):
+    from .models import RedistributionJob
+    from .redistribution_jobs import public
+    job=db.scalar(select(RedistributionJob).where(RedistributionJob.created_by==user.id).order_by(RedistributionJob.id.desc()).limit(1))
+    return {'job':public(job) if job else None}
+
+
+@router.get('/redistribution/jobs/{job_id}')
+def redistribution_status(job_id:str,db:Session=Depends(get_db),user:User=Depends(operator)):
+    from .redistribution_jobs import get_job, public
+    return public(get_job(db,job_id,user))
+
+
+@router.get('/redistribution/jobs/{job_id}/result')
+def redistribution_result(job_id:str,page:int=Query(1,ge=1),page_size:int=Query(100,ge=1,le=100),q:str=Query('',max_length=200),db:Session=Depends(get_db),user:User=Depends(operator)):
+    from .redistribution_jobs import get_job, result_page
+    return result_page(db,get_job(db,job_id,user),page,page_size,q)
+
+
+@router.post('/redistribution/jobs/{job_id}/export.xlsx')
+def redistribution_job_export(job_id:str,body:RedistributionExportInput,db:Session=Depends(get_db),user:User=Depends(operator)):
+    from .redistribution_jobs import get_job, validate_snapshot, entries
+    from .replenishment_redistribution_export import workbook_bytes
+    job=get_job(db,job_id,user)
+    if job.status!='COMPLETED':raise HTTPException(409,'La redistribución todavía no está completa')
+    if job.result_metadata['fingerprint']!=body.fingerprint:raise HTTPException(409,'La referencia de la propuesta no coincide. Actualiza la redistribución.')
+    validate_snapshot(db,job.snapshot)
+    proposal={**job.result_metadata,**{key:entries(db,job,key) for key in ('movements','unmet_needs','material_warnings')}}
+    data=workbook_bytes(proposal)
+    audit(db,user,'REPLENISHMENT_REDISTRIBUTION_EXPORTED',job.public_id,{'fingerprint':body.fingerprint,'filters':job.request})
+    db.commit()
+    return Response(data,media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',headers={'Content-Disposition':'attachment; filename="redistribucion.xlsx"'})
