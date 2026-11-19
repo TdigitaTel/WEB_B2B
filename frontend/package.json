@@ -31,6 +31,7 @@
     "test:replenishment-safety": "node scripts/test-replenishment-safety.cjs",
     "test:replenishment-saved": "node scripts/test-replenishment-saved.cjs",
     "test:replenishment-history": "node scripts/test-replenishment-history.cjs",
+    "test:consumption-charts": "node scripts/test-consumption-charts.cjs",
     "test:manual-classification": "node scripts/test-manual-classification.cjs",
     "test:order-email-resend": "node scripts/test-order-email-resend.cjs",
     "test:order-email": "node scripts/test-order-email.cjs",
