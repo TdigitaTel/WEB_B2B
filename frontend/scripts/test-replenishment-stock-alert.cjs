@@ -1,0 +1,36 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),ts=require('typescript');
+const {JSDOM}=require('jsdom'),dom=new JSDOM('<div id="root"></div>',{url:'https://example.test',pretendToBeVisual:true});
+for(const key of ['window','document','HTMLElement','Event','CustomEvent'])global[key]=dom.window[key];global.IS_REACT_ACT_ENVIRONMENT=true;
+for(const ext of ['.ts','.tsx'])require.extensions[ext]=(m,f)=>m._compile(ts.transpileModule(fs.readFileSync(f,'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2020,jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS,esModuleInterop:true}}).outputText,f);
+require.extensions['.css']=m=>m.exports={};
+const React=require('react'),{createRoot}=require('react-dom/client'),View=require('../app/Replenishment.tsx').default;
+const filters={date_from:'2026-04-01',date_to:'2026-04-30',delegations:['02'],skus:[]};
+const calculation={id:'saved',filters,consumption_bases:['MEAN','MEDIAN','MODE'],temporary_parameters:{target_mode:'POINT'},captured_at:'2026-04-30T10:00:00Z'};
+const common={description:'Material',delegation:'02',unit_type:'UD',stock:0,incoming:0,outgoing:0,inventory_position:0,monthly_mean:30,minimum_stock:1,replenishment_point:10,maximum_stock:30,final_quantity:10,quantity_without_multiple:10,quantity_with_exit_multiple:10,exit_multiple:1,recommendations:[],central_available:0};
+const all=[{...common,id:1,sku:'ZERO',stock_alert:{code:'NO_STOCK',label:'Reponer · Almeiras sin disponible'}},{...common,id:2,sku:'PARTIAL',central_available:5,stock_alert:{code:'INSUFFICIENT',label:'Reponer · Almeiras no cubre el conjunto'}},{...common,id:3,sku:'UNKNOWN',central_available:null,stock_alert:{code:'UNKNOWN',label:'Reponer · revisar disponibilidad de Almeiras'}},{...common,id:4,sku:'NO-NEED',final_quantity:0,quantity_without_multiple:0,stock_alert:{code:'NONE',label:''}}];
+let requests=[];global.URL.createObjectURL=()=> 'blob:excel';global.URL.revokeObjectURL=()=>{};dom.window.HTMLAnchorElement.prototype.click=function(){};
+global.fetch=async(url,options={})=>{requests.push([url,options]);let body;
+ if(url.endsWith('/options'))body={article_limit:1000,server_date:'2026-04-30',delegations:[{code:'02',name:'Ferrol'}],areas:[],families:[],subfamilies:[],types:[]};
+ else if(url.endsWith('/jobs/current'))body={job:null,latest_result:calculation};
+ else if(url.includes('/results?')){const query=new URL(url,dom.window.location.href).searchParams,alarm=query.get('stock_alert');const rows=all.filter(row=>alarm==='ALL'||(alarm==='ATTENTION'?['NO_STOCK','INSUFFICIENT'].includes(row.stock_alert.code):row.stock_alert.code===alarm));body={items:rows,total:rows.length,summary:{articles_analyzed:rows.length,to_replenish:rows.filter(r=>r.final_quantity>0).length,central_no_stock:rows.filter(r=>r.stock_alert.code==='NO_STOCK').length,central_insufficient:rows.filter(r=>r.stock_alert.code==='INSUFFICIENT').length,central_attention:rows.filter(r=>['NO_STOCK','INSUFFICIENT'].includes(r.stock_alert.code)).length}}}
+ else if(url.includes('/export.xlsx?'))return {ok:true,status:200,headers:{get:()=> 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'},blob:async()=>new Blob(['excel'])};
+ else throw Error('Unexpected '+url);
+ return {ok:true,status:200,text:async()=>JSON.stringify(body)};
+};
+const root=createRoot(document.getElementById('root')),pause=()=>React.act(async()=>new Promise(resolve=>setTimeout(resolve,230)));
+const choose=async value=>{await React.act(async()=>{const s=document.querySelector('[aria-label="Alerta de reposición"]');s.value=value;s.dispatchEvent(new Event('change',{bubbles:true}))});await pause()};
+(async()=>{
+ await React.act(async()=>root.render(React.createElement(View)));await pause();
+ assert.match(document.querySelector('.repl-stock-warning').textContent,/Líneas a reponer: 1 sin disponible.*1 con cobertura insuficiente/);
+ assert.equal(document.querySelectorAll('.repl-stock-row-NO_STOCK').length,1);assert.equal(document.querySelectorAll('.repl-stock-row-INSUFFICIENT').length,1);assert.equal(document.querySelectorAll('.repl-stock-row-UNKNOWN').length,1);
+ assert.match(document.querySelector('.repl-stock-row-NO_STOCK').textContent,/Reponer · Almeiras sin disponible/);assert.equal(document.querySelectorAll('.repl-stock-badge').length,3);
+ await React.act(async()=>[...document.querySelectorAll('button')].find(b=>b.textContent==='Ver pendientes sin cobertura').click());await pause();
+ assert.equal(document.querySelector('[aria-label="Alerta de reposición"]').value,'ATTENTION');assert.equal(document.querySelectorAll('.repl-clean-results tbody tr').length,2);
+ await choose('NO_STOCK');assert.equal(document.querySelectorAll('.repl-clean-results tbody tr').length,1);
+ await React.act(async()=>[...document.querySelectorAll('button')].find(b=>b.textContent==='Descargar Excel filtrado').click());assert.ok(requests.some(([url])=>url.includes('/export.xlsx?')&&url.includes('stock_alert=NO_STOCK')));
+ const cover=[...document.querySelectorAll('label')].find(l=>l.textContent==='Almeiras cubre sin romper stock').querySelector('input');
+ await React.act(async()=>cover.click());await pause();assert.equal(document.querySelector('[aria-label="Alerta de reposición"]').value,'ALL');
+ await choose('UNKNOWN');assert.equal(cover.checked,false);assert.equal(document.querySelector('.repl-stock-warning'),null);assert.equal(document.querySelectorAll('.repl-stock-row-UNKNOWN').length,1);
+ assert.ok(!requests.some(([,options])=>options.method==='POST'),'Stock warnings never start a new calculation');
+ await React.act(async()=>root.unmount());dom.window.close();console.log('Replenishment stock alarms: banner, distinct row warnings, zero-need exclusion, filters, Excel and mutually exclusive coverage passed');
+})().catch(error=>{console.error(error);process.exitCode=1;dom.window.close()});

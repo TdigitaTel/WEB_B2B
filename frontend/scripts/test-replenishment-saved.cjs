@@ -7,7 +7,7 @@ let opened=null,missing=true,stale=false,rawFailure=false,calls=[],downloaded=''
 global.URL.createObjectURL=()=> 'blob:redistribution';global.URL.revokeObjectURL=()=>{};
 dom.window.HTMLAnchorElement.prototype.click=function(){downloaded=this.download};
 dom.window.HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','')};dom.window.HTMLDialogElement.prototype.close=function(){this.removeAttribute('open')};
-const saved={id:'saved',delegation:'01',delegation_name:'San Diego',calculated_at:'2026-11-08T10:30:00Z',summary:{articles_analyzed:4},filters:{date_from:'2026-10-01',date_to:'2026-10-31',delegations:['01']}};
+const saved={id:'saved',delegation:'01',delegation_name:'San Diego',calculated_at:'2026-11-08T10:30:00Z',summary:{articles_analyzed:4,central_attention:2,central_no_stock:1},filters:{date_from:'2026-10-01',date_to:'2026-10-31',delegations:['01']}};
 const classifications={areas:[{id:1,name:'Herramientas'}],families:[{id:2,name:'Manuales',area_id:1}],subfamilies:[{id:3,name:'Llaves',family_id:2}],types:[{id:4,name:'Llave fija',subfamily_id:3}]};
 const plan={fingerprint:'a'.repeat(64),movement_total:201,page:1,page_size:100,movements:[{detail_id:'1-0',sku:'MAT',description:'Material prueba',unit_type:'UD',from_delegation:'01',to_delegation:'02',quantity:3,kind:'TRANSFER'},{detail_id:'1-1',sku:'MAT',description:'Material prueba',unit_type:'UD',from_delegation:'01',to_delegation:'00',quantity:5,kind:'RETURN_CENTRAL'}],unmet_needs:[{sku:'OTHER',delegation:'05',quantity:2,unit_type:'M'}],material_warnings:[{sku:'INVALID',reason:'Falta cálculo del material.'}],warnings:['Los periodos son diferentes.'],calculations:[{delegation:'01',name:'San Diego',captured_at:'2026-11-08T10:00:00Z',date_from:'2026-10-01',date_to:'2026-10-31'}],summary:{materials:1,transfers:1,returns_to_central:1,unmet_needs:1,excluded_materials:1}};
 const response=(body,status=200)=>({ok:status<400,status,text:async()=>JSON.stringify(body)});
@@ -35,7 +35,7 @@ const setInput=(input,value)=>{Object.getOwnPropertyDescriptor(dom.window.HTMLIn
 const choose=(label,value)=>{const select=document.querySelector(`[aria-label="${label}"]`);select.value=value;select.dispatchEvent(new Event('change',{bubbles:true}));};
 (async()=>{
  await React.act(async()=>render('1'));
- assert.match(document.body.textContent,/04 · Santiago, 05 · Sanxenxo/);assert.match(document.body.textContent,/8\/11\/2026/);
+ assert.match(document.body.textContent,/04 · Santiago, 05 · Sanxenxo/);assert.match(document.querySelector('.repl-stock-summary').textContent,/2 a reponer sin cobertura/);assert.match(document.body.textContent,/8\/11\/2026/);
  await React.act(async()=>button('Ver cálculo').click());assert.equal(opened.id,'saved');assert.equal(opened.delegation,'01');
  await React.act(async()=>button('Calcular redistribución').click());
  assert.match(document.querySelector('[role=alert]').textContent,/Faltan: 04 · Santiago/);
