@@ -57,7 +57,7 @@ def enqueue(body:Request,db:Session=Depends(get_db),user:User=Depends(operator))
     if existing:
         if existing.request!=body.model_dump(mode='json'):raise HTTPException(409,'Ya tienes un cálculo de compra en curso. Espera a que termine antes de cambiar los filtros.')
         return payload(existing)
-    row=Job(created_by=user.id,request=body.model_dump(mode='json'));db.add(row);db.flush()
+    row=Job(created_by=user.id,request=body.model_dump(mode='json'),summary={'consumption_method':'NET_PERIOD_V2'});db.add(row);db.flush()
     audit(db,user,'PROCUREMENT_QUEUED',row.public_id,{'request':row.request,'batch_size':1000});db.commit()
     return payload(row)
 
@@ -129,14 +129,14 @@ def export(public_id:str,basis:str=Query('MEAN',pattern='^(MEAN|MEDIAN|MODE)$'),
     append(sheet,['Objetivo = consumo diario × (días de cobertura + plazo de entrega) + seguridad. Compra = max(0, objetivo − (stock + entradas − salidas)).'])
     append(sheet,['Entradas pendientes sin fecha: verificar llegada y compensación de traspasos internos. EX_multiplo es de despacho: validar el formato de compra con proveedor.'])
     append(sheet,['Código','Descripción','Marca','Familia','Subfamilia','Tipo','Unidad','Stock red','Stock Almeiras','Entradas','Salidas','Disponible',
-        'Consumo mes','Base diaria','Desviación diaria','Cobertura EXIT (días)','Entrega EXIT (días)','Seguridad','Objetivo','Compra base','Con múltiplo EXIT','Múltiplo EXIT','Flag','Avisos','Datos EXIT'])
+        'Referencia mensual guardada (30 días en NET_PERIOD_V2)','Base diaria','Desviación diaria','Cobertura EXIT (días)','Entrega EXIT (días)','Seguridad','Objetivo','Compra base','Con múltiplo EXIT','Múltiplo EXIT','Flag','Avisos','Datos EXIT','Ventas del periodo','Devoluciones del periodo','Neto del periodo','Días analizados','Método de consumo'])
     query=result_query(job,basis,q,area_id,family_id,subfamily_id,type_id,brand,only_buy)
     for stored in db.scalars(query.order_by(Result.sku).execution_options(yield_per=100)):
         row=stored.payload;p=row['variants'][basis]
         values=[row['sku'],row['description'],row.get('brand_name'),row.get('family'),row.get('subfamily'),row.get('type'),row.get('unit_type'),
             row['stock'],row['central_stock'],row['incoming'],row['outgoing'],row['inventory_position'],row['monthly_mean'],p['daily_reference'],row['daily_std'],
             row['coverage_days'],row['lead_days'],p['safety_stock'],p['target_stock'],p['quantity'],p['quantity_with_multiple'],row.get('exit_multiple'),
-            row['exceptionality']['level'],'; '.join(row['notes']),row['captured_at']]
+            row['exceptionality']['level'],'; '.join(row['notes']),row['captured_at'],row.get('gross_sales'),row.get('returns'),row['gross_sales']-row['returns'] if row.get('gross_sales') is not None and row.get('returns') is not None else None,row['observed_days'],row.get('consumption_method','MONTHLY_NORMALIZED_V1')]
         append(sheet,[cell_text(value) if isinstance(value,str) else value for value in values])
     stream=io.BytesIO();book.save(stream)
     return Response(stream.getvalue(),media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',headers={'Content-Disposition':'attachment; filename="aprovisionamiento.xlsx"'})
@@ -171,9 +171,11 @@ def process_job(jid,token):
                 batch=db.scalar(select(Batch).where(Batch.job_id==jid,Batch.fingerprint.is_(None)).order_by(Batch.number).limit(1))
                 if batch is None:break
                 if batch.attempts>=3:raise ValueError('El mismo bloque de compra se interrumpió tres veces; revisa los registros y la memoria.')
+                method=job.summary.get('consumption_method','MONTHLY_NORMALIZED_V1')
                 batch.attempts+=1;codes=list(batch.codes);bid=batch.id
                 job.phase=f'Consultando y calculando bloque {batch.number} de {job.total_batches}';db.commit()
             source=read_replenishment_source(request.filters.date_from,request.filters.date_to,codes,1000)
+            source['consumption_method']=method
             if {a['sku'] for a in source['articles']}!=set(codes) or len(source['articles'])!=len(codes):raise ValueError('La selección cambió en EXIT; vuelve a calcular.')
             metadata=read_procurement_terms(codes)
             for article in source['articles']:article.update(metadata[article['sku']])

@@ -391,7 +391,7 @@ def test_filtered_summary_and_export_all_pages_with_exit_control_characters(monk
     assert book.sheetnames==['Reposición']
     headers=[cell.value for cell in sheet[1]]
     assert 'Disponible previsto' in headers and 'Posición' not in headers
-    assert 'Seguridad' not in headers and len(headers)==28 and 'Alerta de reposición / Almeiras' in headers
+    assert 'Seguridad' not in headers and len(headers)==33 and 'Alerta de reposición / Almeiras' in headers
     assert sheet.max_row==56 and sheet['A2'].value=='00054'
     assert sheet['A56'].value=='00000' and sheet['A56'].data_type=='s'
     assert sheet['B56'].value=='=Material de EXIT' and sheet['B56'].data_type=='s'
@@ -853,7 +853,7 @@ def test_single_consumption_91463e_is_marked_and_exported_without_automatic_excl
         assert exported.status_code==200,exported.text
         sheet=load_workbook(io.BytesIO(exported.content)).active;headers=[cell.value for cell in sheet[1]]
         index=headers.index('Excepcionalidad')
-        assert headers[index-1] in ('Consumo mensual','Consumo mensual medio')
+        assert headers[index-1]=='Referencia mensual guardada (30 días en NET_PERIOD_V2)'
         text=sheet.cell(2,index+1).value
         assert 'Alta excepcionalidad' in text and '1 de 30 días' in text and '100.0 %' in text
         assert sheet.cell(2,headers.index('Mayor consumo diario')+1).value==30

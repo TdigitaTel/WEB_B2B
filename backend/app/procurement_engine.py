@@ -13,14 +13,17 @@ def terms(value,minimum):
 
 def calculate(source,use_safety_stock=True,service_level=95):
     # Aggregate daily NET customer demand, not replenishment suggestions/transfers.
-    # Net each branch/day first, preserving the existing returns floor at zero.
+    # New snapshots retain every sale and return across branches. Legacy snapshots preserve their saved method.
     branch_days=defaultdict(lambda:[0,0])
     for row in source['sales']:
         if row['delegation'] in CALCULATION_DELEGATIONS:
             pair=branch_days[(row['sku'],row['delegation'],row['day'])]
             pair[0]+=row['sold'];pair[1]+=row['returned']
     sales=defaultdict(lambda:[0,0])
-    for (sku,delegation,day),(sold,returned) in branch_days.items():sales[(sku,'NW',day)][0]+=max(0,sold-returned)
+    for (sku,delegation,day),(sold,returned) in branch_days.items():
+        if source.get('consumption_method')=='NET_PERIOD_V2':
+            sales[(sku,'NW',day)][0]+=sold;sales[(sku,'NW',day)][1]+=returned
+        else:sales[(sku,'NW',day)][0]+=max(0,sold-returned)
     stock_index=defaultdict(dict)
     for row in source['stocks']:
         if row['delegation'] in CALCULATION_DELEGATIONS:
@@ -69,6 +72,7 @@ def calculate(source,use_safety_stock=True,service_level=95):
             'outgoing':sum(r['outgoing'] for r in branches.values()) if valid_stock else None,
             'central_stock':branches.get('00',{}).get('stock'),'inventory_position':position,
             'coverage_days':coverage,'lead_days':lead,'protection_days':coverage+lead if coverage is not None and lead is not None else None,
+            'daily_mean':stats['daily_mean'],'consumption_method':stats['consumption_method'],'gross_sales':stats['gross_sales'],'returns':stats['returns'],
             'monthly_mean':stats['monthly_mean'],'daily_std':stats['daily_std'],'daily_median':stats['daily_median'],'daily_modes':stats['daily_modes'],
             'observed_days':stats['days'],'positive_days':stats['sales_days'],'total_demand':stats['total_demand'],
             'exceptionality':stats['exceptionality'],'variants':variants,'notes':notes,

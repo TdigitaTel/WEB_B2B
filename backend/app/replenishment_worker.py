@@ -65,7 +65,7 @@ def initialize(job_id,token):
         selected=selected_product_codes(db,request.filters)
         codes=list_replenishment_codes(selected,job.article_limit,hidden_codes(db) if selected is None else [])
         job=owned(db,job_id,token)
-        source={'consumption_bases':(['MEAN','MEDIAN','MODE'] if request.all_consumption_bases else [request.temporary_parameters.get('consumption_basis','MEAN')]),'batched':True,'source_articles':len(codes),'articles':[], 'sales':[], 'stocks':[],
+        source={'consumption_method':'NET_PERIOD_V2','consumption_bases':(['MEAN','MEDIAN','MODE'] if request.all_consumption_bases else [request.temporary_parameters.get('consumption_basis','MEAN')]),'batched':True,'source_articles':len(codes),'articles':[], 'sales':[], 'stocks':[],
             'captured_at':now().isoformat(),'extraction_started_at':job.started_at.isoformat(),
             'article_limit':job.article_limit,'company':1,'sales_delegations':['00','01','02','04','05'],
             'start':request.filters.date_from.isoformat(),'end':request.filters.date_to.isoformat()}
@@ -94,9 +94,11 @@ def process_batch(job_id,token):
         delegations=(batch.source or {}).get('calculation_delegations',request.filters.delegations)
         prefix=('Delegación '+delegations[0]+' · ') if len(delegations)==1 else ''
         batch.attempts+=1;job.phase=prefix+f'Consultando EXIT · bloque {batch.number} de {job.total_batches}'
+        method=db.get(Scenario,job.scenario_id).source_snapshot.get('consumption_method','MONTHLY_NORMALIZED_V1')
         batch_id=batch.id;codes=list(batch.codes);number=batch.number;db.commit()
         # End the DB session before expensive I/O/CPU work: the website keeps its connection pool.
     source=read_replenishment_source(request.filters.date_from,request.filters.date_to,codes,BATCH_SIZE)
+    source['consumption_method']=method
     if len(source['articles'])!=len(codes) or {row['sku'] for row in source['articles']}!=set(codes):
         raise ValueError('La selección de artículos cambió en EXIT durante el cálculo. Vuelve a calcular para obtener un conjunto completo.')
     with SessionLocal() as db:

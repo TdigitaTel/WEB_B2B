@@ -9,6 +9,9 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 ConsumptionBasis=Literal['MEAN','MEDIAN','MODE']
+NET_PERIOD_METHOD='NET_PERIOD_V2'
+LEGACY_CONSUMPTION_METHOD='MONTHLY_NORMALIZED_V1'
+
 BASIS_LABELS={'MEAN':'Media','MEDIAN':'Mediana','MODE':'Moda'}
 
 class Parameters(BaseModel):
@@ -85,7 +88,7 @@ def exceptionality_analysis(values,start,outliers):
         'analysis_version':2,'minimum_observed_days':30}
 
 
-def spot_analysis(values,start,monthly,daily_mean):
+def spot_analysis(values,start,monthly,daily_mean,net_period=False):
     """Informative heuristic on positive daily NET demand; no automatic exclusion.
 
     Quartiles use linear interpolation at (n-1)*p. Tukey's upper inner fence
@@ -103,13 +106,16 @@ def spot_analysis(values,start,monthly,daily_mean):
              for i,value in enumerate(values) if eligible and value>threshold]
     excluded_by_month=defaultdict(float)
     for row in flagged:excluded_by_month[row['day'][:7]]+=row['demand']
-    baseline=mean((max(0,row['consumption']-excluded_by_month[row['month']])/row['observed_days']*row['calendar_days'])
-                  for row in monthly)/30 if monthly else 0
     quantity=sum(row['demand'] for row in flagged);total=sum(values)
+    if net_period:
+        baseline=(sum(row['consumption'] for row in monthly)-quantity)/sum(row['observed_days'] for row in monthly) if monthly else 0
+    else:
+        baseline=mean((max(0,row['consumption']-excluded_by_month[row['month']])/row['observed_days']*row['calendar_days'])
+                      for row in monthly)/30 if monthly else 0
     single=next(({'day':(start+timedelta(days=i)).isoformat(),'quantity':value} for i,value in enumerate(values) if value>0),None) if count==1 else None
     return {'exceptionality':exceptionality_analysis(values,start,flagged),'single_consumption':single,'status':'NO_CONSUMPTION' if not count else 'SINGLE_CONSUMPTION' if count==1 else 'INSUFFICIENT' if not eligible else 'POSSIBLE_SPOT' if flagged else 'NO_OUTLIERS',
         'positive_days':count,'minimum_positive_days':8,'normal_daily_median':normal,'q1':q1,'q3':q3,'upper_threshold':threshold,
-        'outliers':flagged,'flagged_quantity':quantity,'flagged_share_percent':quantity/total*100 if total else 0,
+        'share_basis':'POSITIVE_DAILY_NET' if net_period else 'LEGACY_NET','outliers':flagged,'flagged_quantity':quantity,'flagged_share_percent':quantity/total*100 if total else 0,
         'daily_mean':daily_mean,'daily_mean_without_peaks':baseline,
         'mean_uplift_percent':(daily_mean-baseline)/baseline*100 if baseline>0 else None}
 
@@ -122,39 +128,45 @@ def demand_statistics(article,delegation,source,parameters,sales_index,include_d
     except ValueError:pass
     if created and start<created<=end:start=created
     days=(end-start).days+1
+    net_period=source.get('consumption_method')==NET_PERIOD_METHOD
     daily=[];values=[];months={};gross=returned=0;last_sale=None;anomalous=0
     for offset in range(days):
         day=(start+timedelta(days=offset)).isoformat();sold,back=sales_index.get((article['sku'],delegation,day),(0,0))
         gross+=sold;returned+=back;anomalous+=int(back>sold)
         if sold>0:last_sale=day
-        values.append(max(0,sold-back))
-        bucket=months.setdefault(day[:7], {'month':day[:7], 'observed_days':0, 'consumption':0, 'calendar_days':monthrange(int(day[:4]),int(day[5:7]))[1]})
-        bucket['observed_days']+=1;bucket['consumption']+=values[-1]
+        values.append(sold-back if net_period else max(0,sold-back))
+        bucket=months.setdefault(day[:7], {'month':day[:7], 'observed_days':0, 'consumption':0, 'sold':0, 'returned':0, 'calendar_days':monthrange(int(day[:4]),int(day[5:7]))[1]})
+        bucket['observed_days']+=1;bucket['consumption']+=values[-1];bucket['sold']+=sold;bucket['returned']+=back
         if include_daily:daily.append({'day':day,'sold':sold,'returned':back,'demand':values[-1]})
     monthly=[]
     for bucket in months.values():
-        bucket['estimated']=bucket['observed_days']<bucket['calendar_days']
+        bucket['daily_mean']=bucket['consumption']/bucket['observed_days']
+        bucket['estimated']=not net_period and bucket['observed_days']<bucket['calendar_days']
         bucket['monthly_consumption']=bucket['consumption']/bucket['observed_days']*bucket['calendar_days'] if bucket['estimated'] else bucket['consumption']
         monthly.append(bucket)
     monthly_mean=mean(row['monthly_consumption'] for row in monthly) if monthly else 0
-    average=monthly_mean/30;deviation=pstdev(values) if values else 0
+    period_net=gross-returned if net_period else sum(values)
+    average=period_net/days if net_period and days>0 else monthly_mean/30
+    if net_period:monthly_mean=average*30  # Compatibility/display only; never used to derive the mean.
+    deviation=pstdev(values) if values else 0
     sales_days=sum(value>0 for value in values)
     adi=days/sales_days if sales_days else None
     irregular=bool(sales_days and (adi>1.32 or (average>0 and deviation/average>1)))
     positive=[value for value in values if value>0]
     frequencies=Counter(positive);frequency=max(frequencies.values(),default=0)
     modes=sorted(value for value,count in frequencies.items() if count==frequency) if frequency>1 else []
-    analysis=spot_analysis(values,start,monthly,average)
+    analysis=spot_analysis([max(0,v) for v in values] if net_period else values,start,monthly,average,net_period)
     exceptionality=analysis.pop('exceptionality')
     return {'exceptionality':exceptionality,'spot_analysis':analysis,'daily_median':median(positive) if positive else None,'daily_modes':modes,'positive_consumption_days':len(positive),
+            'consumption_method':NET_PERIOD_METHOD if net_period else LEGACY_CONSUMPTION_METHOD,
             'days':days,'start':start.isoformat(),'end':end.isoformat(),'daily':daily,'demand_values':values,'gross_sales':gross,
-            'returns':returned,'total_demand':sum(values),'daily_mean':average,'monthly_mean':monthly_mean,'monthly_consumption':monthly,'daily_std':deviation,
+            'returns':returned,'total_demand':period_net,'daily_mean':average,'monthly_mean':monthly_mean,'monthly_consumption':monthly,'daily_std':deviation,
             'sales_days':sales_days,'last_sale':last_sale,'irregular':irregular,'anomalous_return_days':anomalous,
             'new_article':bool(created and (end-created).days<30),'created_in_future':bool(created and created>end)}
 
 def consumption_reference(stats,parameters):
     basis=parameters.get('consumption_basis','MEAN')
-    if basis=='MEAN':return stats['daily_mean'],True
+    if basis=='MEAN':return max(0,stats['daily_mean']),True
     if not stats['positive_consumption_days']:return 0,True
     if basis=='MEDIAN':return stats['daily_median'],True
     return (max(stats['daily_modes']),True) if stats['daily_modes'] else (0,False)
@@ -237,6 +249,7 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
                 current+=values[index]-values[index-horizon];sums.append(current)
         if len(sums)>=5:
             sums.sort();maximum=sums[min(len(sums)-1,ceil(len(sums)*parameters['service_level']/100)-1)]
+            maximum=max(0,maximum)
             safety=max(0,maximum-avg*horizon);minimum=min(maximum,avg*parameters['lead_days']+safety)
             method='PERCENTIL_EMPIRICO_INTERMITENTE';confidence='BAJA'
         else:
@@ -305,7 +318,7 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
     if stats['new_article'] or stats['created_in_future']:
         recs.append(recommendation('ARTICULO_NUEVO','Artículo nuevo o fecha de alta futura: estimación de baja confianza.',{'created_at':article.get('created_at'),'comparables':comparable},'new_policy',parameters['new_policy']))
     if stats['returns']>stats['gross_sales'] or stats['anomalous_return_days']:
-        recs.append(recommendation('DEVOLUCIONES_ANOMALAS','Las devoluciones superan ventas en alguno de los días; la demanda diaria se limita a cero, conservando ambas cantidades.',
+        recs.append(recommendation('DEVOLUCIONES_ANOMALAS','Las devoluciones superan ventas en alguno de los días; se conservan con signo y se descuentan del total del periodo.' if stats['consumption_method']==NET_PERIOD_METHOD else 'Las devoluciones superan ventas en alguno de los días; la demanda diaria se limita a cero, conservando ambas cantidades.',
             {'sales':stats['gross_sales'],'returns':stats['returns'],'days':stats['anomalous_return_days']}))
     if stock is None or (stock and (stock['stock']<0 or stock['incoming']<0 or stock['outgoing']<0)):
         recs.append(recommendation('DATOS_STOCK','Falta stock en la vista o hay existencias/pendientes negativos. Verificar antes de reponer.',{'stock':stock}))
@@ -317,7 +330,9 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
     if quantity>max(1000,avg*horizon*10) or (stats['gross_sales']==0 and quantity>0) or (avg>0 and quantity==0 and position is not None and position<minimum):
         recs.append(recommendation('PROPUESTA_REVISAR','Revisar una cantidad elevada, una reposición sin ventas o una reposición cero bajo el mínimo.',
             {'quantity':quantity,'position':position,'minimum':minimum,'horizon_demand':avg*horizon}))
-    result={**article,'delegation':delegation,'stock':stock['stock'] if stock else None,'incoming':stock['incoming'] if stock else None,
+    if stats['total_demand']<0:
+        recs.append(recommendation('NETO_NEGATIVO','Las devoluciones superan las ventas del periodo. El neto y la media se muestran con signo; la base de planificación no baja de cero.',{'net':stats['total_demand'],'daily_mean':stats['daily_mean']}))
+    result={**article,'consumption_method':stats['consumption_method'],'delegation':delegation,'stock':stock['stock'] if stock else None,'incoming':stock['incoming'] if stock else None,
         'outgoing':stock['outgoing'] if stock else None,'inventory_position':position,'gross_sales':stats['gross_sales'],
         'returns':stats['returns'],'total_demand':stats['total_demand'],'daily_mean':stats['daily_mean'],'daily_reference':avg,'spot_analysis':analysis,'exceptionality':stats['exceptionality'],'consumption_basis':parameters['consumption_basis'],'statistic_available':statistic_available,'daily_median':stats['daily_median'],'daily_modes':stats['daily_modes'],'positive_consumption_days':stats['positive_consumption_days'],'monthly_mean':stats['monthly_mean'],'monthly_consumption':stats['monthly_consumption'],'daily_std':std,'sales_days':stats['sales_days'],
         'last_sale':stats['last_sale'],'observed_days':stats['days'],'irregular':stats['irregular'],'new_article':stats['new_article'],
