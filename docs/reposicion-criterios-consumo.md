@@ -83,3 +83,9 @@ Para la línea de Almeiras (00), la alerta de falta de stock se basa en su propi
 La página muestra un aviso destacado, un contador de líneas a reponer sin cobertura, una marca en cada artículo y el resaltado de su propuesta. La lista de cálculos guardados incluye el número de líneas afectadas por delegación. Un selector filtra por falta de disponible, cobertura conjunta insuficiente, ambas, o datos sin confirmar. Los filtros de cobertura completa y alerta son mutuamente excluyentes en la interfaz. El Excel filtrado incorpora la alerta.
 
 La marca no modifica las cantidades, genera pedidos ni envía notificaciones. Describe los datos guardados en la fecha del cálculo, no el stock en tiempo real. Los contadores se refieren a líneas artículo/delegación según los filtros activos. Las proyecciones antiguas se leen con una consulta de campos puntuales del resultado guardado: no se reconstruyen históricos ni se consulta EXIT para mostrar la alerta.
+
+### Lectura visual del consumo
+
+El detalle del material resume la frecuencia, la cantidad habitual (mediana de días positivos), los días con picos y su peso en el consumo. Dos barras comparan la media diaria guardada con la media orientativa sin las cantidades señaladas, manteniendo los mismos días. Los porcentajes se muestran con un decimal.
+
+El encabezado explica el motivo concreto: concentración, picos con impacto, baja frecuencia o datos limitados. No confirma compras spot ni excluye ventas. Las fechas, los umbrales y las reglas completas quedan en desplegables cerrados de entrada; la lista conserva solo las banderas. No cambia el cálculo ni consulta EXIT.
