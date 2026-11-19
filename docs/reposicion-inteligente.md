@@ -7,7 +7,7 @@ Acceso independiente: Reposición, para administrador y operador.
 Se utilizan los nombres del documento sin sustituir tablas ni campos:
 
 - `dbo.articulos`: `codigoarticulo`, `descripcionarticulo`, `EX_tipounidad`, `inactivo`, `fechaalta`, `codigoalternativo7` a `codigoalternativo10`. Solo `inactivo=0`.
-- `dbo.AlbaranVentaCabecera` y `dbo.AlbaranVentaLineas`: unión por `NumeroAlbaran`, `EjercicioAlbaran`, `CodigoEmpresa`; empresa 1; fecha `FechaAlbaran`, delegación `IdDelegacion`, artículo `CodigoArticulo`, cantidad `Unidades`.
+- `dbo.AlbaranVentaCabecera` y `dbo.AlbaranVentaLineas`: unión por `CodigoEmpresa`, `EjercicioAlbaran`, `SerieAlbaran`, `NumeroAlbaran`; empresa 1; fecha `FechaAlbaran`, delegación `IdDelegacion`, artículo `CodigoArticulo`, cantidad `Unidades`.
 - `dbo.VIS_EX_StockVentasDelegacion`: `CodigoArticulo`, `IdDelegacion`, `UnidadSaldo`, `PendienteRecibir`, `PendienteServir`.
 - PostgreSQL: `products.sku` enlaza con EXIT. Clasificación mediante `material_area_id`, `material_family_id`, `material_subfamily_id`, `material_product_type_id` y sus tablas maestras.
 
