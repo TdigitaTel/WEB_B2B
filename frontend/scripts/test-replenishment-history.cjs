@@ -91,6 +91,14 @@ const render=endpoint=>root.render(React.createElement(History,{endpoint,unit:'P
  assert.match(document.body.textContent,/Media de los días con consumo: 2,68 PZ/);
  assert.match(document.body.textContent,/al menos el 25 %/);
  assert.ok(!document.querySelector('[aria-label="Indicador de excepcionalidad"]').textContent.includes('Alta excepcionalidad · revisar'));
+ data.consumption_method='NET_PERIOD_V2';data.gross_sales=23;data.returns=19;data.total_demand=4;data.daily_mean=4/31;data.observed_days=31;
+ await React.act(async()=>render('/saved/result/signed-returns'));
+ const balance=document.querySelector('[aria-label="Balance de ventas y devoluciones"]');
+ assert.match(balance.textContent,/23 PZ.*19 PZ.*4 PZ/);
+ assert.match(balance.textContent,/4 ÷ 31 días reales/);
+ assert.match(document.querySelector('.repl-history-metrics').textContent,/días reales/);
+ assert.doesNotMatch(document.querySelector('.repl-history-metrics').textContent,/normalizado ÷ 30/);
+ delete data.consumption_method;
  delete data.exceptionality;
  delete data.spot_analysis;
  data.daily_modes=[];data.weekly_sales.forEach(w=>w.sold=0);data.daily_median=null;data.positive_consumption_days=0;

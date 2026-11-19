@@ -8,7 +8,7 @@ const React=require('react'),{createRoot}=require('react-dom/client'),View=requi
 let posted=null;
 const filters={date_from:'2026-04-01',date_to:'2026-04-30',delegations:['02'],skus:[]};
 const calculation={id:'saved',filters,temporary_parameters:{multiple_mode:'EXIT',target_mode:'POINT'},captured_at:'2026-04-30T10:00:00Z'};
-const row={id:1,sku:'VALID',description:'Material',delegation:'02',unit_type:'UD',stock:2,incoming:0,outgoing:0,inventory_position:2,monthly_mean:300,daily_mean:10,minimum_stock:10,replenishment_point:80,maximum_stock:310,final_quantity:84,quantity_without_multiple:78,quantity_with_exit_multiple:84,exit_multiple:12,exceptionality:{level:'HIGH',reasons:['CONCENTRATION'],observed_days:30,positive_days:2,consumption_day_percent:6.667,top3_share_percent:100,top_days:[{day:'2026-04-01',quantity:30},{day:'2026-04-15',quantity:30}],largest_quantity:30,largest_date:'2026-04-01',outlier_days:0},spot_analysis:{status:'POSSIBLE_SPOT',flagged_share_percent:51.28},central_available:80,central_covers_without_multiple:true,central_covers_with_exit_multiple:false,recommendations:[]};
+const row={id:1,sku:'VALID',description:'Material',delegation:'02',unit_type:'UD',stock:2,incoming:0,outgoing:0,inventory_position:2,gross_sales:320,returns:20,total_demand:300,monthly_mean:300,daily_mean:10,minimum_stock:10,replenishment_point:80,maximum_stock:310,final_quantity:84,quantity_without_multiple:78,quantity_with_exit_multiple:84,exit_multiple:12,exceptionality:{level:'HIGH',reasons:['CONCENTRATION'],observed_days:30,positive_days:2,consumption_day_percent:6.667,top3_share_percent:100,top_days:[{day:'2026-04-01',quantity:30},{day:'2026-04-15',quantity:30}],largest_quantity:30,largest_date:'2026-04-01',outlier_days:0},spot_analysis:{status:'POSSIBLE_SPOT',flagged_share_percent:51.28},central_available:80,central_covers_without_multiple:true,central_covers_with_exit_multiple:false,recommendations:[]};
 global.fetch=async(url,options={})=>{let body;
  if(url.endsWith('/options'))body={article_limit:1000,server_date:'2026-04-30',delegations:[],areas:[],families:[],subfamilies:[],types:[]};
  else if(url.endsWith('/jobs/current'))body={job:null,latest_result:calculation};
@@ -25,7 +25,8 @@ const root=createRoot(document.getElementById('root'));
  const headers=[...document.querySelectorAll('.repl-results th')].map(cell=>cell.textContent);
  assert.ok(headers.includes('Base'));
  assert.ok(headers.includes('Múlt.'));
- assert.equal(headers[headers.indexOf('Cons./mes')+1],'Flag');
+ assert.equal(headers[headers.indexOf('Neto periodo')+1],'Flag');
+ assert.match(document.querySelector('.repl-results tbody tr').querySelectorAll('td')[6].textContent,/300.*periodo/);
  const proposals=[...document.querySelectorAll('.repl-results tbody tr')];
  assert.deepEqual([...proposals[0].querySelectorAll('.repl-final-quantity')].map(cell=>cell.textContent),['78','84']);
  assert.match(proposals[0].textContent,/Base: Cubre/);

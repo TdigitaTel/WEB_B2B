@@ -2,9 +2,9 @@
 
 Al ejecutar un cálculo desde la herramienta se guardan las tres propuestas (media, mediana y moda), usando la misma extracción para cada material/delegación. Los filtros de resultados seleccionan delegación y criterio sin recalcular ni consultar EXIT; los contadores, la ordenación, el detalle y Excel siguen esos filtros. Los cálculos anteriores solo ofrecen su criterio original y requieren un cálculo nuevo para guardar los tres.
 
-La media es la vista inicial y conserva el cálculo anterior: promedio mensual normalizado dividido entre 30. Mediana y moda son alternativas, tanto en reposición como en redistribución; no sustituyen la media de forma automática.
+La media es la vista inicial. En los nuevos cálculos (`NET_PERIOD_V2`) es (todas las ventas − todas las devoluciones del periodo) ÷ días reales analizados. Los negativos diarios se conservan: una devolución en un día sin ventas reduce igualmente el neto del periodo. Se cuentan todos los días, incluso los sin movimientos, con el periodo efectivo limitado por el filtro, history_days y fecha de alta. No se extrapolan meses incompletos ni se promedian medias mensuales. La referencia mensual conservada para filtros/compatibilidad es media diaria × 30; no interviene en la obtención de la media diaria. Mediana y moda son alternativas, tanto en reposición como en redistribución; no sustituyen la media de forma automática.
 
-La mediana y la moda utilizan los consumos diarios netos positivos, excluyendo los días con consumo cero. En caso de varias modas se utiliza la mayor y se muestra una advertencia. Si ningún valor positivo se repite, el material queda para revisión sin propuesta automática. Un histórico sin consumo positivo tiene referencia cero.
+La mediana y la moda utilizan los consumos diarios netos positivos, excluyendo los días con neto cero o negativo. En caso de varias modas se utiliza la mayor y se muestra una advertencia. Si ningún valor positivo se repite, el material queda para revisión sin propuesta automática. Un histórico sin consumo positivo tiene referencia cero.
 
 El criterio mostrado determina el consumo diario usado en mínimo, punto de reposición, máximo, cantidad propuesta y reserva de Almeiras. La desviación y la seguridad conservan el histórico diario completo. Las reglas especiales anteriores para demanda irregular y comparables se mantienen al elegir Media; las alternativas aplican directamente la referencia seleccionada. Por excluir días sin consumo, mediana y moda pueden producir cantidades mayores que la media.
 
@@ -19,12 +19,12 @@ Redistribución permite elegir un criterio independiente. Con los cálculos nuev
 
 La referencia habitual es la mediana de los días con consumo neto positivo, por material y delegación. Con al menos 8 días positivos se señalan días que superen estrictamente max(3 × mediana, Q3 + 1,5 × (Q3 − Q1)). Los cuartiles usan interpolación lineal en la posición (n − 1) × p. La valla superior procede del método de Tukey descrito por [NIST](https://www.itl.nist.gov/div898/handbook/eda/section3/boxplot.htm); el mínimo de 8 días y el margen 3 × mediana son decisiones conservadoras de esta herramienta, no umbrales universales de compras spot. Se informa de histórico insuficiente o de ausencia de consumo sin dar una falsa clasificación de normalidad.
 
-La tabla identifica los materiales a revisar; el detalle incluye fechas, cantidades, proporción del consumo neto e impacto sobre la media. La media orientativa sin picos elimina las cantidades netas de los días señalados y conserva todos los días, los meses y la normalización mensual original. No altera cantidades, seguridad, criterios guardados ni redistribución. Triángulos rojos identifican esos días en el gráfico semanal; las barras marrones siguen identificando únicamente máximos semanales, que no son necesariamente atípicos.
+La tabla identifica los materiales a revisar; el detalle incluye fechas, cantidades, proporción de los netos diarios positivos e impacto sobre la media. La media orientativa sin picos elimina las cantidades netas de los días señalados y conserva todos los días y todas las devoluciones; divide entre los días reales en NET_PERIOD_V2. En cálculos anteriores conserva la normalización mensual original. No altera cantidades, seguridad, criterios guardados ni redistribución. Triángulos rojos identifican esos días en el gráfico semanal; las barras marrones siguen identificando únicamente máximos semanales, que no son necesariamente atípicos.
 
 El histórico disponible está agregado por día: no identifica un pedido individual ni prueba que la operación fuera spot. Una concentración de pedidos, una obra, una promoción o la estacionalidad pueden producir picos válidos. La decisión de excluir una demanda o cambiar la reposición exige revisar su contexto; no se excluye automáticamente.
 
 
-El estado del análisis spot se muestra siempre junto al consumo medio mensual del listado y dentro de la tarjeta de media diaria del detalle. El aviso de posible spot se destaca en ámbar e indica la proporción de consumo afectada. La falta de análisis de un cálculo anterior se identifica expresamente como «Excepcionalidad sin analizar», diferenciada de «Sin picos atípicos detectados». No se recalcula automáticamente al mostrar la marca.
+La lista muestra el neto del periodo y una bandera de análisis. El balance de vendido, devuelto, neto y días reales se muestra en el detalle de los nuevos cálculos. El aviso de posible spot se destaca en ámbar e indica la proporción de consumo afectada. La falta de análisis de un cálculo anterior se identifica expresamente como «Excepcionalidad sin analizar», diferenciada de «Sin picos atípicos detectados». No se recalcula automáticamente al mostrar la marca.
 
 
 ## Indicador de excepcionalidad por material/delegación
@@ -86,6 +86,14 @@ La marca no modifica las cantidades, genera pedidos ni envía notificaciones. De
 
 ### Lectura visual del consumo
 
-El detalle del material resume la frecuencia, la cantidad habitual (mediana de días positivos), los días con picos y su peso en el consumo. Dos barras comparan la media diaria guardada con la media orientativa sin las cantidades señaladas, manteniendo los mismos días. Los porcentajes se muestran con un decimal.
+El detalle del material resume la frecuencia, la cantidad habitual (mediana de días positivos), los días con picos y su peso en el consumo. Dos barras comparan la media diaria guardada con la media orientativa sin las cantidades señaladas, manteniendo los mismos días. Los porcentajes se muestran con un decimal. Los porcentajes de concentración/picos tienen como base los netos diarios positivos, para no producir proporciones superiores al 100 % cuando hay devoluciones; no sustituyen el balance firmado del periodo.
 
 El encabezado explica el motivo concreto: concentración, picos con impacto, baja frecuencia o datos limitados. No confirma compras spot ni excluye ventas. Las fechas, los umbrales y las reglas completas quedan en desplegables cerrados de entrada; la lista conserva solo las banderas. No cambia el cálculo ni consulta EXIT.
+
+## Trazabilidad del consumo neto (NET_PERIOD_V2)
+
+La fuente de cada cálculo nuevo guarda la versión del método. Las instantáneas anteriores sin versión usan MONTHLY_NORMALIZED_V1: mantienen sus cifras originales al consultar, ajustar y reconstruir criterios desde su histórico. Los trabajos iniciados antes del despliegue mantienen su método en todos sus bloques; los nuevos capturan NET_PERIOD_V2. Para aplicar la corrección a una propuesta publicada hay que calcular de nuevo y, después, regenerar su redistribución. No se reescriben resultados guardados.
+
+El Excel incluye vendido, devuelto, neto contable, días y método; el neto contable resta las cantidades originales también en cálculos anteriores, cuya propuesta sigue usando su fórmula guardada. El detalle mensual muestra ventas, devoluciones, neto firmado y media por días realmente incluidos. Si el neto total es negativo se conserva y se avisa; la base de planificación de Media se limita a cero para evitar objetivos negativos, sin inventar ventas. La desviación usa la serie diaria firmada completa. Mediana y moda continúan sobre días positivos.
+
+Aprovisionamiento suma ventas y devoluciones de las cinco delegaciones antes de obtener la media de la red; no pierde devoluciones por recortar cada delegación/día a cero. La reserva de Almeiras y la redistribución consumen los criterios de las instantáneas correspondientes. No se crean pedidos ni se escribe en EXIT.

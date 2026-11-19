@@ -129,7 +129,7 @@ def redistribution(rows):
         donors.sort(key=lambda d:(-d['left'],d['row']['delegation']))
         def evidence(row):
             keys=('delegation','stock','incoming','outgoing','maximum_stock','inventory_position','final_quantity',
-                'daily_mean','daily_reference','monthly_mean','daily_std','safety_stock','minimum_stock','replenishment_point',
+                'gross_sales','returns','total_demand','observed_days','consumption_method','daily_mean','daily_reference','monthly_mean','daily_std','safety_stock','minimum_stock','replenishment_point',
                 'target_stock','effective_multiple','exit_multiple','adjusted_quantity','quantity_without_multiple',
                 'parameters','calculation','manual_parameters','manually_excluded','source','consumption_basis')
             return {key:row.get(key) for key in keys}
@@ -196,7 +196,7 @@ def rebased_planning_rows(db,scenario,delegation,basis,codes=None):
             if old.get('manually_excluded'):row['final_quantity']=0;row['manually_excluded']=True
             row['manual_parameters']=old.get('manual_parameters',{})
             output.append({key:row.get(key) for key in ('sku','delegation','description','unit_type','stock','incoming','outgoing','maximum_stock',
-                'inventory_position','final_quantity','effective_multiple','statistic_available','daily_reference','monthly_mean','daily_std',
+                'gross_sales','returns','total_demand','observed_days','consumption_method','inventory_position','final_quantity','effective_multiple','statistic_available','daily_reference','monthly_mean','daily_std',
                 'safety_stock','minimum_stock','replenishment_point','target_stock','exit_multiple','adjusted_quantity','quantity_without_multiple',
                 'parameters','calculation','manual_parameters','manually_excluded')}|{'daily_mean':row['daily_reference']})
     return output
@@ -216,10 +216,10 @@ def calculate_redistribution(db,consumption_basis='MEAN',codes=None):
         from .replenishment import basis_expression
         payload=basis_expression(Result.payload,consumption_basis)
         columns=[Result.sku,Result.delegation]
-        columns += [payload[key].as_string().label(key) for key in ('description','unit_type')]
+        columns += [payload[key].as_string().label(key) for key in ('description','unit_type','consumption_method')]
         columns += [payload[key].as_float().label(key) for key in ('stock','incoming','outgoing','maximum_stock','inventory_position','final_quantity','daily_mean','effective_multiple')]
         columns += [payload['statistic_available'].as_boolean().label('statistic_available')]
-        columns += [payload[key].as_float().label(key) for key in ('daily_reference','monthly_mean','daily_std','safety_stock','minimum_stock',
+        columns += [payload[key].as_float().label(key) for key in ('gross_sales','returns','total_demand','observed_days','daily_reference','monthly_mean','daily_std','safety_stock','minimum_stock',
             'replenishment_point','target_stock','exit_multiple','adjusted_quantity','quantity_without_multiple')]
         columns += [payload[key].label(key) for key in ('parameters','calculation','manual_parameters')]
         columns += [payload['manually_excluded'].as_boolean().label('manually_excluded')]
