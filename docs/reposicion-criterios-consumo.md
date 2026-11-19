@@ -24,7 +24,7 @@ La tabla identifica los materiales a revisar; el detalle incluye fechas, cantida
 El histórico disponible está agregado por día: no identifica un pedido individual ni prueba que la operación fuera spot. Una concentración de pedidos, una obra, una promoción o la estacionalidad pueden producir picos válidos. La decisión de excluir una demanda o cambiar la reposición exige revisar su contexto; no se excluye automáticamente.
 
 
-La lista muestra el neto del periodo y una bandera de análisis. El balance de vendido, devuelto, neto y días reales se muestra en el detalle de los nuevos cálculos. El aviso de posible spot se destaca en ámbar e indica la proporción de consumo afectada. La falta de análisis de un cálculo anterior se identifica expresamente como «Excepcionalidad sin analizar», diferenciada de «Sin picos atípicos detectados». No se recalcula automáticamente al mostrar la marca.
+La lista muestra el promedio mensual de referencia con dos decimales y una bandera de análisis; el neto del periodo queda en el detalle. En los nuevos cálculos, la referencia mensual es media diaria neta × 30, sin volver a extrapolar cada mes. El balance de vendido, devuelto, neto y días reales se muestra en el detalle de los nuevos cálculos. El aviso de posible spot se destaca en ámbar e indica la proporción de consumo afectada. La falta de análisis de un cálculo anterior se identifica expresamente como «Excepcionalidad sin analizar», diferenciada de «Sin picos atípicos detectados». No se recalcula automáticamente al mostrar la marca.
 
 
 ## Indicador de excepcionalidad por material/delegación
