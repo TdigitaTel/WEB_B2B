@@ -1,4 +1,5 @@
 """Small saved projection for filtering/aggregating, without histories or variants."""
+from .replenishment_alerts import stock_alert_code
 from sqlalchemy import bindparam, event, inspect, select, text, update
 
 FIELDS = ('consumption_basis', 'description', 'final_quantity', 'central_can_supply',
@@ -11,6 +12,7 @@ def filter_projection(payload):
         # Keep the existing SQL/legacy null semantics, including alert counts.
         return {**{key: row[key] for key in FIELDS if key in row},
                 'exceptionality_level': (row.get('exceptionality') or {}).get('level','NOT_ANALYZED'),
+                'stock_alert_code':stock_alert_code(row) if row.get('delegation') is not None else None,
                 'recommendations': [0] * len(row.get('recommendations', []))}
     return {**compact(payload), 'consumption_variants': {
         basis: compact(row) for basis, row in payload.get('consumption_variants', {}).items()}}

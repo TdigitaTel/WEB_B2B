@@ -3,7 +3,7 @@ export type ConsumptionExceptionality={level:string;reasons:string[];observed_da
 export type SpotSummary={status:string;flagged_share_percent?:number;positive_days?:number;single_consumption?:{day:string;quantity:number}|null};
 export default function SpotIndicator({analysis,exceptionality,onReview}:{analysis?:SpotSummary;exceptionality?:ConsumptionExceptionality;onReview?:()=>void}){
  if(exceptionality){
-  const labels:Record<string,string>={HIGH:'Alta excepcionalidad · revisar',MEDIUM:'Consumo poco frecuente · revisar',LOW:'Sin señales de excepcionalidad',LIMITED_HISTORY:'Periodo corto · interpretación limitada',NO_CONSUMPTION:'Sin consumo positivo'};
+  const labels:Record<string,string>={HIGH:'Picos o concentración · revisar',MEDIUM:'Consumo poco frecuente · revisar',LOW:'Sin señales de excepcionalidad',LIMITED_HISTORY:'Periodo corto · interpretación limitada',NO_CONSUMPTION:'Sin consumo positivo'};
   const flags:Record<string,string>={CONCENTRATION:'Concentrado en pocos días',LOW_FREQUENCY:'Baja frecuencia',OUTLIERS:'Picos atípicos',OUTLIER_IMPACT:'Picos con impacto relevante',FEW_ACTIVE_DAYS:'Pocos días con consumo',SHORT_PERIOD:'Menos de 30 días observados'};
   const fmt=(n:number)=>n.toLocaleString('es-ES',{maximumFractionDigits:1});
   const content=<><b>{exceptionality.level==='LOW'&&exceptionality.outlier_days>0?'Consumo recurrente · picos de bajo impacto':labels[exceptionality.level]||'Excepcionalidad sin analizar'}</b><small>{exceptionality.positive_days} de {exceptionality.observed_days} días con consumo ({fmt(exceptionality.consumption_day_percent)} %).</small><small>Los {exceptionality.top_days.length} mayores días concentran {fmt(exceptionality.top3_share_percent)} % del consumo.</small>{exceptionality.outlier_share_percent!=null&&exceptionality.outlier_days>0&&<small>Los picos señalados representan {fmt(exceptionality.outlier_share_percent)} % del consumo total.</small>}{exceptionality.reasons.length>0&&<small>{exceptionality.reasons.map(key=>flags[key]||key).join(' · ')}</small>}{onReview&&<small className="repl-spot-review">Ver análisis →</small>}</>;
@@ -27,7 +27,7 @@ export default function SpotIndicator({analysis,exceptionality,onReview}:{analys
 
 
 const exceptionalityStates:Record<string,{label:string;tone:string;notice:string|null}>={
- HIGH:{label:'Alta excepcionalidad',tone:'high',notice:'Revisar consumo excepcional.'},
+ HIGH:{label:'Revisar picos o concentración',tone:'high',notice:'Revisar picos o concentración.'},
  MEDIUM:{label:'Consumo poco frecuente',tone:'medium',notice:'Revisar recurrencia.'},
  LOW:{label:'Sin señales de excepcionalidad',tone:'low',notice:null},
  LIMITED_HISTORY:{label:'Periodo de análisis limitado',tone:'unknown',notice:'Histórico limitado.'},
@@ -40,4 +40,4 @@ export function ExceptionalityFlag({value,onReview}:{value?:ConsumptionException
  const state=exceptionalityState(value);
  return <button type="button" className={`repl-exceptionality-flag repl-exceptionality-${state.tone}`} data-exceptionality-level={value?.level||'NOT_ANALYZED'} aria-label={`${state.label}. Ver análisis del material`} title={`${state.label}. Ver análisis`} onClick={onReview}><span aria-hidden="true">⚑</span></button>;
 }
-export function ExceptionalityLegend(){return <div className="repl-exceptionality-legend" aria-label="Leyenda de excepcionalidad"><b>Excepcionalidad:</b>{[['high','Alta'],['medium','Revisar recurrencia'],['low','Sin señales'],['unknown','Sin análisis o datos suficientes']].map(([tone,label])=><span key={tone}><span className={`repl-exceptionality-${tone}`} aria-hidden="true">⚑</span> {label}</span>)}</div>}
+export function ExceptionalityLegend(){return <div className="repl-exceptionality-legend" aria-label="Leyenda de excepcionalidad"><b>Excepcionalidad:</b>{[['high','Revisar picos / concentración'],['medium','Revisar recurrencia'],['low','Sin señales'],['unknown','Sin análisis o datos suficientes']].map(([tone,label])=><span key={tone}><span className={`repl-exceptionality-${tone}`} aria-hidden="true">⚑</span> {label}</span>)}</div>}

@@ -26,6 +26,7 @@ from .models import (AuditEvent, MaterialArea, MaterialFamily, MaterialSubfamily
     ReplenishmentAdjustment as Adjustment, ReplenishmentSettings as ModuleSettings,
     ReplenishmentJob as Job, ReplenishmentBatch as Batch, User)
 from .replenishment_engine import Parameters, PRECEDENCE, prepare_context, calculate_article, annotate_central, summarize, rounded_dispatch, quantity_comparison, ConsumptionBasis, selected_basis, calculate_all_bases, annotate_all_bases, consumption_analysis_label, demand_statistics, history_statistics
+from .replenishment_alerts import with_stock_alert, stock_alert_expression
 from .replenishment_source import DELEGATIONS, CALCULATION_DELEGATIONS, MAX_ARTICLES, HARD_MAX_ARTICLES, read_replenishment_source
 
 operator=require_roles('ADMIN','OPERADOR_TIENDA')
@@ -309,6 +310,7 @@ class ResultFilters(BaseModel):
     alerts_only:bool=False
     needed_only:bool=False
     central_only:bool=False
+    stock_alert:Literal['ALL','ATTENTION','NO_STOCK','INSUFFICIENT','UNKNOWN']='ALL'
     overstock_only:bool=False
     consumption:Literal['ALL','WITH','WITHOUT']='ALL'
     minimum_monthly_consumption:float=Field(0,ge=0,le=1e9,allow_inf_nan=False)
@@ -343,6 +345,9 @@ def filtered_results(scenario_id,filters):
     if alerts_only:query=query.where(func.json_array_length(payload['recommendations'])>0)
     if needed_only:query=query.where(payload['final_quantity'].as_float()>0)
     if central_only:query=query.where(payload['central_can_supply'].as_boolean().is_(True))
+    if filters.stock_alert!='ALL':
+        alarm=stock_alert_expression(payload,basis_expression(Result.payload,filters.consumption_basis),Result.delegation)
+        query=query.where(alarm.in_(['NO_STOCK','INSUFFICIENT']) if filters.stock_alert=='ATTENTION' else alarm==filters.stock_alert)
     if overstock_only:query=query.where(payload['overstock'].as_boolean().is_(True))
     if filters.minimum_monthly_consumption>0 or filters.maximum_monthly_consumption is not None:
         monthly=func.coalesce(payload['monthly_mean'].as_float(),payload['daily_mean'].as_float()*30)
@@ -370,14 +375,18 @@ def ordered_results(query,sort,descending,basis=None):
 
 def result_summary(db,query,full=False,basis=None):
     # Do not project the full historical payload into the aggregate subquery.
-    data=query.with_only_columns(Result.sku,filter_payload().label("filter_data")).subquery()
+    data=query.with_only_columns(Result.sku,filter_payload().label("filter_data"),stock_alert_expression(basis_expression(filter_payload(),basis),basis_expression(Result.payload,basis),Result.delegation).label("stock_alert_code")).subquery()
     payload=basis_expression(data.c.filter_data,basis)
     count_if=lambda condition:func.coalesce(func.sum(case((condition,1),else_=0)),0)
     columns=[func.count().label('article_delegations'),func.count(func.distinct(data.c.sku)).label('articles_analyzed'),
         count_if(payload['final_quantity'].as_float()>0).label('to_replenish'),
         count_if(payload['central_can_supply'].as_boolean().is_(True)).label('central_covered'),
         count_if(payload['overstock'].as_boolean().is_(True)).label('overstock'),
-        count_if(payload['total_demand'].as_float()<=0).label('without_movement')]
+        count_if(payload['total_demand'].as_float()<=0).label('without_movement'),
+        count_if(data.c.stock_alert_code=='NO_STOCK').label('central_no_stock'),
+        count_if(data.c.stock_alert_code=='INSUFFICIENT').label('central_insufficient'),
+        count_if(data.c.stock_alert_code.in_(['NO_STOCK','INSUFFICIENT'])).label('central_attention'),
+        count_if(data.c.stock_alert_code=='UNKNOWN').label('central_unknown')]
     reference=func.coalesce(payload['daily_reference'].as_float(),payload['daily_mean'].as_float())
     if full:columns.extend([
         func.coalesce(func.sum(payload['final_quantity'].as_float()),0).label('units_proposed'),
@@ -405,7 +414,7 @@ def results(scenario_id:str,filters:ResultFilters=Depends(),page:int=Query(1,ge=
     query=filtered_results(scenario.id,filters)
     summary=result_summary(db,query,basis=filters.consumption_basis)
     rows=db.scalars(ordered_results(query,filters.sort,filters.descending,filters.consumption_basis).offset((page-1)*page_size).limit(page_size)).all()
-    return {'items':[{'id':row.id,**quantity_comparison(selected_basis(row.payload,filters.consumption_basis))} for row in rows],'total':summary['article_delegations'],
+    return {'items':[{'id':row.id,**with_stock_alert(quantity_comparison(selected_basis(row.payload,filters.consumption_basis)))} for row in rows],'total':summary['article_delegations'],
         'summary':summary,'page':page,'version':scenario.version}
 
 
@@ -522,12 +531,14 @@ def export(scenario_id:str,filters:ResultFilters=Depends(),db:Session=Depends(ge
             ('maximum_stock','Stock máximo'),('consumption_basis_label','Criterio de consumo'),('daily_reference','Base diaria utilizada'),('quantity_without_multiple','A reponer sin agrupación'),('quantity_with_exit_multiple','A reponer con múltiplos EXIT'),('exit_multiple','Múltiplo EXIT'),
             ('central_available','Disponible para despacho'),('central_status','Cobertura Almeiras sin agrupación'),('central_exit_status','Cobertura Almeiras con múltiplos EXIT'),
             ('notices','Avisos')]
+    fields.append(('stock_alarm','Alerta de reposición / Almeiras'))
     extra=['Reglas aplicadas','Recomendaciones'] if mode=='expanded' else []
     append(sheet,[label for _,label in fields]+extra)
     count=0
     for result in rows:
         view=selected_basis(result.payload,filters.consumption_basis)
         row={**quantity_comparison(view),'monthly_mean':view.get('monthly_mean',view['daily_mean']*30)}
+        row['stock_alarm']=with_stock_alert(row)['stock_alert']['label']
         row['consumption_analysis']=consumption_analysis_label(row)
         info=row.get('exceptionality') or {}
         for key in ('consumption_day_percent','top3_share_percent','largest_quantity','largest_date'):row[key]=info.get(key)
