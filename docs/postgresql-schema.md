@@ -33,9 +33,9 @@ Los albaranes se consultan directamente en `dbo.AlbaranVentaCabecera` y las fact
 
 Las relaciones documentales de EXIT son:
 
-- `AlbaranVentaCabecera` → `AlbaranVentaLineas` por `EjercicioAlbaran`, `SerieAlbaran`, `NumeroAlbaran`.
-- `AlbaranVentaCabecera` → `PedidoVentaCabecera` por `EjercicioPedido`, `SeriePedido`, `NumeroPedido`.
-- `AlbaranVentaCabecera` → `FacturaVenta` por `EjercicioFactura`, `SerieFactura`, `NumeroFactura`.
+- `AlbaranVentaCabecera` → `AlbaranVentaLineas` por `CodigoEmpresa`, `EjercicioAlbaran`, `SerieAlbaran`, `NumeroAlbaran`.
+- `AlbaranVentaCabecera` → `PedidoVentaCabecera` por `CodigoEmpresa`, `EjercicioPedido`, `SeriePedido`, `NumeroPedido`.
+- `AlbaranVentaCabecera` → `FacturaVenta` por `CodigoEmpresa`, `EjercicioFactura`, `SerieFactura`, `NumeroFactura`.
 - `FacturaVenta` → `FacturaVentaIva` por `CodigoEmpresa`, `EjercicioFactura`, `SerieFactura`, `NumeroFactura`.
 - `GesDocAlbaranes` y `GesDocFacturas` conservan la ruta de los archivos asociados a cada clave documental.
 
@@ -103,3 +103,7 @@ Para imprimir el esquema exacto de una instalación, incluidos tipos, nulabilida
 docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api \
   python -m scripts.describe_postgres_schema
 ```
+
+### Regla para consultas de documentos EXIT
+
+Toda relación entre cabecera y líneas/detalle debe incluir la serie del documento junto con empresa, ejercicio y número. Para pedidos se usa `SeriePedido`, para albaranes `SerieAlbaran` y para facturas `SerieFactura`. La regla también se aplica si las tablas se consultan por separado: la selección y agrupación del detalle debe conservar la serie, incluso si está vacía. No se presupone una serie por coincidir el número ni se elimina de la clave al agregar consumos. Las vistas de EXIT deben auditarse en su definición original cuando corresponda; la aplicación no las redefine.

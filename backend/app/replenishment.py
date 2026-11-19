@@ -113,7 +113,7 @@ def scenario_payload(row):
         'source_notes':['Stock transferible Almeiras = stock físico − comprometido − reserva de consumo; no incluye entradas pendientes.',
             'Ventas: empresa 1. La vista de stock se usa con el alcance indicado, sin campo de empresa.',
             'Ventas del periodo elegido y stock consultado en la extracción; no se reconstruye stock histórico.',
-            'El vínculo cabecera/líneas usa número, ejercicio y empresa según el esquema facilitado.']}
+            'La clave documental completa es empresa, ejercicio, serie y número. Los cálculos anteriores necesitan una nueva extracción para aplicar correcciones de unión.']}
 
 def scenario_metadata(db,scenario_id):
     """Metadata only: never fetch the full EXIT snapshot to restore a saved screen."""

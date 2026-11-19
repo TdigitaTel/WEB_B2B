@@ -162,6 +162,7 @@ def test_source_sql_is_read_only_uses_prompt_fields_and_rejects_duplicate_stock(
     assert len(result['stocks'])==1 and result['stocks'][0]['stock']==10
     assert all(sql.strip().upper().startswith('SELECT') for sql,params in calls)
     assert 'avc.CodigoEmpresa=avl.CodigoEmpresa' in calls[2][0]
+    assert 'avc.SerieAlbaran=avl.SerieAlbaran' in calls[2][0]
     assert 'avc.IdDelegacion' in calls[2][0] and 'CodigoAlmacen' not in calls[3][0]
     assert calls[2][1][:2]==(date(2026,1,1),date(2026,2,1))
     duplicate=True

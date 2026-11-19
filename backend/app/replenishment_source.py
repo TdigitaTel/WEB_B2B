@@ -105,7 +105,7 @@ def read_replenishment_source(start: date, end: date, skus: list[str] | None = N
                 SUM(CASE WHEN avl.Unidades<0 THEN -avl.Unidades ELSE 0 END) AS returned
                 FROM dbo.AlbaranVentaCabecera avc INNER JOIN dbo.AlbaranVentaLineas avl
                 ON avc.NumeroAlbaran=avl.NumeroAlbaran AND avc.EjercicioAlbaran=avl.EjercicioAlbaran
-                AND avc.CodigoEmpresa=avl.CodigoEmpresa
+                AND avc.CodigoEmpresa=avl.CodigoEmpresa AND avc.SerieAlbaran=avl.SerieAlbaran
                 WHERE avc.CodigoEmpresa=1 AND avc.FechaAlbaran>=%s AND avc.FechaAlbaran<%s
                 AND avc.IdDelegacion IN ('00','01','02','04','05') AND avl.CodigoArticulo IN ({marks})
                 GROUP BY avl.CodigoArticulo,avc.IdDelegacion,CONVERT(date,avc.FechaAlbaran)''',
