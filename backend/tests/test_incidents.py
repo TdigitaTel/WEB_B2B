@@ -852,3 +852,30 @@ def test_material_validation_fails_closed_when_exit_is_unavailable():
     with pytest.raises(HTTPException) as result:
         validate_data([{'key':'codigo','label':'Artículo','type':'TEXT','required':True,'lookup':'MATERIAL','validate_code':True}],{'codigo':'03283'},[],unavailable)
     assert result.value.status_code==503
+
+
+
+def test_process_can_be_removed_when_all_cases_were_deleted(setup,rpa):
+    admin,(creator,worker,other),accounts=setup
+    saved=configure(admin,accounts)
+    draft=create(creator)
+    opened=action(creator,create(creator),'SUBMIT').json()
+    delete_case(creator,draft).raise_for_status()
+    current=next(item for item in admin.get(BASE+'/options').json()['types'] if item['configuration']['code']=='REPLENISHMENT')
+    assert not current['can_delete']
+    assert admin.delete(BASE+'/types/REPLENISHMENT',params={'revision':current['revision']}).status_code==409
+    delete_case(creator,opened).raise_for_status()
+    current=next(item for item in admin.get(BASE+'/options').json()['types'] if item['configuration']['code']=='REPLENISHMENT')
+    assert current['can_delete'] and current['in_use'] and current['has_incidents']
+    # Deletion eligibility does not unlock a version that was already used.
+    current['configuration']['steps'][0]['hours']=72
+    assert admin.put(BASE+'/types/REPLENISHMENT',json=current).status_code==409
+    result=admin.delete(BASE+'/types/REPLENISHMENT',params={'revision':current['revision']})
+    assert result.status_code==200,result.text
+    assert not any(item['configuration']['code']=='REPLENISHMENT' for item in admin.get(BASE+'/options').json()['types'])
+    assert creator.get(BASE+'/'+opened['id']).json()['workflow']==opened['workflow']
+    assert creator.get(BASE+'/'+draft['id']).json()['status']=='DELETED'
+    history=admin.get(BASE+'/types/REPLENISHMENT/history').json()
+    assert history['deleted'] and history['versions'][0]['in_use']
+    assert history['changes'][0]['action']=='DELETED'
+    assert creator.post(BASE,json=data()).status_code==409
