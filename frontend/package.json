@@ -41,7 +41,7 @@
     "test:category-menu": "node scripts/test-category-menu.cjs",
     "test:order-email-history": "node scripts/test-order-email-history.cjs",
     "test:home-banner": "node scripts/test-home-banner.cjs",
-    "test:incidents": "node scripts/test-incidents.cjs"
+    "test:incidents": "node scripts/test-incidents.cjs && node scripts/test-incident-configured-fields.cjs"
   },
   "dependencies": {
     "jsqr": "^1.4.0",
