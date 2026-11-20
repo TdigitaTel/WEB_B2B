@@ -725,6 +725,7 @@ def test_configured_stage_fields_validate_and_record_without_initial_order(setup
             {'key':'observacion','label':'Referencia opcional','type':'TEXT','required':False}]
     saved['configuration']['steps'][0]['fields']=fields
     saved=admin.put(BASE+'/types/REPLENISHMENT',json=saved).json()
+    fields=saved['configuration']['steps'][0]['fields']
     payload=data();payload['document']=''
     result=creator.post(BASE,json=payload);assert result.status_code==201,result.text
     row=result.json();assert row['document']==''
@@ -766,3 +767,88 @@ def test_invalid_stage_field_configuration_is_rejected(setup,fields):
     saved=configure(admin,accounts)
     saved['configuration']['steps'][0]['fields']=fields
     assert admin.put(BASE+'/types/REPLENISHMENT',json=saved).status_code==422
+
+
+def test_configured_registration_repeated_fields_exact_validation_and_frozen_version(setup,monkeypatch):
+    import app.incidents as module
+    admin,(creator,worker,other),accounts=setup
+    saved=configure(admin,accounts)
+    definitions=[{'key':'fecha','label':'Fecha de registro','type':'DATE','required':True},
+                 {'key':'articulo','label':'Código de artículo','type':'TEXT','required':True,'repeat':True,'lookup':'MATERIAL','validate_code':True},
+                 {'key':'cantidad','label':'Cantidad','type':'NUMBER','required':True,'repeat':True}]
+    saved['configuration'].update(registration_mode='CONFIGURED',registration_fields=definitions)
+    saved['configuration']['steps'][0]['fields']=definitions[1:]
+    result=admin.put(BASE+'/types/REPLENISHMENT',json=saved);assert result.status_code==200,result.text
+    saved=result.json()
+    calls=[]
+    def lookup(codes,**kwargs):
+        calls.append(codes)
+        return {code:{} for code in codes if code in {'03283','00012'}}
+    monkeypatch.setattr(module,'fetch_catalog_articles_by_codes',lookup)
+    monkeypatch.setattr(module,'stock_for',lambda *args:pytest.fail('Configured fields must not trigger stock queries'))
+    payload={**data(),'lines':[],'fields':{'fecha':'2026-11-20'},'field_rows':[{'articulo':'03283','cantidad':'10'},{'articulo':'00012','cantidad':'0'}]}
+    for invalid in [dict(payload,fields={}),dict(payload,fields={'fecha':'2026-02-30'}),dict(payload,field_rows=[]),dict(payload,field_rows=[{'articulo':'03283'}]),dict(payload,field_rows=[{'articulo':'NO-EXISTE','cantidad':'4'}]),dict(payload,field_rows=[{'articulo':'03283','cantidad':'NaN'}]),dict(payload,fields={'fecha':'2026-11-20','extra':'x'})]:
+        response=creator.post(BASE,json=invalid);assert response.status_code==422,response.text
+    response=creator.post(BASE,json=payload);assert response.status_code==201,response.text
+    row=response.json();assert row['fields']==payload['fields'] and row['field_rows']==payload['field_rows']
+    assert calls[-1]==['00012','03283'] # one batch, preserving leading zeroes
+    assert [field['key'] for field in row['registration_data']]==['fecha','articulo','cantidad','articulo','cantidad']
+    # Editing keeps values and an auditable previous version.
+    edited={**payload,'version':row['version'],'fields':{'fecha':'2026-11-19'}}
+    response=creator.put(BASE+'/'+row['id'],json=edited);assert response.status_code==200,response.text
+    row=response.json();assert row['fields']['fecha']=='2026-11-19'
+    correction=next(event for event in row['events'] if event['action']=='CORRECTED')
+    assert correction['detail']['previous']['registration_data'][0]['value']=='2026-11-20'
+    row=action(creator,row,'SUBMIT').json()
+    assert action(worker,row,field_rows=[]).status_code==422
+    assert action(worker,row,field_rows=[{'articulo':'NO-EXISTE','cantidad':'2'}]).status_code==422
+    response=action(worker,row,field_rows=payload['field_rows']);assert response.status_code==200,response.text
+    completed=next(event for event in response.json()['events'] if event['action']=='COMPLETED_STAGE')
+    assert [field['row'] for field in completed['detail']['fields']]==[1,1,2,2]
+    saved['configuration']['registration_fields'].reverse()
+    assert admin.put(BASE+'/types/REPLENISHMENT',json=saved).status_code==409
+    saved.update(new_version=True,change_note='Reordenar los datos del registro')
+    assert admin.put(BASE+'/types/REPLENISHMENT',json=saved).status_code==200
+    old=worker.get(BASE+'/'+row['id']).json()
+    assert old['workflow']['registration_fields'][0]['key']=='fecha'
+
+
+def test_optional_fields_no_exit_lookup_and_unknown_line_values_rejected():
+    from app.incident_fields import validate_data
+    fields=[{'key':'material','label':'Material','type':'TEXT','required':False,'lookup':'MATERIAL','repeat':True}]
+    def unexpected(codes):pytest.fail('Lookup only when configured to validate a nonempty code')
+    assert validate_data(fields,{},[],unexpected)==[]
+    result=validate_data(fields,{},[{'material':'MANUAL'}],unexpected)
+    assert result[0]['value']=='MANUAL'
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException):validate_data(fields,{},[{'other':'x'}],unexpected)
+    with pytest.raises(HTTPException):validate_data([],{},[{}],unexpected)
+
+
+@pytest.mark.parametrize('field',[
+    {'key':'a','label':'Código','type':'NUMBER','lookup':'MATERIAL'},
+    {'key':'a','label':'Código','type':'TEXT','validate_code':True},
+])
+def test_invalid_material_field_configuration(field):
+    from app.incident_schemas import StageField
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):StageField.model_validate(field)
+
+
+
+def test_repeated_optional_cells_keep_their_order_and_round_trip():
+    from app.incident_fields import validate_data,input_values
+    fields=[{'key':'primero','label':'Primero','type':'TEXT','required':False,'repeat':True},
+            {'key':'segundo','label':'Segundo','type':'TEXT','required':False,'repeat':True}]
+    values=validate_data(fields,{},[{'segundo':'B'},{'primero':'A'},{}],lambda codes:{})
+    assert [(value['row'],value['key']) for value in values]==[(1,'primero'),(1,'segundo'),(2,'primero'),(2,'segundo'),(3,'primero'),(3,'segundo')]
+    assert input_values(values)['field_rows']==[{'primero':'','segundo':'B'},{'primero':'A','segundo':''},{'primero':'','segundo':''}]
+
+
+def test_material_validation_fails_closed_when_exit_is_unavailable():
+    from app.incident_fields import validate_data
+    from fastapi import HTTPException
+    def unavailable(codes):raise ConnectionError('EXIT unavailable')
+    with pytest.raises(HTTPException) as result:
+        validate_data([{'key':'codigo','label':'Artículo','type':'TEXT','required':True,'lookup':'MATERIAL','validate_code':True}],{'codigo':'03283'},[],unavailable)
+    assert result.value.status_code==503

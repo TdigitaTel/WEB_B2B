@@ -197,7 +197,7 @@ let root=createRoot(document.getElementById('root'));
  // Registered records expose sending before the material table; inbox changes reset pagination/status.
  await React.act(async()=>root.unmount());root=createRoot(document.getElementById('root'));
  const RegistrationDetail=require('../app/IncidentDetail.tsx').default;
- await React.act(async()=>root.render(React.createElement(RegistrationDetail,{value:detail,options,onUpdated:()=>{},onBack:()=>{},onEdit:()=>{}})));
+ await React.act(async()=>root.render(React.createElement(RegistrationDetail,{value:{...detail,lines:[{sku:'03283',description:'Material',unit:'PZ'}]},options,onUpdated:()=>{},onBack:()=>{},onEdit:()=>{}})));
  assert.match(document.body.textContent,/Registrado · pendiente de envío/);
  const sendButton=[...document.querySelectorAll('button')].find(button=>button.textContent==='Enviar al flujo');
  assert.ok(sendButton);assert.ok(document.querySelector('.incident-registration').compareDocumentPosition(document.querySelector('.incident-table')) & Node.DOCUMENT_POSITION_FOLLOWING);
