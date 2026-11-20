@@ -51,9 +51,13 @@ def used(db,code,number=None):
     return db.scalar(query) or 0
 
 
+def remaining(db,code):
+    return db.scalar(select(func.count()).select_from(LogisticsIncident).where(LogisticsIncident.type_code==code,LogisticsIncident.status!='DELETED')) or 0
+
+
 def metadata(db,row):
     number=int(row.configuration.get('_flow_version',1))
-    return {'flow_version':number,'in_use':bool(used(db,row.code,number)),'has_incidents':bool(used(db,row.code)),
+    return {'flow_version':number,'in_use':bool(used(db,row.code,number)),'has_incidents':bool(used(db,row.code)),'can_delete':not bool(remaining(db,row.code)),
         'version_count':db.scalar(select(func.count()).select_from(Version).where(Version.type_code==row.code)) or 1}
 
 
