@@ -468,7 +468,7 @@ def test_registered_draft_seals_version_but_allows_renaming(setup):
     saved['configuration']['steps'][0]['hours']=72
     blocked=admin.put(BASE+'/types/REPLENISHMENT',json=saved)
     assert blocked.status_code==409 and 'nueva versión' in blocked.text
-    assert admin.delete(BASE+'/types/REPLENISHMENT',params={'revision':saved['revision']}).status_code==409
+    assert admin.delete(BASE+'/types/REPLENISHMENT',params={'revision':saved['revision']}).status_code==403
     renamed=admin.patch(BASE+'/types/REPLENISHMENT/name',json={'revision':saved['revision'],'name':'Aprovisionamiento'}).json()
     assert renamed['flow_version']==1 and renamed['in_use'] and renamed['has_incidents']
     current=creator.get(BASE+'/'+row['id']).json()
@@ -511,12 +511,12 @@ def test_explicit_new_version_preserves_old_cases_and_assignments(setup):
     assert admin.put(BASE+'/types/REPLENISHMENT',json=second).status_code==409
 
 
-def test_unused_process_deletion_preserves_history_and_reserves_code(setup):
+def test_unused_process_deletion_preserves_history_and_reserves_code(setup,rpa_config):
     admin,(creator,worker,other),accounts=setup
     saved=configure(admin,accounts)
-    assert creator.delete(BASE+'/types/REPLENISHMENT',params={'revision':saved['revision']}).status_code==403
-    assert admin.delete(BASE+'/types/REPLENISHMENT',params={'revision':saved['revision']+1}).status_code==409
-    result=admin.delete(BASE+'/types/REPLENISHMENT',params={'revision':saved['revision']})
+    assert admin.delete(BASE+'/types/REPLENISHMENT',params={'revision':saved['revision']}).status_code==403
+    assert rpa_config.delete(BASE+'/types/REPLENISHMENT',params={'revision':saved['revision']+1}).status_code==409
+    result=rpa_config.delete(BASE+'/types/REPLENISHMENT',params={'revision':saved['revision']})
     assert result.status_code==200,result.text
     assert not any(item['configuration']['code']=='REPLENISHMENT' for item in admin.get(BASE+'/options').json()['types'])
     assert creator.post(BASE,json=data()).status_code==409
@@ -526,14 +526,14 @@ def test_unused_process_deletion_preserves_history_and_reserves_code(setup):
     assert admin.put(BASE+'/types/REPLENISHMENT',json=saved).status_code==409
 
 
-def test_completed_incidence_still_prevents_process_deletion(setup):
+def test_completed_incidence_still_prevents_process_deletion(setup,rpa_config):
     admin,(creator,worker,other),accounts=setup
     saved=configure(admin,accounts)
     saved['configuration']['steps']=[{**saved['configuration']['steps'][0],'kind':'CONFIRM','scope':'REQUESTER'}]
     saved=admin.put(BASE+'/types/REPLENISHMENT',json=saved).json()
     row=action(creator,create(creator),'SUBMIT').json()
     assert action(creator,row).json()['status']=='CLOSED'
-    assert admin.delete(BASE+'/types/REPLENISHMENT',params={'revision':saved['revision']}).status_code==409
+    assert rpa_config.delete(BASE+'/types/REPLENISHMENT',params={'revision':saved['revision']}).status_code==409
     assert admin.get(BASE+'/types/REPLENISHMENT/history').json()['versions'][0]['in_use']
 
 
@@ -855,7 +855,7 @@ def test_material_validation_fails_closed_when_exit_is_unavailable():
 
 
 
-def test_process_can_be_removed_when_all_cases_were_deleted(setup,rpa):
+def test_process_can_be_removed_when_all_cases_were_deleted(setup,rpa_config):
     admin,(creator,worker,other),accounts=setup
     saved=configure(admin,accounts)
     draft=create(creator)
@@ -863,14 +863,14 @@ def test_process_can_be_removed_when_all_cases_were_deleted(setup,rpa):
     delete_case(creator,draft).raise_for_status()
     current=next(item for item in admin.get(BASE+'/options').json()['types'] if item['configuration']['code']=='REPLENISHMENT')
     assert not current['can_delete']
-    assert admin.delete(BASE+'/types/REPLENISHMENT',params={'revision':current['revision']}).status_code==409
+    assert rpa_config.delete(BASE+'/types/REPLENISHMENT',params={'revision':current['revision']}).status_code==409
     delete_case(creator,opened).raise_for_status()
     current=next(item for item in admin.get(BASE+'/options').json()['types'] if item['configuration']['code']=='REPLENISHMENT')
     assert current['can_delete'] and current['in_use'] and current['has_incidents']
     # Deletion eligibility does not unlock a version that was already used.
     current['configuration']['steps'][0]['hours']=72
     assert admin.put(BASE+'/types/REPLENISHMENT',json=current).status_code==409
-    result=admin.delete(BASE+'/types/REPLENISHMENT',params={'revision':current['revision']})
+    result=rpa_config.delete(BASE+'/types/REPLENISHMENT',params={'revision':current['revision']})
     assert result.status_code==200,result.text
     assert not any(item['configuration']['code']=='REPLENISHMENT' for item in admin.get(BASE+'/options').json()['types'])
     assert creator.get(BASE+'/'+opened['id']).json()['workflow']==opened['workflow']
@@ -898,3 +898,23 @@ def test_stock_lookup_requires_material_in_the_same_detail(setup,target):
     fields([stock,code])
     response=admin.put(BASE+'/types/REPLENISHMENT',json=saved)
     assert response.status_code==200,response.text
+
+
+@pytest.fixture
+def rpa_config(setup,rpa):
+    admin,clients,accounts=setup
+    with SessionLocal() as db:
+        access=db.get(OperatorAccess,accounts[0][0]);access.permissions={**access.permissions,'incident_config':True};db.commit()
+    return rpa
+
+
+def test_process_deletion_is_restricted_to_real_rpa_even_for_configurators(setup,rpa_config):
+    admin,(creator,worker,other),accounts=setup
+    saved=configure(admin,accounts)
+    assert admin.delete(BASE+'/types/REPLENISHMENT',params={'revision':saved['revision']}).status_code==403
+    with SessionLocal() as db:
+        user=db.get(User,accounts[1][0]);user.full_name='RPA'
+        access=db.get(OperatorAccess,user.id);access.permissions={**access.permissions,'incident_config':True,'incident_delete':True};db.commit()
+    assert worker.delete(BASE+'/types/REPLENISHMENT',params={'revision':saved['revision']}).status_code==403
+    assert not worker.get(BASE+'/options').json()['permissions']['incident_delete']
+    assert rpa_config.delete(BASE+'/types/REPLENISHMENT',params={'revision':saved['revision']}).status_code==200
