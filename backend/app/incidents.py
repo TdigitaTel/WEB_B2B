@@ -278,7 +278,7 @@ def rename_type(code:str,body:RenameFlow,user:User=Depends(operator),db:Session=
 def delete_type(code:str,revision:int=Query(ge=1),user:User=Depends(operator),db:Session=Depends(get_db)):
     require(user,db,'incident_config');row=locked_type(code,db)
     if row.revision!=revision:fail('El flujo ha cambiado. Recarga antes de eliminar',409)
-    if versions.used(db,code):fail('No se puede eliminar un flujo con incidencias registradas, aunque estén cerradas',409)
+    if versions.remaining(db,code):fail('No se puede eliminar un flujo mientras conserve incidencias sin eliminar, incluidas las cerradas',409)
     scoped=scoped_type({'configuration':versions.configuration(row.configuration)},scope_ids(user,db))
     if scoped['structure_locked']:fail('Necesitas acceso a todas las delegaciones del flujo para eliminarlo',403)
     row.configuration={**row.configuration,'_deleted':True};row.revision+=1
