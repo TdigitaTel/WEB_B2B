@@ -19,12 +19,14 @@ class StageField(BaseModel):
     type:Literal['TEXT','NUMBER','DATE']='TEXT'
     required:bool=False
     repeat:bool=False
-    lookup:Literal['NONE','MATERIAL']='NONE'
+    lookup:Literal['NONE','MATERIAL','STOCK']='NONE'
+    material_key:str=Field(default='',max_length=60)
     validate_code:bool=False
     @model_validator(mode='after')
     def valid_lookup(self):
-        if (self.lookup!='NONE' or self.validate_code) and self.type!='TEXT':raise ValueError('La consulta de materiales requiere un campo de texto')
+        if (self.lookup=='MATERIAL' or self.validate_code) and self.type!='TEXT':raise ValueError('La consulta de materiales requiere un campo de texto')
         if self.validate_code and self.lookup!='MATERIAL':raise ValueError('Selecciona la consulta de materiales para validar el código')
+        if self.lookup=='STOCK' and (self.type!='NUMBER' or not self.material_key):raise ValueError('La consulta de stock necesita un campo numérico y el campo del código de material')
         return self
     @field_validator('label')
     @classmethod
@@ -46,6 +48,8 @@ class Step(BaseModel):
     @classmethod
     def distinct_fields(cls,values):
         if len({field.key for field in values})!=len(values):raise ValueError('Los identificadores de campos de una etapa no pueden repetirse')
+        for field in values:
+            if field.lookup=='STOCK' and not any(other.key==field.material_key and other.type=='TEXT' and other.repeat==field.repeat for other in values):raise ValueError('El campo de stock debe consultar un código de material del mismo detalle o cabecera')
         return values
     require_document:bool=False
     require_stock_verification:bool=False

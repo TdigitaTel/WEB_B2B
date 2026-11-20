@@ -276,7 +276,7 @@ def rename_type(code:str,body:RenameFlow,user:User=Depends(operator),db:Session=
 
 @router.delete('/types/{code}')
 def delete_type(code:str,revision:int=Query(ge=1),user:User=Depends(operator),db:Session=Depends(get_db)):
-    require(user,db,'incident_config');row=locked_type(code,db)
+    require(user,db,'incident_delete');require(user,db,'incident_config');row=locked_type(code,db)
     if row.revision!=revision:fail('El flujo ha cambiado. Recarga antes de eliminar',409)
     if versions.remaining(db,code):fail('No se puede eliminar un flujo mientras conserve incidencias sin eliminar, incluidas las cerradas',409)
     scoped=scoped_type({'configuration':versions.configuration(row.configuration)},scope_ids(user,db))

@@ -26,7 +26,7 @@ export default function IncidentDetail({value,options,onUpdated,onBack,onEdit,on
   {value.can_work&&<>
    <div ref={fieldContainer} className="incident-fields">
     {current?.require_document&&<label>Número de movimiento (obligatorio)<input aria-label="Número de movimiento" required maxLength={160} value={document} onChange={e=>setDocument(e.target.value)}/></label>}
-    <IncidentConfiguredFields fields={current?.fields||[]} values={fieldValues} rows={fieldRows} onChange={setFieldValues} onRows={setFieldRows}/>
+    <IncidentConfiguredFields fields={current?.fields||[]} values={fieldValues} rows={fieldRows} onChange={setFieldValues} onRows={setFieldRows} delegationId={value.delegation_id}/>
     {requiresVerification&&<label className="incident-stock-confirmation"><input aria-label="Confirmar revisión de stock" required type="checkbox" checked={stockConfirmed} onChange={e=>setStockConfirmed(e.target.checked)}/>He revisado el stock y los movimientos posteriores al recuento.</label>}
    </div>
    <div className="incident-actions"><button className="primary" disabled={!note.trim()} onClick={()=>void act('ADVANCE')}>{closing?'Guardar y cerrar':'Guardar y continuar'}</button></div>
