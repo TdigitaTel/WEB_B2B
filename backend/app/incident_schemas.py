@@ -18,6 +18,14 @@ class StageField(BaseModel):
     label:str=Field(min_length=1,max_length=120)
     type:Literal['TEXT','NUMBER','DATE']='TEXT'
     required:bool=False
+    repeat:bool=False
+    lookup:Literal['NONE','MATERIAL']='NONE'
+    validate_code:bool=False
+    @model_validator(mode='after')
+    def valid_lookup(self):
+        if (self.lookup!='NONE' or self.validate_code) and self.type!='TEXT':raise ValueError('La consulta de materiales requiere un campo de texto')
+        if self.validate_code and self.lookup!='MATERIAL':raise ValueError('Selecciona la consulta de materiales para validar el código')
+        return self
     @field_validator('label')
     @classmethod
     def valid_label(cls,value):
@@ -52,6 +60,12 @@ class TypeConfiguration(BaseModel):
     name:str=Field(min_length=1,max_length=120)
     kind:Kind
     active:bool=False
+    registration_mode:Literal['MATERIALS','CONFIGURED']='MATERIALS'
+    registration_fields:list[StageField]=Field(default_factory=list,max_length=30)
+    @field_validator('registration_fields')
+    @classmethod
+    def distinct_registration_fields(cls,values):
+        return Step.distinct_fields(values)
     file_mode:Mode='OPTIONAL'
     max_files:int=Field(10,ge=1,le=20)
     max_file_mb:int=Field(4,ge=1,le=8)
@@ -107,7 +121,9 @@ class CreateIncident(BaseModel):
     description:str=Field(min_length=1,max_length=4000)
     priority:Literal['NORMAL','URGENT']='NORMAL'
     needed_on:date|None=None
-    lines:list[Line]=Field(min_length=1,max_length=100)
+    lines:list[Line]=Field(default_factory=list,max_length=100)
+    fields:dict[str,str]=Field(default_factory=dict,max_length=30)
+    field_rows:list[dict[str,str]]=Field(default_factory=list,max_length=100)
     @field_validator('reason','description')
     @classmethod
     def nonempty(cls,value):
@@ -120,6 +136,7 @@ class Action(BaseModel):
     note:str=Field(default='',max_length=4000)
     document:str=Field(default='',max_length=160)
     fields:dict[str,str]=Field(default_factory=dict,max_length=30)
+    field_rows:list[dict[str,str]]=Field(default_factory=list,max_length=100)
     verification_note:str=Field(default='',max_length=1000)
     verification_source:Literal['EXIT','MANUAL']='EXIT'
     user_id:int|None=None

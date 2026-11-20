@@ -16,11 +16,11 @@ from .models import (User,OperatorAccess,IncidentType as Type,IncidentSequence a
     LogisticsIncident as Incident,IncidentEvent as Event,IncidentAttachment as Attachment,IncidentEmail as Mail,Order,OrderItem,IncidentFlowVersion as FlowVersion,IncidentFlowChange as FlowChange)
 from .operator_permissions import permissions_for,delegation_scope,can_operate_delegation
 from .delegations import fetch_delegations
-from .erp_db import fetch_catalog_articles,connect_sqlserver
+from .erp_db import fetch_catalog_articles,fetch_catalog_articles_by_codes,connect_sqlserver
 from .incident_schemas import SaveType,CreateIncident,EditIncident,Action,TypeConfiguration,RenameFlow,DeleteIncident
 from .order_email_settings import email_address
 from .incident_scope import includes,allows_task
-from .incident_fields import validate_fields
+from .incident_fields import validate_data,input_values
 from .incident_flow import requester,stock_verification,normalize,document_required
 from . import incident_versions as versions
 from .incident_progress import progress,planned_ids
@@ -180,7 +180,8 @@ def detail(row,db,user):
     current=row.workflow['steps'][row.stage_index] if row.stage_index>=0 else None
     work=(row.assignee_id==user.id or supervisor) and bool(current and allows_task(user,db,row,current))
     if current and requester(current):work=work and row.assignee_id==user.id and row.creator_id==user.id
-    return {**summary(row,db,names,event_rows=events),'lines':row.lines,'workflow':scoped_configuration(row.workflow,scope_ids(user,db)),'file_mode':file_mode(row),'files':files,
+    registration=next((entry.detail.get('fields',[]) for entry in reversed(events) if entry.action in {'CREATED','CORRECTED'}),[])
+    return {**summary(row,db,names,event_rows=events),**input_values(registration),'registration_data':registration,'lines':row.lines,'workflow':scoped_configuration(row.workflow,scope_ids(user,db)),'file_mode':file_mode(row),'files':files,
         'events':[{'id':entry.id,'action':entry.action,'actor':names.get(entry.actor_id),'detail':entry.detail,'created_at':entry.created_at} for entry in events],
         'emails':mails,'can_delete':row.status in {'DRAFT','OPEN'} and p.get('incident_delete',False),'can_submit':row.status=='DRAFT' and row.creator_id==user.id and allowed_origin(user,db,row.delegation_id) and p.get('incident_create',False),
         'can_work':row.status=='OPEN' and bool(work),'can_attach':(row.status=='DRAFT' and row.creator_id==user.id and allowed_origin(user,db,row.delegation_id) and p.get('incident_create') or row.status=='OPEN' and bool(work)) and file_mode(row)!='FORBIDDEN',
@@ -355,6 +356,10 @@ def stock(sku:str=Query(min_length=1,max_length=100),delegation_id:str=Query(max
 
 def collect_lines(body,config):
     kind=config['kind']
+    if config.get('registration_mode')=='CONFIGURED':
+        if body.lines:fail('Usa los campos por línea configurados para este registro',422)
+        return []
+    if not body.lines:fail('Añade al menos un material',422)
     if len({line.sku.strip() for line in body.lines})!=len(body.lines):fail('No repitas el mismo material en la incidencia')
     lines=[{**line.model_dump(mode='json'),'sku':line.sku.strip()} for line in body.lines]
     if any(not line['sku'] for line in lines):fail('Indica el código de cada material')
@@ -390,6 +395,7 @@ def create(body:CreateIncident,user:User=Depends(operator),db:Session=Depends(ge
     if kind=='TRANSFER':
         if body.destination_id not in delegations or body.destination_id==body.delegation_id:fail('Selecciona una delegación de destino diferente')
         if not allowed_origin(user,db,body.destination_id):fail('Delegación de destino no autorizada',403)
+    registration=validate_data(config.get('registration_fields',[]),body.fields,body.field_rows,lambda codes:fetch_catalog_articles_by_codes(codes,active_only=False))
     lines=collect_lines(body,config)
     from sqlalchemy.dialects.postgresql import insert as pg_insert
     from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -399,7 +405,7 @@ def create(body:CreateIncident,user:User=Depends(operator),db:Session=Depends(ge
     value=db.scalar(update(Sequence).where(Sequence.year==year).values(value=Sequence.value+1).returning(Sequence.value))
     row=Incident(number=f'INC-{year}-{value:06d}',type_code=body.type_code,delegation_id=body.delegation_id,delegation_name=delegations[body.delegation_id].name,
         destination_id=body.destination_id if kind=='TRANSFER' else None,document=body.document.strip(),reason=body.reason,description=body.description.strip(),priority=body.priority,needed_on=body.needed_on,creator_id=user.id,workflow=deepcopy(config),lines=lines,updated_at=now())
-    db.add(row);db.flush();event(db,row,user,'CREATED');db.commit()
+    db.add(row);db.flush();event(db,row,user,'CREATED',fields=registration);db.commit()
     return detail(row,db,user)
 
 @router.get('')
@@ -506,7 +512,7 @@ def action(incident_id:str,body:Action,user:User=Depends(operator),db:Session=De
             else:assign(db,row,row.stage_index-1,user,body.note)
             event(db,row,user,'RETURNED',note=body.note)
         elif name=='ADVANCE':
-            field_values=validate_fields(step,body.fields)
+            field_values=validate_data(step.get('fields',[]),body.fields,body.field_rows,lambda codes:fetch_catalog_articles_by_codes(codes,active_only=False))
             files_required(db,row)
             if document_required(step) and not body.document.strip():fail('Esta actividad exige un documento de resolución o ejecución')
             verify=step['kind']=='EXECUTE' and row.workflow['kind']=='INVENTORY'
@@ -575,10 +581,11 @@ def edit(incident_id:str,body:EditIncident,user:User=Depends(operator),db:Sessio
         if body.destination_id not in stores() or body.destination_id==row.delegation_id:fail('Selecciona un destino diferente')
         if not allowed_origin(user,db,body.destination_id):fail('Delegación de destino no autorizada',403)
     if not allowed_origin(user,db,row.delegation_id):fail('Ya no tienes acceso a esa delegación',403)
-    previous={'document':row.document,'description':row.description,'reason':row.reason,'priority':row.priority,'needed_on':row.needed_on.isoformat() if row.needed_on else None,'destination_id':row.destination_id,'lines':deepcopy(row.lines)}
+    registration=validate_data(row.workflow.get('registration_fields',[]),body.fields,body.field_rows,lambda codes:fetch_catalog_articles_by_codes(codes,active_only=False))
+    previous={'registration_data':detail(row,db,user)['registration_data'],'document':row.document,'description':row.description,'reason':row.reason,'priority':row.priority,'needed_on':row.needed_on.isoformat() if row.needed_on else None,'destination_id':row.destination_id,'lines':deepcopy(row.lines)}
     row.document=body.document.strip();row.description=body.description.strip();row.reason=body.reason;row.priority=body.priority;row.needed_on=body.needed_on
     row.destination_id=body.destination_id if row.workflow['kind']=='TRANSFER' else None;row.lines=collect_lines(body,row.workflow)
-    row.version+=1;row.updated_at=now();event(db,row,user,'CORRECTED',previous=previous,changes={'document':row.document,'description':row.description,'reason':row.reason,'priority':row.priority,'needed_on':row.needed_on.isoformat() if row.needed_on else None,'destination_id':row.destination_id,'lines':row.lines});db.commit();return detail(row,db,user)
+    row.version+=1;row.updated_at=now();event(db,row,user,'CORRECTED',fields=registration,previous=previous,changes={'document':row.document,'description':row.description,'reason':row.reason,'priority':row.priority,'needed_on':row.needed_on.isoformat() if row.needed_on else None,'destination_id':row.destination_id,'lines':row.lines});db.commit();return detail(row,db,user)
 
 
 @router.get('/{incident_id}/stock')
