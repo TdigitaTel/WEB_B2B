@@ -879,3 +879,22 @@ def test_process_can_be_removed_when_all_cases_were_deleted(setup,rpa):
     assert history['deleted'] and history['versions'][0]['in_use']
     assert history['changes'][0]['action']=='DELETED'
     assert creator.post(BASE,json=data()).status_code==409
+
+
+
+@pytest.mark.parametrize('target', ['registration_fields','steps'])
+def test_stock_lookup_requires_material_in_the_same_detail(setup,target):
+    admin,clients,accounts=setup
+    saved=configure(admin,accounts)
+    stock={'key':'stock','label':'Stock','type':'NUMBER','lookup':'STOCK','material_key':'articulo','repeat':True}
+    code={'key':'articulo','label':'Artículo','type':'TEXT','repeat':True,'lookup':'MATERIAL'}
+    def fields(values):
+        if target=='steps':saved['configuration']['steps'][0]['fields']=values
+        else:saved['configuration']['registration_fields']=values
+    fields([stock])
+    assert admin.put(BASE+'/types/REPLENISHMENT',json=saved).status_code==422
+    fields([stock,{**code,'repeat':False}])
+    assert admin.put(BASE+'/types/REPLENISHMENT',json=saved).status_code==422
+    fields([stock,code])
+    response=admin.put(BASE+'/types/REPLENISHMENT',json=saved)
+    assert response.status_code==200,response.text
