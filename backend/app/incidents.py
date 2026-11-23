@@ -240,19 +240,23 @@ def save_type(code:str,body:SaveType,user:User=Depends(operator),db:Session=Depe
         for old,new in zip(old_steps,new_steps):
             new['delegations']={**{key:target for key,target in old.get('delegations',{}).items() if key not in scope},**new['delegations']}
     in_use=versions.used(db,code,number)
-    if body.new_version:
+    administrative_edit=bool(in_use and versions.structure(previous)!=versions.structure(saved) and permissions_for(user,db).get('incident_edit_used'))
+    note=body.change_note.strip()
+    if body.new_version or administrative_edit:
         if created:fail('Guarda el flujo inicial antes de crear otra versión',409)
-        if not body.change_note.strip():fail('Indica el motivo de la nueva versión')
+        if not note:
+            if not administrative_edit:fail('Indica el motivo de la nueva versión')
+            note='Edición administrativa del flujo utilizado; se conserva la versión anterior'
         number=(db.scalar(select(func.max(FlowVersion.number)).where(FlowVersion.type_code==code)) or number)+1
     elif in_use and versions.structure(previous)!=versions.structure(saved):
         fail('Esta versión ya tiene incidencias registradas y está bloqueada. Crea una nueva versión para modificar el flujo',409)
     snapshot=db.scalar(select(FlowVersion).where(FlowVersion.type_code==code,FlowVersion.number==number))
     if snapshot is None:
-        db.add(FlowVersion(type_code=code,number=number,configuration=deepcopy(saved),created_by=user.id,note=body.change_note.strip()))
+        db.add(FlowVersion(type_code=code,number=number,configuration=deepcopy(saved),created_by=user.id,note=note))
     elif not in_use:snapshot.configuration=deepcopy(saved)
     row.configuration={**saved,'_flow_version':number};row.revision+=1
-    action='CREATED' if created else 'VERSION_CREATED' if body.new_version else 'RENAMED' if in_use else 'EDITED'
-    versions.record(db,row,number,action,user,note=body.change_note.strip(),previous=previous,configuration=saved)
+    action='CREATED' if created else 'VERSION_CREATED' if body.new_version or administrative_edit else 'RENAMED' if in_use else 'EDITED'
+    versions.record(db,row,number,action,user,note=note,previous=previous,configuration=saved)
     audit(db,user,'INCIDENT_FLOW_'+action,'INCIDENT_TYPE',code,{'flow_version':number});db.commit()
     return scoped_type({'revision':row.revision,'configuration':saved,**versions.metadata(db,row)},scope)
 
@@ -457,7 +461,7 @@ def delete_incident(incident_id:str,body:DeleteIncident,user:User=Depends(operat
         previous={'status':row.status,'stage_index':row.stage_index,'assignee_id':row.assignee_id,'flow_version':row.workflow.get('_flow_version',1)}
         row.status='DELETED';row.assignee_id=None;row.due_at=None;row.assignment_version+=1;row.version+=1;row.updated_at=now()
         for job in db.scalars(select(Mail).where(Mail.incident_id==row.id,Mail.status.in_(['PENDING','RETRY']))):
-            job.status='SUPERSEDED';job.next_attempt_at=None;job.updated_at=now();job.diagnostic={'response':'Aviso cancelado: incidencia eliminada por RPA'}
+            job.status='SUPERSEDED';job.next_attempt_at=None;job.updated_at=now();job.diagnostic={'response':'Aviso cancelado: incidencia eliminada por administración'}
         event(db,row,user,'DELETED',note=body.note,previous=previous)
         db.commit()
     return {'deleted':True,'id':row.id,'number':row.number}

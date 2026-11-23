@@ -942,3 +942,31 @@ def test_material_lookup_code_is_limited_to_twenty_characters():
     field={'key':'code','label':'Código','type':'TEXT','lookup':'MATERIAL','required':True}
     assert validate_fields({'fields':[field]},{'code':'A'*20})[0]['value']=='A'*20
     with pytest.raises(HTTPException):validate_fields({'fields':[field]},{'code':'A'*21})
+
+
+
+@pytest.mark.parametrize('identity',['RPA','administrador'])
+def test_administrative_edit_of_used_flow_creates_version_automatically(setup,rpa_config,identity):
+    admin,(creator,worker,other),accounts=setup
+    with SessionLocal() as db:
+        db.get(User,accounts[0][0]).access_code=identity;db.commit()
+        if identity=='administrador':
+            from app.operator_access import promote_exit_administrator
+            assert promote_exit_administrator(db)==1
+    saved=configure(admin,accounts);case=create(creator)
+    assert rpa_config.get(BASE+'/options').json()['permissions']['incident_edit_used']
+    saved['configuration']['steps'][0]['name']='Registro corregido'
+    response=rpa_config.put(BASE+'/types/REPLENISHMENT',json=saved)
+    assert response.status_code==200,response.text
+    result=response.json();assert result['flow_version']==2 and not result['in_use']
+    old=creator.get(BASE+'/'+case['id']).json()
+    assert old['flow_version']==1 and old['workflow']==case['workflow']
+    history=rpa_config.get(BASE+'/types/REPLENISHMENT/history').json()
+    assert [value['number'] for value in history['versions']]==[2,1]
+    assert history['versions'][1]['configuration']['steps'][0]['name']==case['workflow']['steps'][0]['name']
+    assert history['changes'][0]['action']=='VERSION_CREATED' and history['changes'][0]['actor']
+    assert create(creator)['flow_version']==2
+    # Unchanged saves do not generate spurious versions, and stale revisions remain rejected.
+    assert rpa_config.put(BASE+'/types/REPLENISHMENT',json=saved).status_code==409
+    current=rpa_config.put(BASE+'/types/REPLENISHMENT',json=result)
+    assert current.status_code==200 and current.json()['flow_version']==2

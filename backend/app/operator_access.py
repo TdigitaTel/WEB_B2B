@@ -65,7 +65,7 @@ def linked(db, code):
 def user_payload(source, account=None, access=None):
     return {**source, 'configured': access is not None, 'enabled': bool(account and account.active), 'login': account.access_code or account.email if account else source['username'],
             'company_code': account.company_code if account else None, 'delegation_code': account.delegation_code if account else None,
-            'permissions': {key: access.permissions.get(key) is True for key in MODULES} if access else dict.fromkeys(MODULES, False),
+            'permissions':dict.fromkeys(MODULES,True) if account and account.role=='ADMIN' else {key: access.permissions.get(key) is True for key in MODULES} if access else dict.fromkeys(MODULES, False),
             'delegation_ids': access.permissions.get('delegation_ids', []) if access else [],
             'incident_all_processes': access.permissions.get('incident_all_processes') is True if access else False,
             'incident_process_codes': access.permissions.get('incident_process_codes', []) if access else [],
@@ -165,6 +165,9 @@ def save(data: AccessIn, user: User = Depends(manager), db=Depends(get_db)):
             raise HTTPException(409, 'El usuario o correo de acceso ya pertenece a otra cuenta') from exc
         access = OperatorAccess(user_id=account.id, exit_code=source['code'], permissions={})
         db.add(access)
+    was_exit_admin=(account.access_code or '').strip().casefold()=='administrador'
+    if login.casefold()=='administrador':account.role='ADMIN'
+    elif was_exit_admin and account.role=='ADMIN':account.role='OPERADOR_TIENDA'
     account.email = email
     account.access_code = login
     account.company_code = data.company_code; account.delegation_code = data.delegation_code
@@ -242,3 +245,14 @@ def provision_rpa(db):
     audit(db, None, 'OPERATOR_RPA_MIGRATED', 'USER', account.public_id, {'exit_code': source['code'], 'legacy_reused': legacy is not None})
     db.commit()
     return True
+
+
+
+def promote_exit_administrator(db):
+    """Promote only the enabled, linked EXIT login requested by the owner; keep credentials."""
+    rows=list(db.execute(select(User,OperatorAccess).join(OperatorAccess,OperatorAccess.user_id==User.id).where(func.lower(func.trim(User.access_code))=='administrador',User.active.is_(True),User.role=='OPERADOR_TIENDA')))
+    for account,access in rows:
+        account.role='ADMIN'
+        audit(db,None,'EXIT_ADMINISTRATOR_PROMOTED','USER',account.public_id,{'exit_code':access.exit_code,'login':account.access_code})
+    if rows:db.commit()
+    return len(rows)

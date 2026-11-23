@@ -246,3 +246,40 @@ def test_incident_process_management_is_explicit_and_task_only_accounts_are_supp
     finally:
         with SessionLocal() as db:
             db.execute(delete(IncidentType).where(IncidentType.code=='ACCESS_TEST'));db.commit()
+
+
+
+def test_exit_administrador_is_platform_admin_and_keeps_its_password(staff):
+    staff[0].update(username='administrador',name='Administrador de EXIT')
+    client=manager()
+    result=client.put('/api/v1/store/operator-access',json=payload(staff[0]))
+    assert result.status_code==200,result.text
+    password=result.json()['initial_password']
+    account_client=TestClient(app)
+    response=account_client.post('/api/v1/auth/login',json={'email':'administrador','password':password})
+    assert response.status_code==200,response.text
+    user=response.json()['user'];assert user['role']=='ADMIN'
+    for key in [*MODULES,'incident_delete','incident_edit_used']:assert user['operator_permissions'][key]
+    with SessionLocal() as db:
+        account=db.scalar(select(User).where(User.access_code=='administrador'))
+        original=account.password_hash
+        assert module.promote_exit_administrator(db)==0
+    again=client.put('/api/v1/store/operator-access',json=payload(staff[0]))
+    assert again.status_code==200 and again.json()['initial_password'] is None
+    with SessionLocal() as db:
+        assert db.get(User,account.id).password_hash==original
+
+
+def test_existing_linked_exit_administrator_promotion_is_idempotent_and_not_by_display_name(staff):
+    client=manager()
+    result=client.put('/api/v1/store/operator-access',json=payload(staff[1]));assert result.status_code==200
+    with SessionLocal() as db:
+        access=db.scalar(select(OperatorAccess).where(OperatorAccess.exit_code==staff[1]['code']))
+        account=db.get(User,access.user_id);account.full_name='administrador';db.commit()
+        assert module.promote_exit_administrator(db)==0
+        account.access_code='administrador';db.commit();password=account.password_hash
+        assert module.promote_exit_administrator(db)==1
+        assert module.promote_exit_administrator(db)==0
+        assert account.role=='ADMIN' and account.password_hash==password
+        from app.operator_permissions import permissions_for,delegation_scope
+        assert permissions_for(account,db)['incident_delete'] and delegation_scope(account,db) is None

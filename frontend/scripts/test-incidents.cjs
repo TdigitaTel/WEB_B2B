@@ -289,6 +289,13 @@ let root=createRoot(document.getElementById('root'));
  assert.ok(label('Delegación solicitante / destino'));
  assert.equal(label('Documento previo relacionado (opcional)'),undefined,'Generated orders are not requested on replenishment registration');
  // Normal attendance needs only observations; verification is a single configured checkbox.
+ const administrativeOptions={...options,permissions:{...options.permissions,incident_edit_used:true},types:[usedFlow]};
+ await React.act(async()=>root.unmount());root=createRoot(document.getElementById('root'));
+ await React.act(async()=>root.render(React.createElement(Flows,{options:administrativeOptions,onSaved:()=>{}})));
+ await React.act(async()=>document.querySelector('[aria-label="Editar flujo Toma de inventario"]').click());
+ assert.ok(!label('Nombre').querySelector('input').matches(':disabled'));
+ assert.ok([...document.querySelectorAll('button')].find(button=>button.textContent==='Guardar configuración del flujo'));
+ assert.match(document.body.textContent,/nueva versión automáticamente/);
  const executionStep={...config.steps[2],require_document:false,require_stock_verification:false,fields:[]};
  const executionValue={...activeValue,kind:'INVENTORY',stage_kind:'EXECUTE',stage_index:0,workflow:{...config,steps:[executionStep,config.steps[3]]}};
  await React.act(async()=>root.unmount());root=createRoot(document.getElementById('root'));

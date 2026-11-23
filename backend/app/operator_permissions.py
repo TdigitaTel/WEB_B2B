@@ -8,22 +8,22 @@ MODULES = {'orders': 'Pedidos', 'replenishment': 'Reposición', 'settings': 'Par
            'incident_config':'Incidencias · configurar flujos y responsables'}
 
 
-def rpa_incident_delete(user,access):
+def incident_administrator(user,access):
     # Identity comes from the unique EXIT-backed web login, never the display name or a submitted flag.
-    return bool(user.active and user.role in {'ADMIN','OPERADOR_TIENDA'} and access is not None and (user.access_code or '').strip().casefold()=='rpa')
+    return bool(user.active and user.role in {'ADMIN','OPERADOR_TIENDA'} and access is not None and (user.access_code or '').strip().casefold() in {'rpa','administrador'})
 
 
 def permissions_for(user, db):
     if user.role not in {'ADMIN', 'OPERADOR_TIENDA'}:
         return {}
+    access = db.get(OperatorAccess,user.id)
     if user.role == 'ADMIN':
-        return {**dict.fromkeys(MODULES, True), 'incident_access':True, 'incident_create':True, 'incident_delete':rpa_incident_delete(user,db.get(OperatorAccess,user.id)) if (user.access_code or '').strip().casefold()=='rpa' else False}
-    access = db.get(OperatorAccess, user.id)
+        return {**dict.fromkeys(MODULES, True), 'incident_access':True, 'incident_create':True, 'incident_delete':incident_administrator(user,access), 'incident_edit_used':incident_administrator(user,access)}
     # Compatibilidad mientras se trasladan cuentas existentes; las cuentas nuevas
     # tienen siempre un registro y deniegan por defecto los módulos no asignados.
     if access is None:
-        return {**{key:not key.startswith('incident_') for key in MODULES}, 'incident_access':True, 'incident_create':True, 'incident_delete':False}
-    return {**{key: access.permissions.get(key) is True for key in MODULES}, 'incident_access':True, 'incident_create':True,'incident_delete':rpa_incident_delete(user,access)}
+        return {**{key:not key.startswith('incident_') for key in MODULES}, 'incident_access':True, 'incident_create':True, 'incident_delete':False,'incident_edit_used':False}
+    return {**{key: access.permissions.get(key) is True for key in MODULES}, 'incident_access':True, 'incident_create':True,'incident_delete':incident_administrator(user,access),'incident_edit_used':incident_administrator(user,access)}
 
 
 def check_operator_path(user, db, path, method):

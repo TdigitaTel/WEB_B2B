@@ -221,6 +221,9 @@ def main():
                     db.rollback()
                     logging.getLogger(__name__).warning('No se pudo trasladar el operador a RPA. Revisar MCusuarios y ejecutar scripts/provision_rpa.py; se conserva el acceso anterior.', exc_info=True)
 
+    from .operator_access import promote_exit_administrator
+    from .db import SessionLocal
+    with SessionLocal() as db:promote_exit_administrator(db)
 
 
 if __name__ == "__main__":
