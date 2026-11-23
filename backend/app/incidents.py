@@ -349,7 +349,7 @@ def stock(sku:str=Query(min_length=1,max_length=100),delegation_id:str=Query(max
     if delegation_id not in stores() or not allowed_origin(user,db,delegation_id):fail('Delegación no autorizada',403)
     try:values=stock_for([sku],delegation_id)
     except HTTPException:raise
-    except Exception:fail('No se pudo consultar el stock de EXIT. Puedes registrar un valor manual, indicando su origen',503)
+    except Exception:fail('No se pudo consultar el stock de EXIT. Puedes introducir el stock manualmente',503)
     if sku not in values:fail('No hay una posición de stock inequívoca para este material',404)
     return {'sku':sku,'stock':values[sku],'captured_at':now()}
 
@@ -367,11 +367,11 @@ def collect_lines(body,config):
         live=[line.sku.strip() for line in body.lines if not line.manual_stock]
         try:stocks=stock_for(live,body.delegation_id) if live else {}
         except HTTPException:raise
-        except Exception:fail('No se pudo capturar el stock de EXIT. Reintenta o registra un valor manual con justificación',503)
+        except Exception:fail('No se pudo capturar el stock de EXIT. Reintenta o introduce el stock manualmente',503)
         for line in lines:
             if line['counted'] is None or not line['location'].strip():fail('En inventario indica cantidad contada y ubicación para cada material')
             if line['manual_stock']:
-                if line['system_stock'] is None or not line['manual_reason'].strip():fail('El stock manual necesita una cantidad y una justificación')
+                if line['system_stock'] is None:fail('Indica el stock del sistema de cada material')
             else:
                 if line['sku'].strip() not in stocks:fail('No existe una posición de stock inequívoca para '+line['sku'])
                 line['system_stock']=stocks[line['sku'].strip()]

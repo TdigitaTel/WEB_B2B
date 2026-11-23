@@ -15,6 +15,7 @@ def validate_fields(step,values,lookup=None):
         if not value:
             if field.get('required'):raise HTTPException(422,f'Completa el campo obligatorio «{label}»')
             continue
+        if field.get('lookup')=='MATERIAL' and len(value)>20:raise HTTPException(422,f'«{label}» admite como máximo 20 caracteres')
         if len(value)>1000:raise HTTPException(422,f'«{label}» supera los 1000 caracteres')
         if field['type']=='NUMBER' and not re.fullmatch(r'[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?',value):
             raise HTTPException(422,f'«{label}» debe ser un número válido')

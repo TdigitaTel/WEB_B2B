@@ -219,8 +219,9 @@ def test_manual_inventory_and_missing_mail_configuration_are_explicit(setup,monk
     admin,(creator,worker,other),accounts=setup
     configure(admin,accounts,'INVENTORY')
     body=data('INVENTORY');body['lines'][0].update({'manual_stock':True,'system_stock':10,'manual_reason':''})
+    body['lines'][0]['system_stock']=None
     assert creator.post(BASE,json=body).status_code==422
-    body['lines'][0]['manual_reason']='Stock anotado en el terminal antes de la caída de conexión'
+    body['lines'][0]['system_stock']=10
     response=creator.post(BASE,json=body);assert response.status_code==201,response.text
     row=response.json();assert row['lines'][0]['stock_source']=='MANUAL' and row['lines'][0]['delta']==-5
     action(creator,row,'SUBMIT')
@@ -918,3 +919,26 @@ def test_process_deletion_is_restricted_to_real_rpa_even_for_configurators(setup
     assert worker.delete(BASE+'/types/REPLENISHMENT',params={'revision':saved['revision']}).status_code==403
     assert not worker.get(BASE+'/options').json()['permissions']['incident_delete']
     assert rpa_config.delete(BASE+'/types/REPLENISHMENT',params={'revision':saved['revision']}).status_code==200
+
+
+
+def test_inventory_manual_quantity_does_not_query_exit_or_require_explanation(setup,monkeypatch):
+    import app.incidents as module
+    admin,(creator,worker,other),accounts=setup
+    configure(admin,accounts,'INVENTORY')
+    monkeypatch.setattr(module,'stock_for',lambda *args:pytest.fail('Manual entry must not query EXIT when saving'))
+    payload=data('INVENTORY');payload['lines'][0].update(manual_stock=True,system_stock=8,manual_reason='')
+    response=creator.post(BASE,json=payload)
+    assert response.status_code==201,response.text
+    line=response.json()['lines'][0]
+    assert line['system_stock']==8 and line['delta']==-3 and line['stock_source']=='MANUAL'
+    payload['lines'][0]['sku']='A'*21
+    assert creator.post(BASE,json=payload).status_code==422
+
+
+def test_material_lookup_code_is_limited_to_twenty_characters():
+    from app.incident_fields import validate_fields
+    from fastapi import HTTPException
+    field={'key':'code','label':'Código','type':'TEXT','lookup':'MATERIAL','required':True}
+    assert validate_fields({'fields':[field]},{'code':'A'*20})[0]['value']=='A'*20
+    with pytest.raises(HTTPException):validate_fields({'fields':[field]},{'code':'A'*21})

@@ -1,4 +1,4 @@
-export type StageField={key:string;label:string;type:'TEXT'|'NUMBER'|'DATE';required:boolean;repeat?:boolean;lookup?:'NONE'|'MATERIAL'|'STOCK';material_key?:string;validate_code?:boolean};
+export type StageField={key:string;label:string;type:'TEXT'|'NUMBER'|'DATE';required:boolean;multiline?:boolean;repeat?:boolean;lookup?:'NONE'|'MATERIAL'|'STOCK';material_key?:string;validate_code?:boolean};
 export type Target={user_id:number;email:string};
 export type Step={fields?:StageField[];name:string;kind:'WORK'|'APPROVE'|'EXECUTE'|'CONFIRM';scope:'GENERAL'|'DELEGATION'|'ORIGIN'|'DESTINATION'|'REQUESTER';general:Target|null;delegations:Record<string,Target>;substitute:Target|null;hours:number;files:'INHERIT'|'FORBIDDEN'|'OPTIONAL'|'REQUIRED';require_document:boolean;require_stock_verification?:boolean};
 export const activityLabels:Record<Step['kind'],string>={WORK:'Registrar',EXECUTE:'Ejecutar',APPROVE:'Autorizar',CONFIRM:'Cerrar'};

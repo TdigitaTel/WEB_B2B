@@ -19,7 +19,7 @@ Los responsables pueden ser generales o por delegación, con sustituto. Se puede
 
 ## Inventario
 
-Se pide código, ubicación, unidad, cantidad contada y fecha/hora. Se consulta `UnidadSaldo` de `VIS_EX_StockVentasDelegacion`, con identificación de empresa si está disponible; si no la hay, solo se admite la empresa 1, sin mezclar empresas. Una posición ausente o duplicada requiere revisión; no se inventa un stock cero. Al guardar se vuelve a capturar el valor. Si EXIT no está disponible, se puede aportar stock manual con justificación y queda marcado como manual.
+Se pide código, ubicación, unidad, cantidad contada y fecha/hora. Se consulta `UnidadSaldo` de `VIS_EX_StockVentasDelegacion`, con identificación de empresa si está disponible; si no la hay, solo se admite la empresa 1, sin mezclar empresas. Una posición ausente o duplicada requiere revisión; no se inventa un stock cero. La consulta es opcional: el stock puede introducirse o corregirse manualmente, sin justificación adicional. Al guardar desde el formulario se conserva la cifra aportada por el usuario, identificada como manual, sin volver a consultar EXIT.
 
 Ejemplo: sistema 10, contado 5, diferencia −5. Se solicita dejar el material en 5; no se interpreta como una orden ciega de restar cinco. El configurador elige si hay autorización, ejecución y cierre, y su orden. El documento de ejecución y la comprobación del stock actual se exigen solo cuando están marcados en la etapa. Si se registra una comprobación, se consulta el stock actual o se aporta una revisión manual justificada. **No se escribe ni se ajusta stock en EXIT desde estas incidencias.** La ejecución real se realiza en EXIT y aquí se registra su evidencia.
 
@@ -142,3 +142,8 @@ Los datos de registro se conservan en los eventos CREATED/CORRECTED; la ficha re
 
 
 «Insertar detalle» añade un registro vacío; no se exige buscar material antes de insertarlo. En el formulario configurable aparece únicamente si existen campos marcados como «Campo del detalle (repetible)». Cada detalle ofrece su propia lupa de material y, si está configurado en un campo numérico, «Consultar stock». El configurador debe vincular el campo de stock con un campo de código del mismo detalle; no se toman códigos de otras líneas. La consulta usa la delegación seleccionada y no modifica EXIT. Cambiar el código o la delegación limpia el stock consultado en los campos configurables. El formulario anterior también inserta primero el detalle y desplaza la búsqueda de material a su interior. Los nuevos flujos parten del formulario configurable; las versiones anteriores conservan su modalidad.
+
+
+Los detalles se presentan en una sola fila con campos compactos. El código de material admite hasta 20 caracteres. Las descripciones extensas pueden configurarse como «Descripción en ventana»; se editan con un botón y se conservan en el mismo registro. En el formulario de inventario anterior, la descripción del material también se edita en una ventana. Si la pantalla es estrecha, la fila permite desplazamiento horizontal.
+
+El stock del sistema siempre puede introducirse manualmente. «Consultar» se sitúa a su derecha y solo sirve de ayuda para copiar el valor de EXIT. No exige marcar una casilla ni justificar la cifra. El formulario envía el stock como aportado por el usuario y al guardar no lo sustituye por una nueva consulta de EXIT; conserva la cifra introducida y calcula la diferencia respecto al contado. Las incidencias y los eventos anteriores no se modifican.

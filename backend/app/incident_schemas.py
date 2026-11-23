@@ -18,6 +18,7 @@ class StageField(BaseModel):
     label:str=Field(min_length=1,max_length=120)
     type:Literal['TEXT','NUMBER','DATE']='TEXT'
     required:bool=False
+    multiline:bool=False
     repeat:bool=False
     lookup:Literal['NONE','MATERIAL','STOCK']='NONE'
     material_key:str=Field(default='',max_length=60)
@@ -26,6 +27,7 @@ class StageField(BaseModel):
     def valid_lookup(self):
         if (self.lookup=='MATERIAL' or self.validate_code) and self.type!='TEXT':raise ValueError('La consulta de materiales requiere un campo de texto')
         if self.validate_code and self.lookup!='MATERIAL':raise ValueError('Selecciona la consulta de materiales para validar el código')
+        if self.multiline and (self.type!='TEXT' or self.lookup!='NONE'):raise ValueError('El texto largo debe ser un campo de texto sin consulta')
         if self.lookup=='STOCK' and (self.type!='NUMBER' or not self.material_key):raise ValueError('La consulta de stock necesita un campo numérico y el campo del código de material')
         return self
     @field_validator('label')
@@ -99,7 +101,7 @@ class SaveType(BaseModel):
     configuration:TypeConfiguration
 
 class Line(BaseModel):
-    sku:str=Field(min_length=1,max_length=100)
+    sku:str=Field(min_length=1,max_length=20)
     description:str=Field(default='',max_length=300)
     unit:str=Field(default='',max_length=80)
     expected:float|None=Field(None,ge=0,le=1e9,allow_inf_nan=False)
