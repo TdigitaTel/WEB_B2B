@@ -109,3 +109,10 @@ La curva de concentración usa solo los netos diarios positivos y termina en el 
 La extracción de albaranes une cabecera y líneas por los cuatro campos: `CodigoEmpresa`, `EjercicioAlbaran`, `SerieAlbaran` y `NumeroAlbaran`. La serie es obligatoria aunque el número y el ejercicio coincidan. Esto evita atribuir las líneas de otra serie a una fecha/delegación distinta o multiplicar sus ventas/devoluciones. La misma fuente sirve a reposición, reserva de Almeiras y aprovisionamiento; la redistribución utiliza sus resultados guardados.
 
 Se han revisado también los lectores de pedidos (serie exigida en selección y agrupación), las líneas de albaranes del cliente (clave de cuatro campos) y la relación factura/IVA (clave de cuatro campos), que ya incluían la serie. Las instantáneas anteriores no se modifican: para corregir una propuesta afectada hay que generar un nuevo cálculo y después su redistribución. Las definiciones de vistas externas de EXIT no se modifican desde la aplicación.
+
+
+### Presentación y ordenación de resultados
+
+Almeiras muestra juntas dos cifras del cálculo guardado: Desp. = máximo(0, stock físico − pendiente de servir − reserva propia); Stock disp. = máximo(0, stock físico − pendiente de servir), antes de proteger la reserva. No se suma pendiente de recibir. Ambas se muestran hacia abajo a unidades y los datos ausentes siguen como Sin datos, nunca como cero.
+
+El consumo mensual se presenta redondeado a la unidad más cercana. Los valores internos, filtros y detalle mantienen la precisión original. Todas las columnas permiten ordenar desde su cabecera o el selector; descripción y múltiplo EXIT también están en el selector. La ordenación ascendente/descendente se aplica en el servidor a todo el resultado filtrado antes de paginar y según el criterio de consumo elegido; los nulos quedan al final. Avisos ordena por cantidad y Flag por verde, ámbar y rojo. Las proyecciones antiguas recuperan el valor del resultado guardado mediante SQL; ordenar no consulta EXIT ni vuelve a calcular.

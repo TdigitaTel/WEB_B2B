@@ -4,7 +4,9 @@ from sqlalchemy import bindparam, event, inspect, select, text, update
 
 FIELDS = ('consumption_basis', 'description', 'final_quantity', 'central_can_supply',
           'overstock', 'total_demand', 'monthly_mean', 'daily_mean', 'daily_reference',
-          'coverage_days', 'target_stock', 'irregular')
+          'coverage_days', 'target_stock', 'irregular','stock','incoming','outgoing','inventory_position',
+          'minimum_stock','replenishment_point','maximum_stock','quantity_without_multiple',
+          'quantity_with_exit_multiple','exit_multiple','central_available','central_physical_available')
 
 
 def filter_projection(payload):

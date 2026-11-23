@@ -316,7 +316,7 @@ class ResultFilters(BaseModel):
     minimum_monthly_consumption:float=Field(0,ge=0,le=1e9,allow_inf_nan=False)
     maximum_monthly_consumption:float|None=Field(None,ge=0,le=1e9,allow_inf_nan=False)
     exceptionality_flags:str=Field('',max_length=100,pattern=r'^(?:(?:HIGH|MEDIUM|LOW|UNKNOWN)(?:,(?:HIGH|MEDIUM|LOW|UNKNOWN))*)?$')
-    sort:Literal['sku','quantity','coverage','alerts']='sku'
+    sort:Literal['sku','description','delegation','stock','incoming','outgoing','inventory_position','monthly_mean','exceptionality','minimum_stock','replenishment_point','maximum_stock','quantity_without_multiple','quantity_with_exit_multiple','exit_multiple','central_available','central_physical_available','alerts','coverage','quantity']='sku'
     descending:bool=False
 
 
@@ -368,9 +368,19 @@ def filtered_results(scenario_id,filters):
 
 def ordered_results(query,sort,descending,basis=None):
     payload=basis_expression(filter_payload(),basis)
-    order={'sku':Result.sku,'quantity':payload['final_quantity'].as_float(),
-        'coverage':payload['coverage_days'].as_float(),'alerts':func.json_array_length(payload['recommendations'])}[sort]
-    return query.order_by(order.desc() if descending else order.asc(),Result.sku,Result.delegation)
+    original=basis_expression(Result.payload,basis)
+    def numeric(key):return func.coalesce(payload[key].as_float(),original[key].as_float())
+    level=func.coalesce(payload['exceptionality_level'].as_string(),original['exceptionality']['level'].as_string())
+    orders={'sku':Result.sku,'description':func.lower(func.coalesce(payload['description'].as_string(),original['description'].as_string())),
+        'delegation':Result.delegation,'quantity':numeric('final_quantity'),'coverage':numeric('coverage_days'),
+        'alerts':func.json_array_length(payload['recommendations']),
+        'exceptionality':case((level=='LOW',1),(level=='MEDIUM',2),(level=='HIGH',3),else_=None)}
+    orders.update({key:numeric(key) for key in ('stock','incoming','outgoing','inventory_position','minimum_stock','replenishment_point','maximum_stock','quantity_with_exit_multiple','exit_multiple','central_available','central_physical_available')})
+    orders['monthly_mean']=func.coalesce(numeric('monthly_mean'),numeric('daily_mean')*30)
+    orders['quantity_without_multiple']=func.coalesce(numeric('quantity_without_multiple'),numeric('final_quantity'))
+    order=orders[sort]
+    return query.order_by((order.desc() if descending else order.asc()).nulls_last(),Result.sku,Result.delegation,Result.id)
+
 
 
 def result_summary(db,query,full=False,basis=None):
