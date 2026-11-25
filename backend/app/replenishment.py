@@ -310,6 +310,7 @@ class ResultFilters(BaseModel):
     alerts_only:bool=False
     needed_only:bool=False
     central_only:bool=False
+    central_coverage:Literal['ALL','COVERED','UNCOVERED','UNKNOWN']='ALL'
     stock_alert:Literal['ALL','ATTENTION','NO_STOCK','INSUFFICIENT','UNKNOWN']='ALL'
     overstock_only:bool=False
     consumption:Literal['ALL','WITH','WITHOUT']='ALL'
@@ -345,6 +346,16 @@ def filtered_results(scenario_id,filters):
     if alerts_only:query=query.where(func.json_array_length(payload['recommendations'])>0)
     if needed_only:query=query.where(payload['final_quantity'].as_float()>0)
     if central_only:query=query.where(payload['central_can_supply'].as_boolean().is_(True))
+    if filters.central_coverage!='ALL':
+        # Coverage describes transfers to branches, never Almeiras supplying itself.
+        original=basis_expression(Result.payload,filters.consumption_basis)
+        need=func.coalesce(payload['quantity_without_multiple'].as_float(),original['quantity_without_multiple'].as_float(),
+            payload['final_quantity'].as_float(),original['final_quantity'].as_float())
+        alarm=stock_alert_expression(payload,original,Result.delegation)
+        query=query.where(Result.delegation!='00',need>0,original['manually_excluded'].as_boolean().is_not(True))
+        if filters.central_coverage=='COVERED':query=query.where(alarm=='NONE')
+        elif filters.central_coverage=='UNCOVERED':query=query.where(alarm.in_(['NO_STOCK','INSUFFICIENT']))
+        else:query=query.where(alarm=='UNKNOWN')
     if filters.stock_alert!='ALL':
         alarm=stock_alert_expression(payload,basis_expression(Result.payload,filters.consumption_basis),Result.delegation)
         query=query.where(alarm.in_(['NO_STOCK','INSUFFICIENT']) if filters.stock_alert=='ATTENTION' else alarm==filters.stock_alert)

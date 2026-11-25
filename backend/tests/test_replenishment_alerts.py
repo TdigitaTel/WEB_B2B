@@ -73,3 +73,18 @@ def test_saved_alarms_filter_counters_excel_and_legacy_projection_without_exit(c
     assert all('Almeiras sin disponible' in sheet.cell(index,column).value for index in range(2,4))
     saved=client.get(PREFIX+'/calculations').json()['items']
     assert next(row for row in saved if row['delegation']=='02')['summary']['central_attention']==3
+
+    # Coverage selector uses the same saved data for the table, totals and export.
+    expected={'ALL':set(codes),'COVERED':{'COVERED'},'UNCOVERED':{'ZERO','PARTIAL','RESERVED'},'UNKNOWN':{'UNKNOWN'}}
+    for coverage,skus in expected.items():
+        params={**query,'needed_only':True,'central_coverage':coverage}
+        result=client.get(path+'/results',params=params).json()
+        assert {item['sku'] for item in result['items']}==skus-{'NO-NEED'}
+        assert result['total']==len(skus-{'NO-NEED'})
+    assert client.get(path+'/results',params={**query,'consumption_basis':'MEDIAN','central_coverage':'COVERED'}).json()['total']==0
+    page=client.get(path+'/results',params={**query,'central_coverage':'UNCOVERED','page_size':1}).json()
+    assert page['total']==3 and len(page['items'])==1
+    assert client.get(path+'/results',params={**query,'delegation':'00','central_coverage':'COVERED'}).json()['total']==0
+    assert client.get(path+'/results',params={**query,'central_coverage':'BAD'}).status_code==422
+    exported=client.get(path+'/export.xlsx',params={**query,'central_coverage':'COVERED'})
+    assert load_workbook(BytesIO(exported.content)).active.max_row==2

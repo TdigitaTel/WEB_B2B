@@ -12,7 +12,7 @@ let requests=[];global.URL.createObjectURL=()=> 'blob:excel';global.URL.revokeOb
 global.fetch=async(url,options={})=>{requests.push([url,options]);let body;
  if(url.endsWith('/options'))body={article_limit:1000,server_date:'2026-04-30',delegations:[{code:'02',name:'Ferrol'}],areas:[],families:[],subfamilies:[],types:[]};
  else if(url.endsWith('/jobs/current'))body={job:null,latest_result:calculation};
- else if(url.includes('/results?')){const query=new URL(url,dom.window.location.href).searchParams,alarm=query.get('stock_alert');const rows=all.filter(row=>alarm==='ALL'||(alarm==='ATTENTION'?['NO_STOCK','INSUFFICIENT'].includes(row.stock_alert.code):row.stock_alert.code===alarm));body={items:rows,total:rows.length,summary:{articles_analyzed:rows.length,to_replenish:rows.filter(r=>r.final_quantity>0).length,central_no_stock:rows.filter(r=>r.stock_alert.code==='NO_STOCK').length,central_insufficient:rows.filter(r=>r.stock_alert.code==='INSUFFICIENT').length,central_attention:rows.filter(r=>['NO_STOCK','INSUFFICIENT'].includes(r.stock_alert.code)).length}}}
+ else if(url.includes('/results?')){const query=new URL(url,dom.window.location.href).searchParams,alarm=query.get('stock_alert'),coverage=query.get('central_coverage');const rows=all.filter(row=>(alarm==='ALL'||(alarm==='ATTENTION'?['NO_STOCK','INSUFFICIENT'].includes(row.stock_alert.code):row.stock_alert.code===alarm))&&(coverage==='ALL'||(row.final_quantity>0&&(coverage==='UNCOVERED'?['NO_STOCK','INSUFFICIENT'].includes(row.stock_alert.code):coverage==='UNKNOWN'?row.stock_alert.code==='UNKNOWN':row.stock_alert.code==='NONE'))));body={items:rows,total:rows.length,summary:{articles_analyzed:rows.length,to_replenish:rows.filter(r=>r.final_quantity>0).length,central_no_stock:rows.filter(r=>r.stock_alert.code==='NO_STOCK').length,central_insufficient:rows.filter(r=>r.stock_alert.code==='INSUFFICIENT').length,central_attention:rows.filter(r=>['NO_STOCK','INSUFFICIENT'].includes(r.stock_alert.code)).length}}}
  else if(url.includes('/export.xlsx?'))return {ok:true,status:200,headers:{get:()=> 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'},blob:async()=>new Blob(['excel'])};
  else throw Error('Unexpected '+url);
  return {ok:true,status:200,text:async()=>JSON.stringify(body)};
@@ -25,12 +25,12 @@ const choose=async value=>{await React.act(async()=>{const s=document.querySelec
  assert.equal(document.querySelectorAll('.repl-stock-row-NO_STOCK').length,1);assert.equal(document.querySelectorAll('.repl-stock-row-INSUFFICIENT').length,1);assert.equal(document.querySelectorAll('.repl-stock-row-UNKNOWN').length,1);
  assert.match(document.querySelector('.repl-stock-row-NO_STOCK').textContent,/Reponer · Almeiras sin disponible/);assert.equal(document.querySelectorAll('.repl-stock-badge').length,3);
  await React.act(async()=>[...document.querySelectorAll('button')].find(b=>b.textContent==='Ver pendientes sin cobertura').click());await pause();
- assert.equal(document.querySelector('[aria-label="Alerta de reposición"]').value,'ATTENTION');assert.equal(document.querySelectorAll('.repl-clean-results tbody tr').length,2);
+ assert.equal(document.querySelector('[aria-label="Atención desde Almeiras"]').value,'UNCOVERED');assert.equal(document.querySelectorAll('.repl-clean-results tbody tr').length,2);
  await choose('NO_STOCK');assert.equal(document.querySelectorAll('.repl-clean-results tbody tr').length,1);
  await React.act(async()=>[...document.querySelectorAll('button')].find(b=>b.textContent==='Descargar Excel filtrado').click());assert.ok(requests.some(([url])=>url.includes('/export.xlsx?')&&url.includes('stock_alert=NO_STOCK')));
- const cover=[...document.querySelectorAll('label')].find(l=>l.textContent==='Almeiras cubre sin romper stock').querySelector('input');
- await React.act(async()=>cover.click());await pause();assert.equal(document.querySelector('[aria-label="Alerta de reposición"]').value,'ALL');
- await choose('UNKNOWN');assert.equal(cover.checked,false);assert.equal(document.querySelector('.repl-stock-warning'),null);assert.equal(document.querySelectorAll('.repl-stock-row-UNKNOWN').length,1);
+ const cover=document.querySelector('[aria-label="Atención desde Almeiras"]');
+ await React.act(async()=>{cover.value='COVERED';cover.dispatchEvent(new Event('change',{bubbles:true}));});await pause();assert.equal(document.querySelector('[aria-label="Alerta de reposición"]').value,'ALL');
+ await choose('UNKNOWN');assert.equal(cover.value,'ALL');assert.equal(document.querySelector('.repl-stock-warning'),null);assert.equal(document.querySelectorAll('.repl-stock-row-UNKNOWN').length,1);
  assert.ok(!requests.some(([,options])=>options.method==='POST'),'Stock warnings never start a new calculation');
  await React.act(async()=>root.unmount());dom.window.close();console.log('Replenishment stock alarms: banner, distinct row warnings, zero-need exclusion, filters, Excel and mutually exclusive coverage passed');
 })().catch(error=>{console.error(error);process.exitCode=1;dom.window.close()});

@@ -116,3 +116,15 @@ Se han revisado también los lectores de pedidos (serie exigida en selección y 
 Almeiras muestra juntas dos cifras del cálculo guardado: Desp. = máximo(0, stock físico − pendiente de servir − reserva propia); Stock disp. = máximo(0, stock físico − pendiente de servir), antes de proteger la reserva. No se suma pendiente de recibir. Ambas se muestran hacia abajo a unidades y los datos ausentes siguen como Sin datos, nunca como cero.
 
 El consumo mensual se presenta redondeado a la unidad más cercana. Los valores internos, filtros y detalle mantienen la precisión original. Todas las columnas permiten ordenar desde su cabecera o el selector; descripción y múltiplo EXIT también están en el selector. La ordenación ascendente/descendente se aplica en el servidor a todo el resultado filtrado antes de paginar y según el criterio de consumo elegido; los nulos quedan al final. Avisos ordena por cantidad y Flag por verde, ámbar y rojo. Las proyecciones antiguas recuperan el valor del resultado guardado mediante SQL; ordenar no consulta EXIT ni vuelve a calcular.
+
+
+### Filtro de atención desde Almeiras
+
+En resultados, «Atención desde Almeiras» permite ver todos, los que se pueden atender,
+los que no se pueden atender y aquellos cuya disponibilidad no está confirmada.
+Las opciones de cobertura consideran solo líneas con necesidad de reposición en otras
+delegaciones, usando la propuesta base sin múltiplos. Se puede atender si Almeiras cubre
+la necesidad conjunta con su disponible físico después de compromisos y reserva propia.
+No se puede atender si el disponible es nulo o insuficiente; las entradas pendientes no
+se consideran despachables. Sin datos confirmados se muestra por separado.
+El filtro se aplica antes de paginar y también limita contadores y Excel, sin recalcular.

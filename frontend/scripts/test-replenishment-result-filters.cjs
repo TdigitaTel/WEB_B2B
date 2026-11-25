@@ -30,6 +30,14 @@ const query=()=>new URL(calls.filter(c=>c[0].includes('/results?')).at(-1)[0],do
  assert.equal(query().get('delegation'),'02');assert.equal(query().get('consumption_basis'),'MEDIAN');assert.equal(query().get('page'),'1');
  assert.ok(document.querySelector('[aria-label="Resultado de reposición"] h2').textContent.includes('Mediana'));
  assert.equal(document.querySelector('.repl-metrics b').textContent,'2');
+ const coverage=document.querySelector('[aria-label="Atención desde Almeiras"]');
+ assert.deepEqual([...coverage.options].map(option=>option.value),['ALL','COVERED','UNCOVERED','UNKNOWN']);
+ const needed=[...document.querySelectorAll('label')].find(label=>label.textContent==='Solo a reponer').querySelector('input');
+ await React.act(async()=>needed.click());await pause();
+ for(const value of ['COVERED','UNCOVERED','UNKNOWN','ALL','COVERED']){
+  await React.act(async()=>{coverage.value=value;coverage.dispatchEvent(new Event('change',{bubbles:true}));});await pause();
+  assert.equal(query().get('central_coverage'),value);assert.equal(query().get('needed_only'),'true');assert.equal(query().get('page'),'1');
+ }
  const flags=[...document.querySelectorAll('.repl-flag-filters input')];
  assert.equal(flags[0].checked,true);
  await React.act(async()=>{flags[1].click();});await pause();
@@ -43,7 +51,7 @@ const query=()=>new URL(calls.filter(c=>c[0].includes('/results?')).at(-1)[0],do
  assert.equal(query().get('minimum_monthly_consumption'),'1');assert.equal(query().get('maximum_monthly_consumption'),'10');
  await React.act(async()=>[...document.querySelectorAll('button')].find(b=>b.textContent==='Descargar Excel filtrado').click());
  const exported=new URL(calls.find(c=>c[0].includes('/export.xlsx?'))[0],dom.window.location.href).searchParams;
- assert.equal(exported.get('exceptionality_flags'),'HIGH,MEDIUM');assert.equal(exported.get('minimum_monthly_consumption'),'1');assert.equal(exported.get('maximum_monthly_consumption'),'10');assert.equal(exported.get('delegation'),'02');assert.equal(exported.get('consumption_basis'),'MEDIAN');assert.equal(download,'reposicion.xlsx');
+ assert.equal(exported.get('exceptionality_flags'),'HIGH,MEDIUM');assert.equal(exported.get('minimum_monthly_consumption'),'1');assert.equal(exported.get('maximum_monthly_consumption'),'10');assert.equal(exported.get('delegation'),'02');assert.equal(exported.get('consumption_basis'),'MEDIAN');assert.equal(download,'reposicion.xlsx');assert.equal(exported.get('central_coverage'),'COVERED');assert.equal(exported.get('needed_only'),'true');
  await React.act(async()=>document.querySelector('input[value=MODE]').click());await pause();assert.equal(query().get('consumption_basis'),'MODE');
  await React.act(async()=>{delegation.value='ALL';delegation.dispatchEvent(new Event('change',{bubbles:true}));});await pause();
  assert.equal(query().get('delegation'),null);assert.equal(query().get('consumption_basis'),'MODE');
