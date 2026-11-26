@@ -15,7 +15,7 @@ from .operator_permissions import can_operate_delegation, delegation_scope
 
 router=APIRouter(prefix='/api/v1/store/delegation-warehouses',tags=['Delegaciones y almacenes'])
 reader=require_roles('ADMIN','OPERADOR_TIENDA')
-manager=require_roles('ADMIN')
+manager=require_roles('ADMIN','OPERADOR_TIENDA')
 logger=logging.getLogger(__name__)
 
 
@@ -91,7 +91,7 @@ def options(db:Session=Depends(get_db),user:User=Depends(reader)):
     seats,warehouses=source()
     seats=[seat for seat in seats if can_operate_delegation(user,db,seat.company,seat.code)]
     companies={seat.company for seat in seats}
-    return {'can_edit':user.role=='ADMIN','delegations':[{'company_code':s.company,'code':s.code,'name':s.name,
+    return {'can_edit':True,'delegations':[{'company_code':s.company,'code':s.code,'name':s.name,
         'primary_warehouse_code':s.warehouse_code} for s in seats],
         'warehouses':[w for w in warehouses if w['company_code'] in companies]}
 
@@ -109,6 +109,7 @@ def assignments(company_code:int|None=Query(None,ge=0),delegation_code:str|None=
 @router.post('/sync')
 def sync(db:Session=Depends(get_db),user:User=Depends(manager)):
     seats,warehouses=source()
+    seats=[seat for seat in seats if can_operate_delegation(user,db,seat.company,seat.code)]
     synchronize(db,seats,warehouses)
     audit(db,user,'DELEGATION_WAREHOUSES_SYNCED','DELEGATION_WAREHOUSES','EXIT',{'delegations':len(seats)})
     commit(db)
@@ -133,6 +134,8 @@ class LinkInput(BaseModel):
 
 @router.put('/assignments')
 def save(body:LinkInput,db:Session=Depends(get_db),user:User=Depends(manager)):
+    if not can_operate_delegation(user,db,body.company_code,body.delegation_code):
+        raise HTTPException(403,'No tienes acceso a esta empresa y delegación')
     seats,warehouses=source()
     seat=next((s for s in seats if (s.company,s.code)==(body.company_code,body.delegation_code)),None)
     if seat is None:raise HTTPException(422,'La delegación no pertenece a esa empresa en EXIT')
