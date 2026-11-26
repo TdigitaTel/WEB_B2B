@@ -5,7 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from app import delegation_warehouses as module
 from app.db import SessionLocal
 from app.delegations import Delegation
-from app.models import DelegationWarehouse as Link, User, OperatorAccess, AuthSession
+from app.models import DelegationWarehouse as Link, User, OperatorAccess, AuthSession, AuditEvent
 from test_sales_order_series import manager, series
 
 PREFIX='/api/v1/store/delegation-warehouses'
@@ -89,7 +89,7 @@ def test_exit_failure_keeps_saved_configuration_and_read_is_not_a_sync(configure
     assert rows(client)==before
 
 
-def test_operator_only_reads_authorized_delegations_and_cannot_write(configured):
+def test_operator_with_settings_configures_only_authorized_delegations(configured):
     client,_,_=configured
     assert client.post(PREFIX+'/sync').status_code==200
     from app.auth import hash_password
@@ -98,19 +98,26 @@ def test_operator_only_reads_authorized_delegations_and_cannot_write(configured)
     with SessionLocal() as db:
         user=User(email='warehouse-operator@test.invalid',full_name='Operador',role='OPERADOR_TIENDA',active=True,password_hash=hash_password('warehouse-test123'),company_code=1,delegation_code='02')
         db.add(user);db.flush();uid=user.id
-        db.add(OperatorAccess(user_id=uid,exit_code='warehouse-op',permissions={'delegation_ids':['1:02']}));db.commit()
+        db.add(OperatorAccess(user_id=uid,exit_code='warehouse-op',permissions={'delegation_ids':['1:02'],'settings':True}));db.commit()
     try:
         operator=TestClient(app)
         assert operator.post('/api/v1/auth/login',json={'email':'warehouse-operator@test.invalid','password':'warehouse-test123'}).status_code==200
         assert {(r['company_code'],r['delegation_code']) for r in rows(operator)}=={(1,'02')}
         assert rows(operator,company_code=2)==[]
         options=operator.get(PREFIX+'/options').json()
-        assert not options['can_edit'] and len(options['delegations'])==1
-        assert operator.post(PREFIX+'/sync').status_code==403
+        assert options['can_edit'] and len(options['delegations'])==1
+        assert operator.post(PREFIX+'/sync').json()['delegations']==1
         assert save(operator,'A').status_code==403
+        assert save(operator,'A',delegation_code='02').status_code==200
+        with SessionLocal() as db:
+            access=db.get(OperatorAccess,uid);access.permissions={'settings':False,'delegation_ids':['1:02']};db.commit()
+        assert operator.get(PREFIX+'/options').status_code==403
+        assert operator.get(PREFIX+'/assignments').status_code==403
+        assert operator.post(PREFIX+'/sync').status_code==403
+        assert save(operator,'B',delegation_code='02').status_code==403
     finally:
         with SessionLocal() as db:
-            db.execute(delete(AuthSession).where(AuthSession.user_id==uid));db.execute(delete(OperatorAccess).where(OperatorAccess.user_id==uid));db.execute(delete(User).where(User.id==uid));db.commit()
+            db.execute(delete(Link).where(Link.updated_by==uid));db.execute(delete(AuditEvent).where(AuditEvent.user_id==uid));db.execute(delete(AuthSession).where(AuthSession.user_id==uid));db.execute(delete(OperatorAccess).where(OperatorAccess.user_id==uid));db.execute(delete(User).where(User.id==uid));db.commit()
 
 
 def test_warehouses_come_from_exit_with_company_key(monkeypatch):

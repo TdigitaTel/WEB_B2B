@@ -47,6 +47,7 @@ def check_operator_path(user, db, path, method):
         ('/api/v1/store/order-email-settings', 'settings'),
         ('/api/v1/store/product-type-synonyms', 'settings'),
         ('/api/v1/store/sales-order-series', 'settings'),
+        ('/api/v1/store/delegation-warehouses', 'settings'),
         ('/api/v1/store/line-planning-settings', 'settings'),
         ('/api/v1/store/catalog-brands', 'settings'),
     ):
