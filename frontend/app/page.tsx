@@ -35,6 +35,7 @@ import OrderLinePlanning, {LinePlanningParameters} from "./OrderLinePlanning";
 import {LinePlanningProvider,LinePlanningInfo} from "./LinePlanningInfo";
 import BrandParameters from "./BrandParameters";
 import SalesOrderSeries from "./SalesOrderSeries";
+import DelegationWarehouses from "./DelegationWarehouses";
 import CatalogPrice, {highlightedPrice} from "./CatalogPrice";
 import CustomerCatalogPrice from "./CustomerCatalogPrice";
 import LoginAppearanceSettings from "./LoginAppearance";
@@ -731,7 +732,7 @@ function PickupParameters({showImages,onImagesChange}:{showImages:boolean;onImag
  const [tab,setTab]=useState("pickup");
  const [visited,setVisited]=useState<string[]>(["pickup"]);
  function selectTab(value:string){setTab(value);setVisited(old=>old.includes(value)?old:[...old,value])}
- return <section className="page settings-page"><h1>Parámetros</h1><p className="settings-intro">Selecciona la configuración que quieres consultar.</p><SettingsMenu selected={tab} onSelect={selectTab}/>{[["order-display",<OrderDisplayParameters key="order-display" value={showImages} onSave={onImagesChange}/>],["pickup",<PickupScheduleParameters key="pickup"/>],["refresh",<ScreenRefreshParameters key="refresh"/>],["email",<OrderEmailParameters key="email"/>],["search",<SearchParameters key="search"/>],["brands",<BrandParameters key="brands"/>],["series",<SalesOrderSeries key="series"/>],["line-planning",<LinePlanningParameters key="line-planning"/>],["appearance",<LoginAppearanceSettings key="appearance"/>],["home-banner",<HomeBannerSettings key="home-banner"/>]].map(([id,content])=><div key={String(id)} id={`settings-panel-${id}`} role="region" aria-labelledby={`settings-tab-${id}`} hidden={tab!==id}>{visited.includes(String(id))&&<RefreshScope active={tab===id}>{content}</RefreshScope>}</div>)}</section>
+ return <section className="page settings-page"><h1>Parámetros</h1><p className="settings-intro">Selecciona la configuración que quieres consultar.</p><SettingsMenu selected={tab} onSelect={selectTab}/>{[["order-display",<OrderDisplayParameters key="order-display" value={showImages} onSave={onImagesChange}/>],["pickup",<PickupScheduleParameters key="pickup"/>],["refresh",<ScreenRefreshParameters key="refresh"/>],["email",<OrderEmailParameters key="email"/>],["search",<SearchParameters key="search"/>],["brands",<BrandParameters key="brands"/>],["series",<SalesOrderSeries key="series"/>],["warehouses",<DelegationWarehouses key="warehouses"/>],["line-planning",<LinePlanningParameters key="line-planning"/>],["appearance",<LoginAppearanceSettings key="appearance"/>],["home-banner",<HomeBannerSettings key="home-banner"/>]].map(([id,content])=><div key={String(id)} id={`settings-panel-${id}`} role="region" aria-labelledby={`settings-tab-${id}`} hidden={tab!==id}>{visited.includes(String(id))&&<RefreshScope active={tab===id}>{content}</RefreshScope>}</div>)}</section>
 }
 
 function PickupScheduleParameters(){
