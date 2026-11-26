@@ -832,3 +832,19 @@ class RedistributionBatch(Base):
     fingerprint: Mapped[str | None] = mapped_column(String(64))
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     __table_args__ = (UniqueConstraint('job_id', 'number'),)
+
+
+class DelegationWarehouse(Base, TimestampMixin):
+    __tablename__ = 'delegation_warehouses'
+    company_code: Mapped[int] = mapped_column(Integer, primary_key=True)
+    delegation_code: Mapped[str] = mapped_column(String(40), primary_key=True)
+    warehouse_code: Mapped[str] = mapped_column(String(40), primary_key=True)
+    delegation_name: Mapped[str] = mapped_column(String(200))
+    warehouse_name: Mapped[str] = mapped_column(String(200))
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    use_for_stock: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey('users.id'))
+    __table_args__ = (Index('uq_delegation_warehouses_primary','company_code','delegation_code',unique=True,
+        postgresql_where=text('is_primary = true'),sqlite_where=text('is_primary = 1')),)

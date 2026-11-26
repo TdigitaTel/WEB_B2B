@@ -98,6 +98,8 @@ from .home_banner import router as home_banner_router
 app.include_router(home_banner_router)
 from .sales_order_series import router as sales_order_series_router, resolve_active_series
 app.include_router(sales_order_series_router)
+from .delegation_warehouses import router as delegation_warehouses_router
+app.include_router(delegation_warehouses_router)
 logger = logging.getLogger(__name__)
 
 @lru_cache(maxsize=2000)
