@@ -344,6 +344,8 @@ def calculate_article(article,delegation,context,override=None,include_daily=Fal
         'calculation':{'horizon':horizon,'z':z,'formula':('Stock máximo = stock mínimo + consumo diario × días de cobertura máxima' if parameters['target_mode']=='MAXIMUM' else 'Punto de reposición = stock mínimo + consumo diario × días hasta próxima reposición') + '; cantidad = max(0, objetivo − disponible previsto).',
             'safety_formula':'Sin stock de seguridad (opción seleccionada)' if not parameters['use_safety_stock'] else 'Z × desviación diaria × sqrt(plazo de llegada)' if method=='REVISION_PERIODICA' else 'Modelo alternativo explicado en método y recomendaciones',
             'maximum_formula':'stock mínimo + consumo diario × días de cobertura máxima', 'minimum_formula':'consumo diario × plazo de llegada + stock de seguridad' if parameters['use_safety_stock'] else 'consumo diario × plazo de llegada', 'dispatch_days':parameters['review_days'],'lead_days':parameters['lead_days'],'raw_maximum':raw_maximum,'window_start':stats['start'],'window_end':stats['end']}}
+    if stock and stock.get('interchanges_included'):
+        result.update({key:stock.get(key) for key in ('incoming_exit','outgoing_exit','incoming_transit','outgoing_transit','interchanges_included')})
     result['comparison_eligible']=bool(statistic_available and parameters['enabled'] and not stats['created_in_future'] and not (parameters['exclude_no_consumption'] and stats['total_demand']<=0) and not (sparse and (parameters['new_policy'] if stats['new_article'] else parameters['no_sales_policy'])=='NO_REPLENISH'))
     result=quantity_comparison(result)
     if include_daily:
@@ -437,6 +439,7 @@ def annotate_central(results,source):
             row['recommendations']=[r for r in row['recommendations'] if r['code'] not in ('CENTRAL_INSUFICIENTE','CENTRAL_SIN_DATOS')]
             row.update(central_stock=stock['stock'] if stock else None,central_incoming=stock['incoming'] if stock else None,
                 central_outgoing=stock['outgoing'] if stock else None,
+                central_incoming_transit=stock.get('incoming_transit') if stock else None,central_outgoing_transit=stock.get('outgoing_transit') if stock else None,
                 central_position=stock['stock']+stock['incoming']-stock['outgoing'] if stock else None,
                 central_physical_available=physical,central_monthly_consumption=central_observed_avg*30 if valid_history else None,
                 central_daily_mean=central_observed_avg if valid_history else None,central_daily_reference=central_avg if valid_history else None,central_daily_std=central_std if valid_history else None,

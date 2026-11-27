@@ -1,4 +1,4 @@
-"""Fuentes EXIT del MVP. Exclusivamente SELECT; no usa almacenes para el stock."""
+"""Fuentes EXIT del MVP. Exclusivamente SELECT; tránsitos agrupados mediante los almacenes configurados."""
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from .erp_db import connect_sqlserver, _insert_article_filter_codes
@@ -71,7 +71,7 @@ def read_replenishment_source(start: date, end: date, skus: list[str] | None = N
         return {'consumption_method':'NET_PERIOD_V2','captured_at':captured,'article_limit':max_articles,'sales_delegations':['00','01','02','04','05'],'company':1,'start':start.isoformat(),'end':end.isoformat(),'articles':[],'sales':[],'stocks':[]}
     if skus is not None and len(skus)>max_articles:
         raise ValueError(f'La selección supera el límite configurado de {max_articles:,} artículos. Amplíalo en Configuración o acota los filtros')
-    article_rows=[]; sales=[]; stocks=[]
+    article_rows=[]; sales=[]; stocks=[]; transits=[]
     with connect_sqlserver() as connection, connection.cursor() as cursor:
         unit,unit_origin=unit_expression(cursor)
         exclusion=category_exclusion(cursor,excluded_codes)
@@ -117,10 +117,15 @@ def read_replenishment_source(start: date, end: date, skus: list[str] | None = N
                 WHERE IdDelegacion IN ('00','01','02','04','05') AND CodigoArticulo IN ({marks})''',tuple(batch))
             stocks.extend({'sku':str(row['sku']).strip(),'delegation':str(row['delegation']).strip(),
                 'stock':number(row['stock']),'incoming':number(row['incoming']),'outgoing':number(row['outgoing'])} for row in cursor.fetchall())
+            from .replenishment_transit import fetch_transits
+            transits.extend(fetch_transits(cursor,batch))
     keys=[(row['sku'],row['delegation']) for row in stocks]
     if len(keys)!=len(set(keys)):
         raise ValueError('La vista de stock devuelve más de una fila por artículo/delegación. No se sumará stock consolidado duplicado')
-    return {'consumption_method':'NET_PERIOD_V2','captured_at':datetime.now(timezone.utc).isoformat(),'extraction_started_at':captured,'article_limit':max_articles,'sales_delegations':['00','01','02','04','05'],'company':1,'start':start.isoformat(),'end':end.isoformat(),
+    from .replenishment_transit import add_transits,stock_warehouse_map
+    warehouse_mapping=stock_warehouse_map() if transits else {}
+    add_transits(stocks,transits,warehouse_mapping)
+    return {'interchanges_included':True,'warehouse_mapping':warehouse_mapping,'transits':transits,'consumption_method':'NET_PERIOD_V2','captured_at':datetime.now(timezone.utc).isoformat(),'extraction_started_at':captured,'article_limit':max_articles,'sales_delegations':['00','01','02','04','05'],'company':1,'start':start.isoformat(),'end':end.isoformat(),
             'articles':articles,'sales':sales,'stocks':stocks}
 
 
