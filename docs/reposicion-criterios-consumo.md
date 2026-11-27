@@ -144,7 +144,7 @@ con aviso. El parámetro se guarda en el trabajo, la firma, los detalles y el Ex
 anteriores sin ese parámetro conservan su regla de máximo guardado.
 
 
-### Entradas y salidas +Inter
+### Entradas y salidas +Trans
 
 Los nuevos cálculos suman los intercambios actuales en tránsito, sin limitar esos movimientos
 al periodo histórico de ventas. Se consulta `MovimientoAlmacenCabecera` y `MovimientoAlmacenLineas`
@@ -152,8 +152,8 @@ por empresa, ejercicio y número; si ambas tablas exponen serie, también se inc
 Solo empresa 1, `EX_EstadoMovA='Transito'`, `TipoMovimientoAlmacen='T'` y los códigos de material
 del bloque actual (hasta 1.000 por consulta). Se suman las unidades de las líneas seleccionadas.
 
-- Salida +Inter = PendienteServir + tránsito cuyo origen sea `CodigoAlmacen`.
-- Entrada +Inter = PendienteRecibir + tránsito cuyo destino sea `AlmacenContrapartida`.
+- Salida +Trans = PendienteServir + tránsito cuyo origen sea `CodigoAlmacen`.
+- Entrada +Trans = PendienteRecibir + tránsito cuyo destino sea `AlmacenContrapartida`.
 
 El origen y el destino se traducen mediante `delegation_warehouses`, de la misma empresa,
 con `active=true` y `use_for_stock=true`. No se deduce la delegación del código de almacén.
@@ -171,4 +171,4 @@ en Almeiras y en la redistribución. Una fila ausente de stock no se inventa com
 Se conserva en la instantánea el mapa de almacenes utilizado y los tránsitos agregados. Cada
 resultado guarda el pendiente original, el componente de tránsito y el total, visibles en el
 detalle y en el Excel ampliado. Los cálculos históricos no se alteran: hay que recalcular para
-incorporar los tránsitos nuevos. La exportación simple usa los totales +Inter.
+incorporar los tránsitos nuevos. La exportación simple usa los totales +Trans.
