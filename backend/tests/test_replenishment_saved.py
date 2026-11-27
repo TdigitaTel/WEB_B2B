@@ -263,3 +263,24 @@ def test_all_five_delegations_run_sequentially_without_central_self_supply(clien
         total=sum(row['final_quantity'] for row in rows if row['delegation']!='00')
         assert all(row['central_total_requested']==total for row in rows)
         assert central['central_can_supply'] is False and central['central_covers_without_multiple'] is None
+
+
+@pytest.mark.parametrize('days,retained,total_sent',[(15,35,62),(30,65,32),(60,125,0)])
+def test_redistribution_preserves_days_of_consumption_plus_safety_for_all_movements(days,retained,total_sent):
+    rows=[{**material('01',stock=100,outgoing=3,incoming=1000,maximum=1),'daily_reference':2,'safety_stock':5},
+          material('02',stock=0,need=8),material('04',stock=0),material('05',stock=0)]
+    proposal=redistribution(rows,reserve_days=days)
+    movements=[m for m in proposal['movements'] if m['from_delegation']=='01']
+    assert sum(m['quantity'] for m in movements)==total_sent
+    assert 100-3-total_sent>=min(retained,97)
+    for move in movements:
+        assert move['origin_retained_stock']==retained and move['reserve_days']==days
+        assert move['calculation_detail']['origin']['retained_stock']==retained
+    assert rows[0]['maximum_stock']==1 and 'retained_stock' not in rows[0] # Frozen source is unchanged.
+
+
+def test_redistribution_missing_daily_consumption_is_not_treated_as_zero():
+    rows=[material('01',stock=100),material('02'),material('04'),material('05')]
+    rows[0].pop('daily_mean')
+    result=redistribution(rows,reserve_days=15)
+    assert not result['movements'] and result['material_warnings']

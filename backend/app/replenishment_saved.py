@@ -96,10 +96,17 @@ def common_step(*rows):
     return Decimal(lcm(*(int(step*factor) for step in steps)))/factor
 
 
-def redistribution(rows):
+def redistribution(rows,reserve_days=None):
     """Never allocate future incoming stock or the same surplus twice."""
     groups=defaultdict(list)
-    for row in rows:groups[row['sku']].append(row)
+    for original in rows:
+        row=dict(original)
+        daily=number(row.get('daily_reference'))
+        if daily is None:daily=number(row.get('daily_mean'))
+        safety=number(row.get('safety_stock')) or Decimal(0)
+        row['retained_stock']=row.get('maximum_stock') if reserve_days is None else (float(max(Decimal(0),daily)*reserve_days+max(Decimal(0),safety)) if daily is not None else None)
+        row['reserve_days']=reserve_days
+        groups[row['sku']].append(row)
     moves=[];unmet=[];warnings=[]
     for sku,group in sorted(groups.items()):
         if {r['delegation'] for r in group}!=set(DELEGATIONS):
@@ -108,14 +115,16 @@ def redistribution(rows):
             warnings.append({'sku':sku,'reason':'Las unidades del material no coinciden entre delegaciones.'});continue
         if any(row.get('statistic_available') is False for row in group):
             warnings.append({'sku':sku,'reason':'No hay moda positiva repetida en alguna delegación; material excluido con este criterio.'});continue
-        fields=('stock','incoming','outgoing','maximum_stock','inventory_position','final_quantity')
-        if any(number(r.get(key)) is None or (key in ('stock','incoming','outgoing','maximum_stock','final_quantity') and number(r[key])<0) for r in group for key in fields):
+        if any(row['retained_stock'] is None for row in group):
+            warnings.append({'sku':sku,'reason':'Falta el consumo diario para calcular los días de stock conservado; material excluido.'});continue
+        fields=('stock','incoming','outgoing','maximum_stock','retained_stock','inventory_position','final_quantity')
+        if any(number(r.get(key)) is None or (key in ('stock','incoming','outgoing','maximum_stock','retained_stock','final_quantity') and number(r[key])<0) for r in group for key in fields):
             warnings.append({'sku':sku,'reason':'Stock, pendientes u objetivos ausentes o negativos; revisar antes de mover.'});continue
         donors=[];needs=[];material_moves=[]
         for row in group:
-            # Leave the maximum stock physically in the donor, plus commitments;
+            # Leave the selected consumption reserve (legacy: saved maximum), plus commitments;
             # incoming orders are deliberately excluded from dispatchable surplus.
-            available=max(Decimal(0),number(row['stock'])-number(row['outgoing'])-number(row['maximum_stock']))
+            available=max(Decimal(0),number(row['stock'])-number(row['outgoing'])-number(row['retained_stock']))
             step=common_step(row)
             if step is None:
                 warnings.append({'sku':sku,'reason':'Múltiplo de despacho no válido.'});donors=[];needs=[];break
@@ -128,7 +137,7 @@ def redistribution(rows):
             number(n['row']['inventory_position'])/number(n['row']['daily_mean']) if number(n['row'].get('daily_mean')) and number(n['row']['daily_mean'])>0 else Decimal('Infinity'),n['row']['delegation']))
         donors.sort(key=lambda d:(-d['left'],d['row']['delegation']))
         def evidence(row):
-            keys=('delegation','stock','incoming','outgoing','maximum_stock','inventory_position','final_quantity',
+            keys=('reserve_days','retained_stock','delegation','stock','incoming','outgoing','maximum_stock','inventory_position','final_quantity',
                 'gross_sales','returns','total_demand','observed_days','consumption_method','daily_mean','daily_reference','monthly_mean','daily_std','safety_stock','minimum_stock','replenishment_point',
                 'target_stock','effective_multiple','exit_multiple','adjusted_quantity','quantity_without_multiple',
                 'parameters','calculation','manual_parameters','manually_excluded','source','consumption_basis')
@@ -136,7 +145,7 @@ def redistribution(rows):
         def movement(d,destination,quantity,kind,need=None,step=None):
             row=d['row'];before=d['left'];d['left']-=quantity
             trace={'version':1,'origin':evidence(row),'destination':evidence(need['row']) if need else None,
-                'raw_surplus':float(max(Decimal(0),number(row['stock'])-number(row['outgoing'])-number(row['maximum_stock']))),
+                'raw_surplus':float(max(Decimal(0),number(row['stock'])-number(row['outgoing'])-number(row['retained_stock']))),
                 'initial_surplus':float(d['initial']),'origin_before':float(before),'origin_after':float(d['left']),
                 'already_allocated':float(d['initial']-before),'dispatch_step':float(step or common_step(row)),
                 'destination_initial_need':float(need['initial']) if need else None,
@@ -149,7 +158,7 @@ def redistribution(rows):
                     'assignable':float(floor_step(min(before,n['left']),common_step(row,n['row'])))} for n in needs if n['left']>0] if kind=='RETURN_CENTRAL' else [])}
             move={'sku':sku,'description':row['description'],'unit_type':row.get('unit_type',''),
                 'from_delegation':row['delegation'],'to_delegation':destination,'quantity':float(quantity),
-                'kind':kind,'origin_maximum_stock':row['maximum_stock'],'origin_transferable_surplus':float(d['initial']),
+                'kind':kind,'reserve_days':reserve_days,'origin_retained_stock':row['retained_stock'],'origin_maximum_stock':row['maximum_stock'],'origin_transferable_surplus':float(d['initial']),
                 'calculation_detail':trace}
             moves.append(move)
             material_moves.append({key:move[key] for key in ('from_delegation','to_delegation','quantity','kind')})
@@ -202,7 +211,7 @@ def rebased_planning_rows(db,scenario,delegation,basis,codes=None):
     return output
 
 
-def calculate_redistribution(db,consumption_basis='MEAN',codes=None):
+def calculate_redistribution(db,consumption_basis='MEAN',codes=None,reserve_days=None):
     current={code:row for code,row in current_calculations(db).items() if code in DELEGATIONS}
     missing=[{'code':d,'name':name} for d,name in DELEGATIONS.items() if d not in current]
     if missing:raise HTTPException(409,{'message':'Faltan cálculos guardados. Calcula todas las delegaciones antes de redistribuir.','missing_delegations':missing})
@@ -242,8 +251,8 @@ def calculate_redistribution(db,consumption_basis='MEAN',codes=None):
         ranges.add((scenario.filters['date_from'],scenario.filters['date_to']))
         calculations.append({'delegation':code,'name':DELEGATIONS[code],'scenario_id':scenario.public_id,
             'captured_at':scenario.source_snapshot['captured_at'],'date_from':scenario.filters['date_from'],'date_to':scenario.filters['date_to']})
-    result=redistribution(rows)
+    result=redistribution(rows,reserve_days)
     proposal={**result,'calculations':calculations,'warnings':(['Los cálculos utilizan periodos de ventas diferentes. Revisa las fechas antes de aplicar la propuesta.'] if len(ranges)>1 else []),
-        'read_only_exit':True,'consumption_basis':consumption_basis,'consumption_basis_label':{'MEAN':'Media','MEDIAN':'Mediana','MODE':'Moda'}[consumption_basis]}
+        'read_only_exit':True,'reserve_days':reserve_days,'consumption_basis':consumption_basis,'consumption_basis_label':{'MEAN':'Media','MEDIAN':'Mediana','MODE':'Moda'}[consumption_basis]}
     proposal['fingerprint']=hashlib.sha256(json.dumps(proposal,sort_keys=True,ensure_ascii=False,separators=(',',':')).encode()).hexdigest()
     return proposal

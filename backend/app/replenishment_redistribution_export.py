@@ -34,11 +34,11 @@ def workbook_bytes(proposal):
         return page
 
     sheet('Movimientos',['Código material','Descripción','Origen código','Origen delegación','Destino código','Destino delegación',
-        'Cantidad','Unidad','Motivo','Stock máximo en origen','Sobrestock transferible en origen'],
+        'Cantidad','Unidad','Motivo','Stock conservado en origen','Sobrestock transferible en origen'],
         ([m['sku'],m['description'],m['from_delegation'],names.get(m['from_delegation'],m['from_delegation']),
           m['to_delegation'],names.get(m['to_delegation'],m['to_delegation']),m['quantity'],m['unit_type'],
           'Devolución a Almeiras' if m['kind']=='RETURN_CENTRAL' else 'Cubrir necesidad de otra delegación',
-          m['origin_maximum_stock'],m['origin_transferable_surplus']] for m in proposal['movements']))
+          m.get('origin_retained_stock',m['origin_maximum_stock']),m['origin_transferable_surplus']] for m in proposal['movements']))
     sheet('Necesidades sin cubrir',['Código material','Delegación código','Delegación','Cantidad pendiente','Unidad'],
         ([n['sku'],n['delegation'],names.get(n['delegation'],n['delegation']),n['quantity'],n['unit_type']] for n in proposal['unmet_needs']))
     from itertools import chain
@@ -54,7 +54,8 @@ def workbook_bytes(proposal):
         ['Necesidades sin cubrir',summary['unmet_needs']],['Materiales excluidos',summary['excluded_materials']],
         ['Alcance','Propuesta completa de los filtros seleccionados; la búsqueda de movimientos no limita el Excel. No se ejecutan traslados ni reservas en EXIT.'],
         ['Filtros del cálculo',str(proposal.get('filters',{}))],
-        ['Regla de origen','Stock físico − comprometido − stock máximo; no se despachan entradas pendientes.'],
+        ['Días de stock conservado',proposal.get('reserve_days') if proposal.get('reserve_days') is not None else 'Propuesta anterior: máximo guardado'],
+        ['Regla de origen','Stock físico − comprometido − (consumo diario × días conservados + seguridad); no se despachan entradas pendientes.' if proposal.get('reserve_days') is not None else 'Stock físico − comprometido − stock máximo; no se despachan entradas pendientes.'],
         ['Unidades','Las cantidades conservan su unidad. No se suman cantidades de unidades diferentes.'],
     ])
     buffer=io.BytesIO();book.save(buffer);return buffer.getvalue()

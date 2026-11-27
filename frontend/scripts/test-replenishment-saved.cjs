@@ -3,6 +3,7 @@ const {JSDOM}=require('jsdom'),dom=new JSDOM('<div id="root"></div>',{url:'https
 for(const key of ['window','document','HTMLElement','Event'])global[key]=dom.window[key];global.IS_REACT_ACT_ENVIRONMENT=true;
 for(const ext of ['.ts','.tsx'])require.extensions[ext]=(m,f)=>m._compile(ts.transpileModule(fs.readFileSync(f,'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2020,jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS,esModuleInterop:true}}).outputText,f);
 const React=require('react'),{createRoot}=require('react-dom/client'),View=require('../app/ReplenishmentSaved.tsx').default;
+let expectedReserve=15;
 let opened=null,missing=true,stale=false,rawFailure=false,calls=[],downloaded='',currentJob=null,polls=0,sequence=0;
 global.URL.createObjectURL=()=> 'blob:redistribution';global.URL.revokeObjectURL=()=>{};
 dom.window.HTMLAnchorElement.prototype.click=function(){downloaded=this.download};
@@ -20,8 +21,8 @@ global.fetch=async(url,options={})=>{
  if(url.endsWith('/redistribution/jobs')&&options.method==='POST'){
   if(rawFailure)return {ok:false,status:500,text:async()=> 'Internal Server Error'};
   if(missing)return response({detail:{message:'Faltan cálculos guardados.',missing_delegations:[{code:'04',name:'Santiago'}]}},409);
-  const request=JSON.parse(options.body);polls=0;
-  currentJob={id:'redistribution-'+(++sequence),status:'QUEUED',phase:'Esperando turno',progress:0,total_articles:2000,processed_articles:0,total_batches:2,completed_batches:0,batch_size:1000,consumption_basis:request.consumption_basis,filters:request.filters};return response(currentJob);
+  const request=JSON.parse(options.body);assert.equal(request.reserve_days,expectedReserve);polls=0;
+  currentJob={id:'redistribution-'+(++sequence),status:'QUEUED',phase:'Esperando turno',progress:0,total_articles:2000,processed_articles:0,total_batches:2,completed_batches:0,batch_size:1000,consumption_basis:request.consumption_basis,filters:request.filters,reserve_days:request.reserve_days};return response(currentJob);
  }
  if(url.includes('/result?')){const query=new URL(url,dom.window.location.href).searchParams;return response({...plan,page:Number(query.get('page')),consumption_basis:currentJob.consumption_basis});}
  if(url.includes('/redistribution/jobs/')){polls++;currentJob={...currentJob,status:polls>1?'COMPLETED':'RUNNING',phase:polls>1?'Redistribución completa':'Procesando bloque 1 de 2',progress:polls>1?100:50,processed_articles:polls>1?2000:1000,completed_batches:polls>1?2:1};return response(currentJob);}
@@ -40,6 +41,8 @@ const choose=(label,value)=>{const select=document.querySelector(`[aria-label="$
  await React.act(async()=>button('Calcular redistribución').click());
  assert.match(document.querySelector('[role=alert]').textContent,/Faltan: 04 · Santiago/);
  missing=false;await React.act(async()=>button('Actualizar lista').click());
+ assert.equal(document.querySelector('[aria-label="Días de stock que conserva cada delegación"]').value,'15');
+ expectedReserve=30;await React.act(async()=>setInput(document.querySelector('[aria-label="Días de stock que conserva cada delegación"]'),'30'));
  await React.act(async()=>choose('Área para redistribuir','1'));
  await React.act(async()=>choose('Familia para redistribuir','2'));
  await React.act(async()=>choose('Subfamilia para redistribuir','3'));
@@ -47,7 +50,7 @@ const choose=(label,value)=>{const select=document.querySelector(`[aria-label="$
  await React.act(async()=>setInput(document.querySelector('[aria-label="Material para redistribuir"]'),'MAT'));
  await React.act(async()=>button('Calcular redistribución').click());
  const request=JSON.parse(calls.filter(c=>c[0].endsWith('/redistribution/jobs')).at(-1)[1].body);
- assert.equal(request.filters.q,'MAT');assert.equal(request.filters.family_id,2);assert.equal(request.filters.type_id,4);
+ assert.equal(request.reserve_days,30);assert.equal(request.filters.q,'MAT');assert.equal(request.filters.family_id,2);assert.equal(request.filters.type_id,4);
  assert.equal(document.querySelector('[aria-label="Avance de redistribución"]').value,50);
  assert.equal(document.querySelector('[aria-label="Familia para redistribuir"]').matches(':disabled'),true);
  await pause(2150);await pause(200);

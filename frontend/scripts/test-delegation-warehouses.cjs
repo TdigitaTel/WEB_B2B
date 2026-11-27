@@ -1,0 +1,38 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),ts=require('typescript');
+const {JSDOM}=require('jsdom'),dom=new JSDOM('<div id="root"></div>',{url:'https://example.test',pretendToBeVisual:true});
+for(const key of ['window','document','HTMLElement','Event','CustomEvent'])global[key]=dom.window[key];global.IS_REACT_ACT_ENVIRONMENT=true;
+for(const ext of ['.ts','.tsx'])require.extensions[ext]=(m,f)=>m._compile(ts.transpileModule(fs.readFileSync(f,'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2020,jsx:ts.JsxEmit.ReactJSX,module:ts.ModuleKind.CommonJS,esModuleInterop:true}}).outputText,f);
+require.extensions['.css']=m=>m.exports={};
+const React=require('react'),{createRoot}=require('react-dom/client'),View=require('../app/DelegationWarehouses.tsx').default;
+const options={can_edit:true,delegations:[{company_code:1,code:'00',name:'Almeiras',primary_warehouse_code:'P'},{company_code:2,code:'00',name:'Otra empresa',primary_warehouse_code:'P'}],warehouses:[{company_code:1,code:'P',name:'Principal'},{company_code:1,code:'A',name:'Adicional'},{company_code:2,code:'X',name:'Otra empresa'}]};
+let links=[{company_code:1,delegation_code:'00',warehouse_code:'P',warehouse_name:'Principal',delegation_name:'Almeiras',active:true,use_for_stock:true,is_primary:true,version:1}],calls=[];
+global.fetch=async(url,opts={})=>{calls.push([url,opts]);let body;
+ if(url.endsWith('/options'))body=options;
+ else if(url.endsWith('/sync'))body={delegations:2};
+ else if(opts.method==='PUT'){const data=JSON.parse(opts.body),row=links.find(row=>row.company_code===data.company_code&&row.delegation_code===data.delegation_code&&row.warehouse_code===data.warehouse_code);if(row)Object.assign(row,data,{version:row.version+1});else links.push({...data,warehouse_name:'Adicional',delegation_name:'Almeiras',is_primary:false,version:1});body=links.at(-1)}
+ else body=links;
+ return {ok:true,status:200,text:async()=>JSON.stringify(body)};
+};
+const root=createRoot(document.getElementById('root')),pause=()=>React.act(async()=>new Promise(resolve=>setTimeout(resolve,20)));
+(async()=>{
+ await React.act(async()=>root.render(React.createElement(View)));await pause();
+ assert.ok(calls.some(([url,opts])=>url.endsWith('/sync')&&opts.method==='POST'));
+ assert.match(document.querySelector('tbody tr').textContent,/Principal · EXIT/);
+ const additional=document.querySelector('[aria-label="Almacén adicional"]');
+ assert.deepEqual([...additional.options].map(option=>option.value),['','A'],'Only unlinked same-company EXIT warehouses');
+ await React.act(async()=>{additional.value='A';additional.dispatchEvent(new Event('change',{bubbles:true}))});
+ await React.act(async()=>document.querySelector('form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})));await pause();
+ assert.equal(document.querySelectorAll('tbody tr').length,2);
+ let put=JSON.parse(calls.filter(([,opts])=>opts.method==='PUT').at(-1)[1].body);
+ assert.equal(put.warehouse_code,'A');assert.equal(put.company_code,1);assert.equal(put.delegation_code,'00');
+ await React.act(async()=>document.querySelector('[aria-label="Usar para stock A"]').click());await pause();
+ put=JSON.parse(calls.filter(([,opts])=>opts.method==='PUT').at(-1)[1].body);
+ assert.equal(put.use_for_stock,false);assert.equal(put.active,true);assert.equal(put.expected_version,1);
+ await React.act(async()=>document.querySelector('[aria-label="Activo A"]').click());await pause();
+ assert.equal(document.querySelector('[aria-label="Activo A"]').checked,false);
+ assert.equal(document.querySelector('[aria-label="Usar para stock A"]').checked,false);
+ const seats=document.querySelector('[aria-label="Empresa y delegación"]');
+ await React.act(async()=>{seats.value='2:00';seats.dispatchEvent(new Event('change',{bubbles:true}))});
+ assert.deepEqual([...document.querySelector('[aria-label="Almacén adicional"]').options].map(option=>option.value),['','X']);
+ await React.act(async()=>root.unmount());dom.window.close();console.log('Delegation warehouses: principal, additions, company scope and independent versioned flags passed');
+})().catch(e=>{console.error(e);process.exitCode=1;dom.window.close()});

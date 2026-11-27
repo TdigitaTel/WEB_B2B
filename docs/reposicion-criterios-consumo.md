@@ -128,3 +128,17 @@ la necesidad conjunta con su disponible físico después de compromisos y reserv
 No se puede atender si el disponible es nulo o insuficiente; las entradas pendientes no
 se consideran despachables. Sin datos confirmados se muestra por separado.
 El filtro se aplica antes de paginar y también limita contadores y Excel, sin recalcular.
+
+
+### Reserva de las delegaciones en redistribución
+
+Los nuevos trabajos guardan `reserve_days`, de 1 a 365 días, por defecto 15. Es un parámetro
+común de la propuesta: cada delegación conserva una cantidad distinta según el consumo
+diario del criterio elegido. Reserva = máximo(0, consumo diario) × días + seguridad guardada.
+Se sustituye el máximo guardado como cantidad conservada para esta redistribución, sin alterar
+los resultados originales de reposición. Sobrante = máximo(0, stock físico − comprometido − reserva).
+Se redondea el sobrante hacia abajo al múltiplo de despacho. Las entradas pendientes no se despachan.
+La misma reserva se respeta entre delegaciones y en devoluciones a Almeiras. Las necesidades de
+destino siguen siendo las guardadas. Los materiales sin consumo diario confirmado se excluyen
+con aviso. El parámetro se guarda en el trabajo, la firma, los detalles y el Excel; las propuestas
+anteriores sin ese parámetro conservan su regla de máximo guardado.

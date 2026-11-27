@@ -26,6 +26,7 @@ class Selection(BaseModel):
     model_config={'extra':'forbid'}
 
 class Request(BaseModel):
+    reserve_days:int=Field(15,ge=1,le=365)
     consumption_basis:ConsumptionBasis='MEAN'
     filters:Selection=Field(default_factory=Selection)
     model_config={'extra':'forbid'}
@@ -110,7 +111,7 @@ def process_batch(job_id,token):
         batch.attempts+=1;job.phase=f'Procesando bloque {batch.number} de {job.total_batches} · hasta 1.000 materiales';db.commit()
         # Registry/scenario locks are held only for this block, not for the whole calculation.
         job=owned(db,job_id,token);validate_snapshot(db,job.snapshot)
-        proposal=calculate_redistribution(db,job.request['consumption_basis'],batch.codes)
+        proposal=calculate_redistribution(db,job.request['consumption_basis'],batch.codes,reserve_days=job.request.get('reserve_days'))
         # Details are fetched only on demand, never as part of table pagination.
         details=[move.pop('calculation_detail',None) for move in proposal['movements']]
         batch.result={key:proposal[key] for key in ('movements','unmet_needs','material_warnings')}|{'movement_details':details}
@@ -128,9 +129,9 @@ def publish(job_id,token):
         job=owned(db,job_id,token);validate_snapshot(db,job.snapshot)
         if job.completed_batches!=job.total_batches or job.processed_articles!=job.total_articles:raise ValueError('Faltan bloques; no se publicará la propuesta parcial')
         # Empty material selection still returns the source metadata and a valid empty workbook.
-        proposal=calculate_redistribution(db,job.request['consumption_basis'],[])
+        proposal=calculate_redistribution(db,job.request['consumption_basis'],[],reserve_days=job.request.get('reserve_days'))
         job.summary={key:job.summary.get(key,0) for key in proposal['summary']}
-        metadata={key:proposal[key] for key in ('calculations','warnings','read_only_exit','consumption_basis','consumption_basis_label')}
+        metadata={key:proposal[key] for key in ('calculations','warnings','read_only_exit','reserve_days','consumption_basis','consumption_basis_label')}
         metadata.update(summary=job.summary,filters=job.request['filters'],analyzed_materials=job.total_articles)
         signatures=list(db.scalars(select(Batch.fingerprint).where(Batch.job_id==job.id).order_by(Batch.number)))
         if any(value is None for value in signatures):raise ValueError('Faltan resultados de bloques')
@@ -164,7 +165,7 @@ def process_one_unlocked():
 
 def public(job):
     return {'id':job.public_id,'status':job.status,'phase':job.phase,'error':job.error,'filters':job.request['filters'],
-        'consumption_basis':job.request['consumption_basis'],'selection_ready':job.initialized,'batch_size':BATCH_SIZE,'total_articles':job.total_articles,
+        'reserve_days':job.request.get('reserve_days'),'consumption_basis':job.request['consumption_basis'],'selection_ready':job.initialized,'batch_size':BATCH_SIZE,'total_articles':job.total_articles,
         'processed_articles':job.processed_articles,'total_batches':job.total_batches,'completed_batches':job.completed_batches,
         'progress':100 if job.status=='COMPLETED' else min(99,int(job.processed_articles*100/max(1,job.total_articles))),
         'result':job.result_metadata if job.status=='COMPLETED' else None}
@@ -209,7 +210,7 @@ def movement_detail(db,job,detail_id):
     if not detail:
         # Compatibility for proposals created before details were persisted.
         # Reconstruct ONE material from the same frozen calculation, never EXIT.
-        proposal=calculate_redistribution(db,job.request['consumption_basis'],[move['sku']])
+        proposal=calculate_redistribution(db,job.request['consumption_basis'],[move['sku']],reserve_days=job.request.get('reserve_days'))
         match=next((row for row in proposal['movements'] if all(row[key]==move[key] for key in ('sku','from_delegation','to_delegation','kind','quantity'))),None)
         if not match:raise HTTPException(409,'No se puede verificar el detalle de esta propuesta antigua. Vuelve a calcular la redistribución.')
         detail=match.get('calculation_detail');reconstructed=True
