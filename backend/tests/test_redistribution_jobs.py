@@ -51,9 +51,9 @@ def test_queue_batches_progress_resume_and_export_without_recalculation(client,m
     assert client.get(path+'/result').status_code==409
     # Simulate process death after the first committed batch: reclaim and finish only pending work.
     sizes=[];original=queue.calculate_redistribution
-    def checked(db,basis='MEAN',codes=None):
+    def checked(db,basis='MEAN',codes=None,**kwargs):
         sizes.append(len(codes));assert len(codes)<=1000
-        return original(db,basis,codes)
+        return original(db,basis,codes,**kwargs)
     monkeypatch.setattr(queue,'calculate_redistribution',checked)
     assert worker.process_one()
     assert sizes==[1,0]
@@ -124,7 +124,7 @@ def test_completed_movements_are_paginated_and_export_remains_complete(client,mo
     codes=[f'MOVE-{i:04d}' for i in range(120)];publish(client,monkeypatch,codes)
     with SessionLocal() as db:
         for row in db.scalars(select(Result)):
-            value=deepcopy(row.payload);value.update(maximum_stock=10,stock=100 if row.delegation=='01' else 0 if row.delegation=='02' else 10,
+            value=deepcopy(row.payload);value.update(daily_reference=0.5,safety_stock=2.5,maximum_stock=10,stock=100 if row.delegation=='01' else 0 if row.delegation=='02' else 10,
                 outgoing=0,incoming=0,inventory_position=100 if row.delegation=='01' else 0 if row.delegation=='02' else 10,
                 final_quantity=3 if row.delegation=='02' else 0)
             row.payload=value
@@ -163,7 +163,7 @@ def test_movement_details_freeze_inputs_and_allocations_without_recalculating(cl
         for row in db.scalars(select(Result)):
             value=deepcopy(row.payload)
             stock=100 if row.delegation=='01' else 0 if row.delegation=='02' else 10
-            value.update(maximum_stock=10,stock=stock,outgoing=0,incoming=40 if row.delegation=='01' else 0,
+            value.update(daily_reference=0.5,safety_stock=2.5,maximum_stock=10,stock=stock,outgoing=0,incoming=40 if row.delegation=='01' else 0,
                 inventory_position=stock+(40 if row.delegation=='01' else 0),final_quantity=3 if row.delegation=='02' else 0,
                 effective_multiple=1)
             row.payload=value
@@ -208,7 +208,7 @@ def test_legacy_movement_details_reconstruct_and_verify_only_the_selected_sku(cl
     publish(client,monkeypatch,['LEGACY','OTHER'])
     with SessionLocal() as db:
         for row in db.scalars(select(Result)):
-            value=deepcopy(row.payload);value.update(stock=100,maximum_stock=10,outgoing=0,incoming=0,inventory_position=100,final_quantity=0)
+            value=deepcopy(row.payload);value.update(daily_reference=0.5,safety_stock=2.5,stock=100,maximum_stock=10,outgoing=0,incoming=0,inventory_position=100,final_quantity=0)
             row.payload=value
         db.commit()
     queued=create(client);assert worker.process_one();path=PREFIX+'/redistribution/jobs/'+queued['id']
@@ -216,7 +216,7 @@ def test_legacy_movement_details_reconstruct_and_verify_only_the_selected_sku(cl
         batch=db.scalar(select(Batch));batch.result={key:value for key,value in batch.result.items() if key!='movement_details'};db.commit()
     move=client.get(path+'/result').json()['movements'][0]
     calls=[];original=queue.calculate_redistribution
-    def checked(db,basis,codes):calls.append(codes);return original(db,basis,codes)
+    def checked(db,basis,codes,**kwargs):calls.append(codes);return original(db,basis,codes,**kwargs)
     monkeypatch.setattr(queue,'calculate_redistribution',checked)
     monkeypatch.setattr(worker,'read_replenishment_source',lambda *a:pytest.fail('Legacy detail must use the saved calculation'))
     response=client.get(path+'/movements/'+move['detail_id'])
@@ -226,3 +226,26 @@ def test_legacy_movement_details_reconstruct_and_verify_only_the_selected_sku(cl
     with SessionLocal() as db:
         batch=db.scalar(select(Batch));value=deepcopy(batch.result);value['movements'][0]['quantity']=999;batch.result=value;db.commit()
     assert client.get(path+'/movements/'+move['detail_id']).status_code==409
+
+
+def test_reserve_days_default_validation_persistence_and_excel(client,monkeypatch):
+    publish(client,monkeypatch,['RESERVE'])
+    for days in [0,366,1.5]:
+        assert client.post(PREFIX+'/redistribution/jobs',json={'reserve_days':days}).status_code==422
+    queued=create(client)
+    assert queued['reserve_days']==15
+    assert client.post(PREFIX+'/redistribution/jobs',json={'reserve_days':30}).status_code==409
+    assert worker.process_one()
+    path=PREFIX+'/redistribution/jobs/'+queued['id']
+    result=client.get(path+'/result').json()
+    assert result['reserve_days']==15
+    exported=client.post(path+'/export.xlsx',json={'fingerprint':result['fingerprint']})
+    book=load_workbook(io.BytesIO(exported.content))
+    summary={row[0]:row[1] for row in book['Resumen'].iter_rows(min_row=2,values_only=True)}
+    assert summary['Días de stock conservado']==15
+    changed=client.post(PREFIX+'/redistribution/jobs',json={'reserve_days':30})
+    assert changed.status_code==202,changed.text
+    assert changed.json()['reserve_days']==30
+    assert worker.process_one()
+    updated=client.get(PREFIX+'/redistribution/jobs/'+changed.json()['id']+'/result').json()
+    assert updated['reserve_days']==30 and updated['fingerprint']!=result['fingerprint']
