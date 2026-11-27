@@ -142,3 +142,33 @@ La misma reserva se respeta entre delegaciones y en devoluciones a Almeiras. Las
 destino siguen siendo las guardadas. Los materiales sin consumo diario confirmado se excluyen
 con aviso. El parámetro se guarda en el trabajo, la firma, los detalles y el Excel; las propuestas
 anteriores sin ese parámetro conservan su regla de máximo guardado.
+
+
+### Entradas y salidas +Inter
+
+Los nuevos cálculos suman los intercambios actuales en tránsito, sin limitar esos movimientos
+al periodo histórico de ventas. Se consulta `MovimientoAlmacenCabecera` y `MovimientoAlmacenLineas`
+por empresa, ejercicio y número; si ambas tablas exponen serie, también se incluye en la relación.
+Solo empresa 1, `EX_EstadoMovA='Transito'`, `TipoMovimientoAlmacen='T'` y los códigos de material
+del bloque actual (hasta 1.000 por consulta). Se suman las unidades de las líneas seleccionadas.
+
+- Salida +Inter = PendienteServir + tránsito cuyo origen sea `CodigoAlmacen`.
+- Entrada +Inter = PendienteRecibir + tránsito cuyo destino sea `AlmacenContrapartida`.
+
+El origen y el destino se traducen mediante `delegation_warehouses`, de la misma empresa,
+con `active=true` y `use_for_stock=true`. No se deduce la delegación del código de almacén.
+Varios almacenes se totalizan en la delegación configurada (por ejemplo 99 y 00 en Almeiras).
+Los almacenes excluidos no aportan tránsitos; un almacén asignado para stock a varias delegaciones
+bloquea el cálculo para evitar doble conteo. Las delegaciones ajenas al alcance de reposición
+se ignoran. Un movimiento interno a una misma delegación suma una entrada y una salida;
+el efecto sobre el disponible previsto es cero.
+
+La vista consolidada `VIS_EX_StockVentasDelegacion` sigue siendo la fuente del stock físico y
+de los pendientes base: no se vuelve a sumar ese stock por almacén. Los intercambios entrantes
+no aumentan el stock físico despachable; los salientes sí se añaden a los compromisos, también
+en Almeiras y en la redistribución. Una fila ausente de stock no se inventa como cero.
+
+Se conserva en la instantánea el mapa de almacenes utilizado y los tránsitos agregados. Cada
+resultado guarda el pendiente original, el componente de tránsito y el total, visibles en el
+detalle y en el Excel ampliado. Los cálculos históricos no se alteran: hay que recalcular para
+incorporar los tránsitos nuevos. La exportación simple usa los totales +Inter.

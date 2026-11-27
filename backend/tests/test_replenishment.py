@@ -144,6 +144,7 @@ def test_source_sql_is_read_only_uses_prompt_fields_and_rejects_duplicate_stock(
         def fetchall(self):
             if 'INFORMATION_SCHEMA' in self.sql:return [{'COLUMN_NAME':name} for name in ('UnidadMedida1_','EX_tipounidad')]
             if 'FROM dbo.articulos' in self.sql:return [{'codigoarticulo':'03009','descripcionarticulo':'Material','replenishment_unit':'ROL','unit_source':'UnidadMedida1_','inactivo':0,'fechaalta':date(2020,1,1),'EX_multiplo':6}]
+            if 'MovimientoAlmacenCabecera' in self.sql:return [{'sku':'03009','origin':'99','destination':'00','units':3}]
             if 'AlbaranVentaCabecera' in self.sql:return [{'sku':'03009','delegation':'02','day':date(2026,1,5),'sold':4,'returned':1}]
             rows=[{'sku':'03009','delegation':'00','stock':10,'incoming':2,'outgoing':1}]
             return rows*2 if duplicate else rows
@@ -152,6 +153,8 @@ def test_source_sql_is_read_only_uses_prompt_fields_and_rejects_duplicate_stock(
     @contextmanager
     def connect():yield Connection()
     monkeypatch.setattr(module,'connect_sqlserver',connect)
+    from app import replenishment_transit
+    monkeypatch.setattr(replenishment_transit,'stock_warehouse_map',lambda:{'99':'00','00':'00'})
     result=module.read_replenishment_source(date(2026,1,1),date(2026,1,31),['03009'])
     assert result['articles'][0]['sku']=='03009'
     assert result['articles'][0]['exit_multiple']==6
@@ -160,6 +163,9 @@ def test_source_sql_is_read_only_uses_prompt_fields_and_rejects_duplicate_stock(
     assert 'EX_multiplo' in calls[1][0]
     assert result['sales'][0]['sold']==4 and result['sales'][0]['returned']==1
     assert len(result['stocks'])==1 and result['stocks'][0]['stock']==10
+    assert result['stocks'][0]['incoming']==5 and result['stocks'][0]['outgoing']==4
+    assert result['stocks'][0]['incoming_exit']==2 and result['stocks'][0]['incoming_transit']==3
+    assert result['warehouse_mapping']=={'99':'00','00':'00'} and result['interchanges_included']
     assert all(sql.strip().upper().startswith('SELECT') for sql,params in calls)
     assert 'avc.CodigoEmpresa=avl.CodigoEmpresa' in calls[2][0]
     assert 'avc.SerieAlbaran=avl.SerieAlbaran' in calls[2][0]
