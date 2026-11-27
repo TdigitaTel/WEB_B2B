@@ -20,6 +20,7 @@ def stock_warehouse_map(company=1):
 
 
 def fetch_transits(cursor,codes):
+    from .replenishment_source import number
     # Some EXIT schemas have a series in this document key, others use company/year/number only.
     cursor.execute("SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA='dbo' AND TABLE_NAME IN ('MovimientoAlmacenCabecera','MovimientoAlmacenLineas')")
     columns=defaultdict(set)
@@ -35,7 +36,7 @@ def fetch_transits(cursor,codes):
         AND mal.CodigoArticulo IN ({marks})
         GROUP BY mal.CodigoArticulo,mal.CodigoAlmacen,mal.AlmacenContrapartida''',(1,'Transito','T',*codes))
     return [{'sku':str(row['sku']).strip(),'origin':str(row['origin'] if row['origin'] is not None else '').strip(),
-             'destination':str(row['destination'] if row['destination'] is not None else '').strip(),'units':row['units']} for row in cursor.fetchall()]
+             'destination':str(row['destination'] if row['destination'] is not None else '').strip(),'units':number(row['units'])} for row in cursor.fetchall()]
 
 
 def add_transits(stocks,transits,mapping):

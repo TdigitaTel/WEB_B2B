@@ -76,3 +76,18 @@ def test_unconfigured_warehouses_are_excluded_and_missing_stock_is_not_invented(
     assert stocks[0]['incoming']==stocks[0]['outgoing']==0
     with pytest.raises(ValueError,match='sin fila de stock'):
         module.add_transits(stocks,[dict(sku='24024',origin='99',destination='02',units=10)],{'99':'00','02':'02'})
+
+
+def test_sql_server_decimal_transits_can_be_fingerprinted_and_saved():
+    from decimal import Decimal
+    import json
+    from app.replenishment_worker import digest
+    class Cursor:
+        def execute(self,sql,params=()):self.sql=sql
+        def fetchall(self):
+            if 'INFORMATION_SCHEMA' in self.sql:return []
+            return [{'sku':'24024','origin':'99','destination':'02','units':Decimal('12.500000')}]
+    transits=module.fetch_transits(Cursor(),['24024'])
+    snapshot={'transits':transits}
+    assert digest(snapshot)
+    assert json.loads(json.dumps(snapshot))['transits'][0]['units']==12.5
