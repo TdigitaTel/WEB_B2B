@@ -2,7 +2,7 @@
 from fastapi import HTTPException
 from .models import OperatorAccess
 
-MODULES = {'orders': 'Pedidos', 'replenishment': 'Reposición', 'settings': 'Parámetros',
+MODULES = {'labels': 'Albaranes y etiquetas', 'orders': 'Pedidos', 'replenishment': 'Reposición', 'settings': 'Parámetros',
            'customers': 'Accesos de clientes', 'categories': 'Categorías e imágenes', 'users': 'Accesos de usuarios', 'all_delegations': 'Operar en todas las delegaciones',
            'incident_supervise':'Incidencias · gestionar procesos autorizados',
            'incident_config':'Incidencias · configurar flujos y responsables'}
@@ -37,6 +37,7 @@ def check_operator_path(user, db, path, method):
     module = None
     for prefix, key in (
         ('/api/v1/store/operator-access', 'users'),
+        ('/api/v1/store/delivery-labels', 'labels'),
         ('/api/v1/store/orders', 'orders'),
         ('/api/v1/store/replenishment', 'replenishment'),
         ('/api/v1/store/customer-access', 'customers'),

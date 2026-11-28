@@ -41,11 +41,13 @@
     "test:category-menu": "node scripts/test-category-menu.cjs",
     "test:order-email-history": "node scripts/test-order-email-history.cjs",
     "test:home-banner": "node scripts/test-home-banner.cjs",
-    "test:incidents": "node scripts/test-incidents.cjs && node scripts/test-incident-configured-fields.cjs"
+    "test:incidents": "node scripts/test-incidents.cjs && node scripts/test-incident-configured-fields.cjs",
+    "test:delivery-labels": "node scripts/test-delivery-labels.cjs"
   },
   "dependencies": {
     "jsqr": "^1.4.0",
     "next": "16.3.5",
+    "qz-tray": "^2.2.5",
     "react": "19.1.1",
     "react-dom": "19.1.1"
   },

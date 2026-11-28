@@ -18,6 +18,7 @@ import HomeOrders from "./HomeOrders";
 import CustomerAccess, {InitialPassword} from "./CustomerAccess";
 import LoginScreen from "./LoginScreen";
 import QuantityInput from "./QuantityInput";
+import DeliveryLabels from "./DeliveryLabels";
 import OperatorDeliveryNote from "./OperatorDeliveryNote";
 import OrderDeliveryNotes, {type DeliveryNoteHeader} from "./OrderDeliveryNotes";
 import OrderPlanningEditor from "./OrderPlanningEditor";
@@ -45,9 +46,9 @@ import "./settings.css";
 import SettingsMenu from "./SettingsMenu";
 import ReplenishmentWorkspace from "./ReplenishmentWorkspace";
 
-type View = "operator-access" | "replenishment" | "pickup-settings" | "home" | "catalog" | "orders" | "documents" | "ops" | "category-visibility" | "customer-access" | "account";
+type View = "delivery-labels" | "operator-access" | "replenishment" | "pickup-settings" | "home" | "catalog" | "orders" | "documents" | "ops" | "category-visibility" | "customer-access" | "account";
 type User = { operator_permissions?:Record<string,boolean>; access_code?:string; contact_phone?:string; can_view_prices?:boolean; can_view_delivery_notes?:boolean; can_view_invoices?:boolean; can_manage_preferences?:boolean; own_orders_only?:boolean; is_subuser?:boolean; can_manage_subusers?:boolean; login_name?:string; principal_user_name?:string; id: string; name: string; email: string; role: string; idle_timeout_seconds: number; must_change_password: boolean; show_delivery_note_images?:boolean; show_order_images?:boolean };
-const operatorViewModules:Record<string,string>={ops:'orders',replenishment:'replenishment','pickup-settings':'settings','customer-access':'customers','category-visibility':'categories','operator-access':'users'};
+const operatorViewModules:Record<string,string>={ops:'orders','delivery-labels':'labels',replenishment:'replenishment','pickup-settings':'settings','customer-access':'customers','category-visibility':'categories','operator-access':'users'};
 function operatorViewAllowed(user:User,view:string){if(view==='replenishment'&&Object.entries(user.operator_permissions||{}).some(([key,value])=>key.startsWith('incident_')&&value))return true;return !operatorViewModules[view]||user.operator_permissions?.[operatorViewModules[view]]!==false}
 function operatorStart(user:User):View{return (Object.keys(operatorViewModules).find(view=>operatorViewAllowed(user,view))||'account') as View}
 
@@ -440,7 +441,7 @@ export default function Page() {
         <button className="account-button" onClick={()=>setView("account")}><small>Hola, {user.name.split(" ")[0]}</small><b>Mi cuenta</b></button><button className="logout-button" onClick={logout}>Salir</button>
         {!isOperator && <button className="cart-button" onClick={() => setCartOpen(true)}>▤ <span>Mi carrito</span> {cart?.line_count || 0}</button>}
       </div>
-      <nav className="desktop-nav">{(isOperator ? [["ops","Operaciones"],["replenishment",user.operator_permissions?.replenishment===false?"Incidencias":"Reposición"],["pickup-settings","Parámetros"],["customer-access","Accesos de clientes"],["category-visibility","Categorías"],["operator-access","Accesos de usuarios"],["account","Mi cuenta"]] : [["home","Inicio"],["catalog","Catálogo"],["orders","Mis pedidos"],["documents","Albaranes y facturas"],["account","Mi cuenta"]]).filter(([id])=>(!isOperator||operatorViewAllowed(user,id))&&(id!=="documents"||user.can_view_delivery_notes!==false||user.can_view_invoices!==false)).map(([id,label]) => <button key={id} className={view===id?"active":""} onClick={() => setView(id as View)}>{label}</button>)}</nav>
+      <nav className="desktop-nav">{(isOperator ? [["ops","Operaciones"],["delivery-labels","Albaranes y etiquetas"],["replenishment",user.operator_permissions?.replenishment===false?"Incidencias":"Reposición"],["pickup-settings","Parámetros"],["customer-access","Accesos de clientes"],["category-visibility","Categorías"],["operator-access","Accesos de usuarios"],["account","Mi cuenta"]] : [["home","Inicio"],["catalog","Catálogo"],["orders","Mis pedidos"],["documents","Albaranes y facturas"],["account","Mi cuenta"]]).filter(([id])=>(!isOperator||operatorViewAllowed(user,id))&&(id!=="documents"||user.can_view_delivery_notes!==false||user.can_view_invoices!==false)).map(([id,label]) => <button key={id} className={view===id?"active":""} onClick={() => setView(id as View)}>{label}</button>)}</nav>
     </header>
     {!isOperator&&<div className="service-strip"><span>ÁREA PROFESIONAL · Compra a tu ritmo</span><span>Almeiras · Recogida en tienda</span></div>}{error && <div className="page error" role="alert">{error}</div>}
     {view === "home" && <Home key={user.id} customer={customer} products={favoriteProducts} classification={classification} onNavigate={setView} onSelectArea={areaId=>selectCatalogCategory({areaId:String(areaId),familyId:"",subfamilyId:"",productTypeId:""})} onAdd={addProduct} />}
@@ -450,12 +451,13 @@ export default function Page() {
     {view === "account" && (isOperator?<div className="page account-page"><h1>Mi cuenta</h1><PasswordSettings/></div>:<Account user={user} customer={customer} onPreferences={preferences=>setUser(previous=>previous?{...previous,...preferences}:previous)} onCatalogPrice={withoutTax=>{setProducts(old=>old.map(product=>({...product,highlight_price_without_tax:withoutTax})));setFavoriteProducts(old=>old.map(product=>({...product,highlight_price_without_tax:withoutTax})));setSuggestions([])}} />)}
 
     {view === "replenishment" && isOperator && operatorViewAllowed(user,"replenishment") && <ReplenishmentWorkspace permissions={user.operator_permissions} />}
+    {view === "delivery-labels" && isOperator && operatorViewAllowed(user,"delivery-labels") && <DeliveryLabels />}
     {view === "ops" && isOperator && operatorViewAllowed(user,"ops") && <Operations orders={opsOrders} onRefresh={refreshOperations} showImages={!!user.show_order_images}  />}
     {view === "pickup-settings" && isOperator && operatorViewAllowed(user,"pickup-settings") && <PickupParameters showImages={!!user.show_order_images} onImagesChange={async value=>{const result=await api<{show_order_images:boolean;show_delivery_note_images:boolean}>("/api/v1/account/preferences",{method:"PATCH",body:JSON.stringify({show_order_images:value,show_delivery_note_images:!!user.show_delivery_note_images})});setUser(previous=>previous?{...previous,...result}:previous)}} />}
     {view === "operator-access" && isOperator && operatorViewAllowed(user,"operator-access") && <OperatorAccess />}
     {view === "customer-access" && isOperator && operatorViewAllowed(user,"customer-access") && <CustomerAccess />}
     {view === "category-visibility" && isOperator && operatorViewAllowed(user,"category-visibility") && <CategoryVisibility />}
-    {isOperator&&<nav className="mobile-nav" aria-label="Navegación de operador">{[["ops","Pedidos"],["replenishment",user.operator_permissions?.replenishment===false?"Incidencias":"Reposición"],["pickup-settings","Parámetros"],["customer-access","Clientes"],["category-visibility","Categorías"],["operator-access","Usuarios"],["account","Cuenta"]].filter(([id])=>operatorViewAllowed(user,id)).map(([id,label])=><button key={id} className={view===id?"active":""} onClick={()=>setView(id as View)}>{label}</button>)}</nav>}
+    {isOperator&&<nav className="mobile-nav" aria-label="Navegación de operador">{[["ops","Pedidos"],["delivery-labels","Etiquetas"],["replenishment",user.operator_permissions?.replenishment===false?"Incidencias":"Reposición"],["pickup-settings","Parámetros"],["customer-access","Clientes"],["category-visibility","Categorías"],["operator-access","Usuarios"],["account","Cuenta"]].filter(([id])=>operatorViewAllowed(user,id)).map(([id,label])=><button key={id} className={view===id?"active":""} onClick={()=>setView(id as View)}>{label}</button>)}</nav>}
     {!isOperator && <nav className="mobile-nav">{[["home","Inicio"],["catalog","Buscar"],["orders","Pedidos"],["account","Cuenta"]].map(([id,label]) => <button key={id} className={view===id?"active":""} onClick={() => setView(id as View)}>{label}</button>)}</nav>}
     {cartOpen && cart && <CartDrawer cart={cart} stores={stores} onClose={() => setCartOpen(false)} onContinue={()=>{setCartOpen(false);setView("catalog")}} onUpdate={updateCart} onRemove={removeCart} onCheckout={checkout} />}
     {deleteCandidate&&<DeleteOrderDialog order={deleteCandidate} onCancel={()=>setDeleteCandidate(null)} onConfirm={()=>deleteOrder(deleteCandidate.id)}/>}

@@ -495,8 +495,9 @@ def _document_filters(alias: str, prefix: str, document_number: str = "", date_f
         parameters.append(date_to)
     raw = str(document_number or "").strip()
     if raw:
-        parts = [part.strip() for part in re.split(r"[~/\\-]+", raw) if part.strip()]
-        if len(parts) >= 3:
+        match = re.fullmatch(r"(\d{4})[~/\\-](.*)[~/\\-](\d+)", raw)
+        parts = [part.strip() for part in match.groups()] if match else []
+        if len(parts) == 3:
             clauses.extend((
                 f"CONVERT(varchar(20), {alias}.Ejercicio{prefix}) = %s",
                 f"LTRIM(RTRIM(CONVERT(varchar(30), {alias}.Serie{prefix}))) = %s",
@@ -509,9 +510,11 @@ def _document_filters(alias: str, prefix: str, document_number: str = "", date_f
     return ("".join(f" AND {clause}" for clause in clauses), parameters)
 
 
-def fetch_customer_delivery_notes(customer_code: str, limit: int = 200, document_number: str = "",
+def fetch_customer_delivery_notes(customer_code: str | None, limit: int = 200, document_number: str = "",
                                   date_from: date | None = None, date_to: date | None = None,
-                                  order_keys: list[tuple[int, int, str, str]] | None = None) -> list[dict]:
+                                  order_keys: list[tuple[int, int, str, str]] | None = None, *,
+                                  delegation_keys: list[tuple[int, str]] | None = None, offset: int = 0,
+                                  document_key: tuple[int, int, str, int] | None = None) -> list[dict]:
     """Consulta albaranes de venta directamente en EXITERP."""
     schema = _identifier(SALES_DOCUMENTS["schema"])
     table = _identifier(SALES_DOCUMENTS["delivery_header"])
@@ -527,25 +530,49 @@ def fetch_customer_delivery_notes(customer_code: str, limit: int = 200, document
             filter_parameters.extend([company, year, series, number])
         filters_sql += " AND (" + " OR ".join(predicates) + ")"
 
+    # Operator queries use the same source as customers, with an explicit company/delegation scope.
+    operator_query = customer_code is None
+    where = "WHERE LTRIM(RTRIM(CONVERT(varchar(100), a.CodigoCliente)))=%s "
+    parameters = [str(customer_code).strip(), *filter_parameters]
+    if operator_query:
+        if not delegation_keys:
+            return []
+        where = "WHERE (" + " OR ".join("(a.CodigoEmpresa=%s AND LTRIM(RTRIM(a.IdDelegacion))=%s)" for _ in delegation_keys) + ") "
+        parameters = [value for pair in delegation_keys for value in pair] + filter_parameters
+    if document_key:
+        filters_sql += " AND a.CodigoEmpresa=%s AND a.EjercicioAlbaran=%s AND LTRIM(RTRIM(a.SerieAlbaran))=%s AND a.NumeroAlbaran=%s"
+        parameters.extend(document_key)
+    size = max(1, min(limit, 1000))
+    top = "" if operator_query else f"TOP {size} "
+    page_sql = f", CodigoEmpresa DESC OFFSET {max(0, int(offset))} ROWS FETCH NEXT {size} ROWS ONLY" if operator_query else ""
+    extra = ""
     sql = (
-        f"SELECT TOP {max(1, min(limit, 1000))} CodigoEmpresa, EjercicioAlbaran, SerieAlbaran, NumeroAlbaran, "
+        f"SELECT {top}CodigoEmpresa, EjercicioAlbaran, SerieAlbaran, NumeroAlbaran, "
         "FechaAlbaran, CodigoCliente, IdDelegacion, BaseImponible, TotalCuotaIva AS TaxTotal, ImporteFactura, "
         "StatusFacturado, StatusImpresion, EjercicioPedido, SeriePedido, NumeroPedido, "
         f"EjercicioFactura, SerieFactura, NumeroFactura, (SELECT TOP 1 d.Delegacion FROM dbo.delegaciones d WHERE d.CodigoEmpresa=a.CodigoEmpresa AND d.IdDelegacion=a.IdDelegacion) AS DelegationName FROM {schema}.{table} a "
-        "WHERE LTRIM(RTRIM(CONVERT(varchar(100), a.CodigoCliente)))=%s " + filters_sql + " "
-        "ORDER BY FechaAlbaran DESC, EjercicioAlbaran DESC, SerieAlbaran DESC, NumeroAlbaran DESC"
+        + where + filters_sql + " "
+        "ORDER BY FechaAlbaran DESC, EjercicioAlbaran DESC, SerieAlbaran DESC, NumeroAlbaran DESC" + page_sql
     )
     with connect_sqlserver() as connection, connection.cursor() as cursor:
-        parameters = [str(customer_code).strip(), *filter_parameters]
+        if operator_query:
+            cursor.execute("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=%s AND TABLE_NAME=%s", (SALES_DOCUMENTS["schema"], SALES_DOCUMENTS["delivery_header"]))
+            columns = {r['COLUMN_NAME'].lower(): r['COLUMN_NAME'] for r in cursor.fetchall()}
+            fields = {'CustomerName': ('razonsocial', 'nombrecliente'), 'CustomerAddress': ('domicilio', 'direccion'),
+                      'CustomerCity': ('municipio', 'poblacion'), 'CustomerPostal': ('codigopostal',), 'CustomerTaxId': ('cifdni',)}
+            extra = ''.join(', ' + ('a.' + _discovered_column(found) if (found := next((columns[c] for c in candidates if c in columns), None)) else "NULL") + ' AS ' + alias for alias, candidates in fields.items())
+            extra += f", (SELECT TOP 1 p.FechaPedido FROM {schema}.[PedidoVentaCabecera] p WHERE p.CodigoEmpresa=a.CodigoEmpresa AND p.EjercicioPedido=a.EjercicioPedido AND p.SeriePedido=a.SeriePedido AND p.NumeroPedido=a.NumeroPedido) AS OrderDate"
+            sql = sql.replace('CodigoEmpresa, EjercicioAlbaran,', 'a.CodigoEmpresa, EjercicioAlbaran,', 1)
+            sql = sql.replace(f' FROM {schema}.{table} a ', extra + f' FROM {schema}.{table} a ', 1)
         cursor.execute(sql, tuple(parameters))
         rows = cursor.fetchall()
         lines_table = _identifier(SALES_DOCUMENTS["delivery_lines"])
         line_sql = (
-            f"WITH selected AS (SELECT TOP {max(1, min(limit, 1000))} CodigoEmpresa, EjercicioAlbaran, "
+            f"WITH selected AS (SELECT {top}CodigoEmpresa, EjercicioAlbaran, "
             f"SerieAlbaran, NumeroAlbaran, FechaAlbaran, IdDelegacion FROM {schema}.{table} a "
-            "WHERE LTRIM(RTRIM(CONVERT(varchar(100), a.CodigoCliente)))=%s " + filters_sql + " "
-            "ORDER BY FechaAlbaran DESC, EjercicioAlbaran DESC, SerieAlbaran DESC, NumeroAlbaran DESC) "
-            "SELECT l.CodigoEmpresa, l.EjercicioAlbaran, l.SerieAlbaran, l.NumeroAlbaran, l.Orden, l.CodigoArticulo, "
+            + where + filters_sql + " "
+            "ORDER BY FechaAlbaran DESC, EjercicioAlbaran DESC, SerieAlbaran DESC, NumeroAlbaran DESC" + page_sql + ") "
+            + "SELECT l.CodigoEmpresa, l.EjercicioAlbaran, l.SerieAlbaran, l.NumeroAlbaran, l.Orden, l.CodigoArticulo, "
             "l.DescripcionArticulo, l.Descripcion2Articulo, l.UnidadMedida1_, l.Unidades, l.Precio, "
             "l.[%Descuento] AS Descuento, l.ImporteNeto, l.BaseImponible, l.[%Iva] AS Iva, "
             "l.CuotaIva, l.ImporteLiquido, l.CodigoAlmacen, COALESCE(NULLIF(dw.Delegacion, ''), dh.Delegacion) AS DispatchDelegation "
@@ -576,6 +603,13 @@ def fetch_customer_delivery_notes(customer_code: str, limit: int = 200, document
         **source_order_fields(row),
         "id": f'{row.get("CodigoEmpresa")}:{_document_id(row["EjercicioAlbaran"], row["SerieAlbaran"], row["NumeroAlbaran"])}',
         "number": f'{row["EjercicioAlbaran"]}-{str(row["SerieAlbaran"]).strip()}-{row["NumeroAlbaran"]}',
+        "year": int(row["EjercicioAlbaran"]), "series": str(row["SerieAlbaran"] or "").strip(),
+        "document_number": str(row["NumeroAlbaran"]),
+        "customer_code": str(row.get("CodigoCliente") or "").strip(),
+        "customer_name": str(row.get("CustomerName") or row.get("CodigoCliente") or "").strip(),
+        "customer_address": " · ".join(str(row.get(k) or "").strip() for k in ('CustomerAddress', 'CustomerPostal', 'CustomerCity') if row.get(k)),
+        "customer_tax_id": str(row.get("CustomerTaxId") or "").strip(),
+        "order_date": row.get("OrderDate"),
         "created_at": row["FechaAlbaran"],
         "subtotal": float(row.get("BaseImponible") or 0),
         "tax_total": float(row.get("TaxTotal") or 0),

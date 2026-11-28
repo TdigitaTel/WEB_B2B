@@ -100,6 +100,8 @@ from .sales_order_series import router as sales_order_series_router, resolve_act
 app.include_router(sales_order_series_router)
 from .delegation_warehouses import router as delegation_warehouses_router
 app.include_router(delegation_warehouses_router)
+from .delivery_labels import router as delivery_labels_router
+app.include_router(delivery_labels_router)
 logger = logging.getLogger(__name__)
 
 @lru_cache(maxsize=2000)

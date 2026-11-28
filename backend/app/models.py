@@ -848,3 +848,10 @@ class DelegationWarehouse(Base, TimestampMixin):
     updated_by: Mapped[int | None] = mapped_column(ForeignKey('users.id'))
     __table_args__ = (Index('uq_delegation_warehouses_primary','company_code','delegation_code',unique=True,
         postgresql_where=text('is_primary = true'),sqlite_where=text('is_primary = 1')),)
+
+
+class LabelPrinterPreference(Base, TimestampMixin):
+    __tablename__ = 'label_printer_preferences'
+    user_id: Mapped[int] = mapped_column(ForeignKey('users.id'), primary_key=True)
+    printer_name: Mapped[str] = mapped_column(String(240), default='')
+    dpi: Mapped[int] = mapped_column(Integer, default=203)
